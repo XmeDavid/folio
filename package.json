@@ -6,12 +6,29 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:seed": "tsx src/scripts/seed.ts",
+    "validate:fx": "tsx src/scripts/validate-revolut-fx.ts"
   },
   "dependencies": {
+    "@types/uuid": "^10.0.0",
+    "clsx": "^2.1.1",
+    "csv-parse": "^6.1.0",
+    "drizzle-kit": "^0.31.9",
+    "drizzle-orm": "^0.45.1",
+    "lucide-react": "^0.576.0",
     "next": "16.1.6",
+    "postgres": "^3.4.8",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "recharts": "^3.7.0",
+    "tailwind-merge": "^3.5.0",
+    "tsx": "^4.21.0",
+    "uuid": "^13.0.0",
+    "yahoo-finance2": "^3.13.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
