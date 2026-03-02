@@ -14,6 +14,7 @@ export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   broker: text("broker").notNull(),
+  type: text("type").notNull().default("investment"),
   baseCurrency: text("base_currency").notNull().default("USD"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -73,9 +74,50 @@ export const stockPrices = pgTable(
   ]
 );
 
+export const bankingTransactions = pgTable(
+  "banking_transactions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .references(() => accounts.id)
+      .notNull(),
+    date: timestamp("date").notNull(),
+    completedDate: timestamp("completed_date"),
+    description: text("description").notNull(),
+    amount: numeric("amount", { precision: 18, scale: 4 }).notNull(),
+    commission: numeric("commission", { precision: 18, scale: 4 }).default("0"),
+    currency: text("currency").notNull(),
+    balance: numeric("balance", { precision: 18, scale: 4 }),
+    status: text("status").notNull().default("completed"),
+    category: text("category"),
+    merchant: text("merchant"),
+    transferType: text("transfer_type"),
+    linkedAccountType: text("linked_account_type"),
+    originalType: text("original_type"),
+    originalProduct: text("original_product"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_banking_tx_account").on(table.accountId),
+    index("idx_banking_tx_date").on(table.date),
+    index("idx_banking_tx_category").on(table.category),
+    index("idx_banking_tx_merchant").on(table.merchant),
+  ]
+);
+
+export const categories = pgTable("categories", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  parentGroup: text("parent_group"),
+  subGroup: text("sub_group"),
+});
+
 export type Account = typeof accounts.$inferSelect;
 export type NewAccount = typeof accounts.$inferInsert;
 export type Transaction = typeof transactions.$inferSelect;
 export type NewTransaction = typeof transactions.$inferInsert;
+export type BankingTransaction = typeof bankingTransactions.$inferSelect;
+export type NewBankingTransaction = typeof bankingTransactions.$inferInsert;
+export type Category = typeof categories.$inferSelect;
 export type FxRate = typeof fxRates.$inferSelect;
 export type StockPrice = typeof stockPrices.$inferSelect;

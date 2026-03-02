@@ -1,6 +1,6 @@
 import { fetchFxRate, fetchMultipleFxRates } from "./frankfurter";
 
-export type Currency = "USD" | "EUR" | "CHF";
+export type Currency = "USD" | "EUR" | "CHF" | "GBP" | "PHP";
 
 export async function convertAmount(
   amount: number,

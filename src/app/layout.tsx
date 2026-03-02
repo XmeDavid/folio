@@ -6,6 +6,9 @@ import {
   ArrowLeftRight,
   Upload,
   Layers,
+  Landmark,
+  CreditCard,
+  Wallet,
 } from "lucide-react";
 import { Providers } from "@/components/providers";
 import "./globals.css";
@@ -22,13 +25,16 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Folio -- Portfolio Tracker",
-  description: "Multi-currency portfolio tracking and performance analysis",
+  description: "Personal finance tracking, portfolio management, and spending analysis",
 };
 
 const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/positions", label: "All Positions", icon: Layers },
-  { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
+  { href: "/overview", label: "Overview", icon: Landmark },
+  { href: "/", label: "Investments", icon: LayoutDashboard },
+  { href: "/spending", label: "Spending", icon: CreditCard },
+  { href: "/banking", label: "Banking", icon: Wallet },
+  { href: "/positions", label: "Positions", icon: Layers },
+  { href: "/transactions", label: "Trades", icon: ArrowLeftRight },
   { href: "/import", label: "Import", icon: Upload },
 ];
 
@@ -49,7 +55,7 @@ export default function RootLayout({
                 folio<span className="text-accent">.</span>
               </h1>
               <p className="text-[11px] text-text-tertiary mt-0.5 font-mono tracking-wider uppercase">
-                Portfolio Tracker
+                Finance Tracker
               </p>
             </div>
             <nav className="flex-1 p-3 space-y-0.5">
@@ -66,7 +72,7 @@ export default function RootLayout({
             </nav>
             <div className="p-4 border-t border-border-subtle">
               <p className="text-[10px] text-text-tertiary font-mono">
-                v0.1.0
+                v2.0.0
               </p>
             </div>
           </aside>

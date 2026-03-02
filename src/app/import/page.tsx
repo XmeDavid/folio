@@ -68,8 +68,11 @@ function FileImport() {
                 onChange={(e) => setBroker(e.target.value)}
                 className="w-full bg-bg-tertiary border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent font-mono"
               >
-                <option value="Revolut">Revolut (CSV)</option>
+                <option value="Revolut">Revolut Trading (CSV)</option>
                 <option value="IBKR">Interactive Brokers (Activity CSV / JSON)</option>
+                <option value="Revolut-Banking">Revolut Account Statement (CSV)</option>
+                <option value="Revolut-Savings">Revolut Savings Statement (CSV)</option>
+                <option value="PostFinance">PostFinance (CSV)</option>
               </select>
             </div>
             <div>
@@ -101,6 +104,21 @@ function FileImport() {
             {broker === "IBKR" && (
               <p className="text-[11px] font-mono text-text-tertiary mt-1.5">
                 Use Activity Statement CSV export (or legacy JSON).
+              </p>
+            )}
+            {broker === "Revolut-Banking" && (
+              <p className="text-[11px] font-mono text-text-tertiary mt-1.5">
+                Revolut account statement CSV. Creates Current + Savings accounts. Skips investment/deposit rows.
+              </p>
+            )}
+            {broker === "Revolut-Savings" && (
+              <p className="text-[11px] font-mono text-text-tertiary mt-1.5">
+                Revolut savings (money market) statement. Imports interest/fees as banking + BUY/SELL as investment transactions.
+              </p>
+            )}
+            {broker === "PostFinance" && (
+              <p className="text-[11px] font-mono text-text-tertiary mt-1.5">
+                PostFinance export (semicolon-delimited). Categories are imported directly.
               </p>
             )}
           </div>
