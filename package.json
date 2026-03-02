@@ -11,7 +11,8 @@
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/scripts/seed.ts",
     "validate:fx": "tsx src/scripts/validate-revolut-fx.ts",
-    "db:seed-categories": "tsx src/scripts/seed-categories.ts"
+    "db:seed-categories": "tsx src/scripts/seed-categories.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@types/uuid": "^10.0.0",
@@ -39,6 +40,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.0.18"
   }
 }

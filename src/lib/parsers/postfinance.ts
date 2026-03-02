@@ -18,10 +18,14 @@ interface PostFinanceMetadata {
   currency: string;
 }
 
-function parseDate(raw: string): Date {
+function parseDate(raw: string): Date | null {
   // DD.MM.YYYY → Date
-  const [day, month, year] = raw.split(".");
-  return new Date(`${year}-${month}-${day}T00:00:00`);
+  const match = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (!match) return null;
+  const [, day, month, year] = match;
+  const d = new Date(`${year}-${month}-${day}T00:00:00`);
+  if (isNaN(d.getTime())) return null;
+  return d;
 }
 
 function extractMerchant(text: string): {
@@ -139,6 +143,9 @@ export function parsePostFinanceCSV(
   for (const row of sorted) {
     if (!row.Date) continue;
 
+    const date = parseDate(row.Date);
+    if (!date) continue; // skip non-date rows (disclaimer footer, etc.)
+
     const credit = row["Credit in CHF"] ? parseFloat(row["Credit in CHF"]) : 0;
     const debit = row["Debit in CHF"] ? parseFloat(row["Debit in CHF"]) : 0;
     const amount = credit + debit; // debit is already negative
@@ -154,8 +161,8 @@ export function parsePostFinanceCSV(
 
     results.push({
       accountId,
-      date: parseDate(row.Date),
-      completedDate: parseDate(row.Date),
+      date,
+      completedDate: date,
       description: row["Notification text"] || row["Type of transaction"],
       amount: amount.toFixed(4),
       commission: "0",
