@@ -102,10 +102,13 @@ export function parsePostFinanceCSV(
   csvContent: string,
   accountId: string
 ): NewBankingTransaction[] {
-  const meta = parseMetadata(csvContent);
+  // Strip BOM and normalize line endings
+  const normalized = csvContent.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+  const meta = parseMetadata(normalized);
 
   // Find the header line (after metadata)
-  const lines = csvContent.split("\n");
+  const lines = normalized.split("\n");
   let headerIndex = -1;
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].startsWith("Date;Type of transaction;")) {
@@ -124,6 +127,7 @@ export function parsePostFinanceCSV(
     skip_empty_lines: true,
     trim: true,
     delimiter: ";",
+    relax_column_count: true,
   });
 
   const results: NewBankingTransaction[] = [];

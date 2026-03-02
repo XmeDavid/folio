@@ -49,6 +49,90 @@ export interface RevolutSavingsResult {
   investmentTxns: NewTransaction[];
 }
 
+/**
+ * The savings CSV can have multiple sections with different headers
+ * (e.g. USD section with 7 cols, then EUR section with 5 cols).
+ * We split on header lines and parse each section separately.
+ */
+function splitSections(csvContent: string): { header: string; body: string }[] {
+  const lines = csvContent.split("\n");
+  const sections: { header: string; body: string }[] = [];
+  let currentHeader = "";
+  let currentLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Detect header lines (start with "Date,Description")
+    if (trimmed.startsWith("Date,Description")) {
+      if (currentHeader && currentLines.length > 0) {
+        sections.push({ header: currentHeader, body: currentLines.join("\n") });
+      }
+      currentHeader = trimmed;
+      currentLines = [];
+    } else if (currentHeader) {
+      currentLines.push(line);
+    }
+  }
+
+  if (currentHeader && currentLines.length > 0) {
+    sections.push({ header: currentHeader, body: currentLines.join("\n") });
+  }
+
+  return sections;
+}
+
+interface ParsedSavingsRow {
+  date: Date;
+  description: string;
+  value: number;
+  currency: string;
+  fxRate: number | null;
+  pricePerShare: number | null;
+  quantity: number;
+}
+
+function parseSection(header: string, body: string): ParsedSavingsRow[] {
+  const fullCsv = header + "\n" + body;
+  const records: Record<string, string>[] = parse(fullCsv, {
+    columns: true,
+    skip_empty_lines: true,
+    trim: true,
+    relax_column_count: true,
+  });
+
+  const rows: ParsedSavingsRow[] = [];
+
+  for (const row of records) {
+    if (!row.Date) continue;
+
+    const desc = row.Description || "";
+    const currency = extractCurrency(desc);
+
+    // Find the value column — could be "Value, USD", "Value, EUR", "Value, GBP", etc.
+    let value = 0;
+    for (const key of Object.keys(row)) {
+      if (key.startsWith("Value,") || key.startsWith("Value, ")) {
+        value = parseEuropeanNumber(row[key]);
+        break;
+      }
+    }
+
+    rows.push({
+      date: parseSavingsDate(row.Date),
+      description: desc,
+      value,
+      currency,
+      fxRate: row["FX Rate"] ? parseFloat(row["FX Rate"]) || null : null,
+      pricePerShare: row["Price per share"] ? parseFloat(row["Price per share"]) || null : null,
+      quantity: parseEuropeanNumber(row["Quantity of shares"] || "0"),
+    });
+  }
+
+  return rows;
+}
+
 export function parseRevolutSavingsCSV(
   csvContent: string,
   opts: {
@@ -56,26 +140,17 @@ export function parseRevolutSavingsCSV(
     investmentAccountId: string;
   }
 ): RevolutSavingsResult {
-  const records: RawSavingsRow[] = parse(csvContent, {
-    columns: true,
-    skip_empty_lines: true,
-    trim: true,
-  });
+  const sections = splitSections(csvContent);
+  const allRows: ParsedSavingsRow[] = [];
+  for (const section of sections) {
+    allRows.push(...parseSection(section.header, section.body));
+  }
 
   const bankingTxns: NewBankingTransaction[] = [];
   const investmentTxns: NewTransaction[] = [];
 
-  for (const row of records) {
-    if (!row.Date) continue;
-
-    const date = parseSavingsDate(row.Date);
-    const valueUSD = parseEuropeanNumber(row["Value, USD"]);
-    const valueEUR = parseEuropeanNumber(row["Value, EUR"]);
-    const fxRate = parseFloat(row["FX Rate"]) || null;
-    const pricePerShare = parseFloat(row["Price per share"]) || null;
-    const quantity = parseEuropeanNumber(row["Quantity of shares"]);
-    const desc = row.Description;
-    const currency = extractCurrency(desc);
+  for (const row of allRows) {
+    const { date, description: desc, value, currency, fxRate, pricePerShare, quantity } = row;
 
     const classification = classifyRow(desc);
 
@@ -92,7 +167,7 @@ export function parseRevolutSavingsCSV(
         type,
         quantity: Math.abs(quantity).toString(),
         unitPrice: pricePerShare?.toString() ?? null,
-        totalAmount: Math.abs(valueUSD).toString(),
+        totalAmount: Math.abs(value).toString(),
         currency,
         commission: "0",
         fxRateOriginal: fxRate?.toString() ?? null,
@@ -115,7 +190,7 @@ export function parseRevolutSavingsCSV(
         date,
         completedDate: date,
         description: desc,
-        amount: valueUSD.toFixed(4),
+        amount: value.toFixed(4),
         commission: "0",
         currency,
         balance: null,

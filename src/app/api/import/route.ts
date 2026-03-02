@@ -210,6 +210,7 @@ async function dedupAndInsertBankingTransactions(
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const formData = await req.formData();
   const file = formData.get("file") as File | null;
   const broker = formData.get("broker") as string;
@@ -338,4 +339,11 @@ export async function POST(req: NextRequest) {
     { error: "Unsupported source. Use 'Revolut', 'IBKR', 'Revolut-Banking', 'Revolut-Savings', or 'PostFinance'." },
     { status: 400 }
   );
+  } catch (err) {
+    console.error("[import] Error:", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 500 }
+    );
+  }
 }
