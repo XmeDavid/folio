@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { fxRates } from "@/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte, lte } from "drizzle-orm";
 
 const BASE_URL = "https://api.frankfurter.app";
 
@@ -56,6 +56,26 @@ export async function fetchMultipleFxRates(
   base: string,
   target: string
 ): Promise<Map<string, number>> {
+  // Check DB cache first
+  const cached = await db
+    .select()
+    .from(fxRates)
+    .where(
+      and(
+        eq(fxRates.base, base),
+        eq(fxRates.target, target),
+        gte(fxRates.date, dateFrom),
+        lte(fxRates.date, dateTo)
+      )
+    );
+
+  if (cached.length > 0) {
+    const ratesMap = new Map<string, number>();
+    for (const row of cached) ratesMap.set(row.date, parseFloat(row.rate));
+    return ratesMap;
+  }
+
+  // No cache — fetch from API
   const url = `${BASE_URL}/${dateFrom}..${dateTo}?from=${base}&to=${target}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`FX range fetch failed: ${res.status}`);

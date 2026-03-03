@@ -60,17 +60,19 @@ export async function getSpendingBreakdown(opts: {
     if (!maxDate || dateStr > maxDate) maxDate = dateStr;
   }
 
-  // Prefetch FX rates for each foreign currency
+  // Prefetch FX rates for each foreign currency (in parallel)
   const fxMaps = new Map<string, Map<string, number>>();
-  if (minDate && maxDate) {
-    for (const cur of foreignCurrencies) {
-      try {
-        const fxMap = await getFxRateRange(minDate, maxDate, cur as Currency, displayCurrency);
-        fxMaps.set(cur, fxMap);
-      } catch {
-        // If FX rate unavailable, fallback to 1 (will be raw amount)
-      }
-    }
+  if (minDate && maxDate && foreignCurrencies.size > 0) {
+    await Promise.all(
+      [...foreignCurrencies].map(async (cur) => {
+        try {
+          const fxMap = await getFxRateRange(minDate!, maxDate!, cur as Currency, displayCurrency);
+          fxMaps.set(cur, fxMap);
+        } catch {
+          // If FX rate unavailable, fallback to 1 (will be raw amount)
+        }
+      })
+    );
   }
 
   let totalSpending = 0;
