@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { bankingTransactions, accounts } from "@/db/schema";
 import { and, eq, gte, lte, ne, sql, asc } from "drizzle-orm";
+import { getFxRateRange, type Currency } from "@/lib/fx/convert";
 
 export interface SpendingBreakdown {
   totalSpending: number;
@@ -45,6 +46,33 @@ export async function getSpendingBreakdown(opts: {
     .where(where)
     .orderBy(asc(bankingTransactions.date));
 
+  // Collect unique non-CHF currencies and date range for FX prefetch
+  const displayCurrency: Currency = "CHF";
+  const foreignCurrencies = new Set<string>();
+  let minDate: string | null = null;
+  let maxDate: string | null = null;
+
+  for (const row of rows) {
+    const cur = row.currency ?? "CHF";
+    if (cur !== displayCurrency) foreignCurrencies.add(cur);
+    const dateStr = row.date.toISOString().split("T")[0];
+    if (!minDate || dateStr < minDate) minDate = dateStr;
+    if (!maxDate || dateStr > maxDate) maxDate = dateStr;
+  }
+
+  // Prefetch FX rates for each foreign currency
+  const fxMaps = new Map<string, Map<string, number>>();
+  if (minDate && maxDate) {
+    for (const cur of foreignCurrencies) {
+      try {
+        const fxMap = await getFxRateRange(minDate, maxDate, cur as Currency, displayCurrency);
+        fxMaps.set(cur, fxMap);
+      } catch {
+        // If FX rate unavailable, fallback to 1 (will be raw amount)
+      }
+    }
+  }
+
   let totalSpending = 0;
   let totalIncome = 0;
   const categoryMap = new Map<string, { total: number; count: number }>();
@@ -52,7 +80,16 @@ export async function getSpendingBreakdown(opts: {
   const monthMap = new Map<string, { spending: number; income: number }>();
 
   for (const row of rows) {
-    const amount = parseFloat(row.amount);
+    const rawAmount = parseFloat(row.amount);
+    const cur = row.currency ?? "CHF";
+    const dateStr = row.date.toISOString().split("T")[0];
+
+    // Convert to display currency
+    let fx = 1;
+    if (cur !== displayCurrency) {
+      fx = fxMaps.get(cur)?.get(dateStr) ?? 1;
+    }
+    const amount = rawAmount * fx;
 
     if (amount < 0) {
       totalSpending += amount;

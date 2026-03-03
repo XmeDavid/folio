@@ -30,7 +30,13 @@ export async function GET(req: NextRequest) {
     SELECT
       bt.merchant,
       COUNT(*)::int AS tx_count,
-      SUM(CASE WHEN bt.amount::numeric < 0 THEN ABS(bt.amount::numeric) ELSE 0 END) AS total_spent,
+      SUM(CASE WHEN bt.amount::numeric < 0 THEN ABS(bt.amount::numeric) * COALESCE(
+        (SELECT fr.rate::numeric FROM fx_rates fr
+         WHERE fr.base = bt.currency AND fr.target = 'CHF'
+           AND fr.date <= bt.date::date
+         ORDER BY fr.date DESC LIMIT 1),
+        CASE WHEN bt.currency = 'CHF' THEN 1 ELSE NULL END
+      ) ELSE 0 END) AS total_spent,
       mo.category AS override_category
     FROM banking_transactions bt
     LEFT JOIN merchant_overrides mo ON mo.merchant_name = bt.merchant
