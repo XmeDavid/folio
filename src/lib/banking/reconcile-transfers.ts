@@ -9,8 +9,9 @@ import { sql } from "drizzle-orm";
  *
  * 1. MARK as internal: if a transaction has a matching counterpart in
  *    another tracked account (same day, same abs amount, same currency,
- *    opposite sign), and at least one side is already marked internal
- *    by a parser, mark the other side too.
+ *    opposite sign), mark both sides as internal. This uses the amount
+ *    heuristic directly — no need for the counterpart to already be
+ *    tagged, which avoids import-order issues.
  *
  * 2. UN-MARK false positives: if a transaction is marked as "internal"
  *    but no matching counterpart exists in any tracked account, clear it
@@ -19,18 +20,20 @@ import { sql } from "drizzle-orm";
  * Returns { marked, unmarked } counts.
  */
 export async function reconcileTransfers(): Promise<{ marked: number; unmarked: number }> {
-  // Step 1: Mark counterparts of known internal transfers
+  // Step 1: Mark both sides of matching cross-account pairs as internal.
+  // A pair matches when: different account, same currency, same day,
+  // opposite signs, and amounts cancel out (within tolerance).
   const markResult = await db.execute(sql`
     UPDATE banking_transactions bt
     SET transfer_type = 'internal'
     WHERE bt.transfer_type IS DISTINCT FROM 'internal'
       AND EXISTS (
         SELECT 1 FROM banking_transactions other
-        WHERE other.transfer_type = 'internal'
-          AND other.account_id != bt.account_id
+        WHERE other.account_id != bt.account_id
           AND other.currency = bt.currency
           AND DATE(other.date) = DATE(bt.date)
           AND ABS(other.amount::numeric + bt.amount::numeric) < 0.02
+          AND SIGN(other.amount::numeric) != SIGN(bt.amount::numeric)
       )
   `);
 
@@ -46,6 +49,7 @@ export async function reconcileTransfers(): Promise<{ marked: number; unmarked: 
           AND other.currency = bt.currency
           AND DATE(other.date) = DATE(bt.date)
           AND ABS(other.amount::numeric + bt.amount::numeric) < 0.02
+          AND SIGN(other.amount::numeric) != SIGN(bt.amount::numeric)
       )
   `);
 
