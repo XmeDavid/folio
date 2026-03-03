@@ -16,6 +16,7 @@ import {
   ChevronsUpDown,
   ArrowRightLeft,
   ArrowRight,
+  Repeat,
   X,
   Calendar,
   Check,
@@ -55,11 +56,24 @@ interface TransferRow {
   description: string;
 }
 
+interface FxConversionRow {
+  id: string;
+  date: string;
+  accountId: string;
+  accountName: string;
+  fromCurrency: string;
+  fromAmount: string;
+  toCurrency: string;
+  toAmount: string;
+  description: string;
+}
+
 type SortKey = "date" | "amount" | "merchant" | "category" | "description";
 type SortDir = "asc" | "desc";
 type DisplayRow =
   | { kind: "transaction"; data: BankingTxRow }
-  | { kind: "transfer"; data: TransferRow };
+  | { kind: "transfer"; data: TransferRow }
+  | { kind: "fx"; data: FxConversionRow };
 
 const STATUS_COLORS: Record<string, string> = {
   completed: "bg-green-dim text-green",
@@ -82,8 +96,10 @@ function BankingContent() {
   // Read initial filter values from URL
   const [rows, setRows] = useState<BankingTxRow[]>([]);
   const [transfers, setTransfers] = useState<TransferRow[]>([]);
+  const [fxConversions, setFxConversions] = useState<FxConversionRow[]>([]);
   const [total, setTotal] = useState(0);
   const [transferTotal, setTransferTotal] = useState(0);
+  const [fxTotal, setFxTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
 
@@ -94,6 +110,7 @@ function BankingContent() {
   const [tagFilter, setTagFilter] = useState(searchParams.get("tag") || "");
   const [merchantFilter, setMerchantFilter] = useState(searchParams.get("merchant") || "");
   const [showTransfers, setShowTransfers] = useState(false);
+  const [showFx, setShowFx] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const [sortBy, setSortBy] = useState<SortKey>("date");
@@ -179,10 +196,13 @@ function BankingContent() {
     if (tagFilter) params.set("tag", tagFilter);
     if (merchantFilter) params.set("merchant", merchantFilter);
 
-    const fetches: Promise<any>[] = [
-      fetch(`/api/banking/transactions?${params}`).then((r) => r.json()),
-    ];
+    if (showFx) {
+      params.set("excludeFx", "false");
+    }
 
+    const txPromise = fetch(`/api/banking/transactions?${params}`).then((r) => r.json());
+
+    let transferPromise: Promise<any> | null = null;
     if (showTransfers) {
       const transferParams = new URLSearchParams({
         limit: limit.toString(),
@@ -190,12 +210,21 @@ function BankingContent() {
       });
       if (dateFrom) transferParams.set("from", dateFrom);
       if (dateTo) transferParams.set("to", dateTo);
-      fetches.push(
-        fetch(`/api/banking/transfers?${transferParams}`).then((r) => r.json())
-      );
+      transferPromise = fetch(`/api/banking/transfers?${transferParams}`).then((r) => r.json());
     }
 
-    const [txJson, transferJson] = await Promise.all(fetches);
+    let fxPromise: Promise<any> | null = null;
+    if (showFx) {
+      const fxParams = new URLSearchParams({
+        limit: limit.toString(),
+        offset: (page * limit).toString(),
+      });
+      if (dateFrom) fxParams.set("from", dateFrom);
+      if (dateTo) fxParams.set("to", dateTo);
+      fxPromise = fetch(`/api/banking/fx-conversions?${fxParams}`).then((r) => r.json());
+    }
+
+    const [txJson, transferJson, fxJson] = await Promise.all([txPromise, transferPromise, fxPromise]);
     setRows(txJson.data);
     setTotal(txJson.total);
 
@@ -207,8 +236,16 @@ function BankingContent() {
       setTransferTotal(0);
     }
 
+    if (fxJson) {
+      setFxConversions(fxJson.data);
+      setFxTotal(fxJson.total);
+    } else {
+      setFxConversions([]);
+      setFxTotal(0);
+    }
+
     setLoading(false);
-  }, [page, search, dateFrom, dateTo, categoryFilter, tagFilter, merchantFilter, sortBy, sortDir, showTransfers]);
+  }, [page, search, dateFrom, dateTo, categoryFilter, tagFilter, merchantFilter, sortBy, sortDir, showTransfers, showFx]);
 
   useEffect(() => {
     fetchData();
@@ -216,21 +253,27 @@ function BankingContent() {
 
   useEffect(() => {
     setPage(0);
-  }, [search, dateFrom, dateTo, categoryFilter, tagFilter, merchantFilter, sortBy, sortDir, showTransfers]);
+  }, [search, dateFrom, dateTo, categoryFilter, tagFilter, merchantFilter, sortBy, sortDir, showTransfers, showFx]);
 
   const displayRows = useMemo<DisplayRow[]>(() => {
     const txRows: DisplayRow[] = rows.map((r) => ({ kind: "transaction", data: r }));
-    if (!showTransfers || transfers.length === 0) return txRows;
+    const extra: DisplayRow[] = [];
+    if (showTransfers && transfers.length > 0) {
+      extra.push(...transfers.map((t): DisplayRow => ({ kind: "transfer", data: t })));
+    }
+    if (showFx && fxConversions.length > 0) {
+      extra.push(...fxConversions.map((f): DisplayRow => ({ kind: "fx", data: f })));
+    }
+    if (extra.length === 0) return txRows;
 
-    const transferRows: DisplayRow[] = transfers.map((t) => ({ kind: "transfer", data: t }));
-    const merged = [...txRows, ...transferRows];
+    const merged = [...txRows, ...extra];
     merged.sort((a, b) => {
       const dateA = new Date(a.kind === "transaction" ? a.data.transaction.date : a.data.date).getTime();
       const dateB = new Date(b.kind === "transaction" ? b.data.transaction.date : b.data.date).getTime();
       return sortDir === "desc" ? dateB - dateA : dateA - dateB;
     });
     return merged;
-  }, [rows, transfers, showTransfers, sortDir]);
+  }, [rows, transfers, fxConversions, showTransfers, showFx, sortDir]);
 
   const totalPages = Math.ceil(total / limit);
 
@@ -296,10 +339,26 @@ function BankingContent() {
           Transfers
         </button>
 
+        <button
+          onClick={() => setShowFx((v) => !v)}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-mono font-medium border transition-colors",
+            showFx
+              ? "bg-accent-glow border-accent text-accent"
+              : "bg-bg-tertiary border-border-subtle text-text-tertiary hover:text-text-secondary"
+          )}
+        >
+          <Repeat size={12} />
+          FX
+        </button>
+
         <span className="text-xs font-mono text-text-tertiary ml-auto">
           {total.toLocaleString()} transactions
           {showTransfers && transferTotal > 0 && (
             <span className="text-accent ml-1">+ {transferTotal} transfers</span>
+          )}
+          {showFx && fxTotal > 0 && (
+            <span className="text-accent ml-1">+ {fxTotal} FX</span>
           )}
         </span>
       </div>
@@ -434,6 +493,55 @@ function BankingContent() {
                           <span className="text-[10px] font-mono text-text-tertiary">
                             <ArrowRightLeft size={10} className="inline mr-1" />
                             Internal
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  if (row.kind === "fx") {
+                    const fx = row.data;
+                    const d = new Date(fx.date);
+                    return (
+                      <tr
+                        key={`fx-${fx.id}`}
+                        className="bg-yellow-dim/30 hover:bg-yellow-dim/50 transition-colors"
+                      >
+                        <td className="px-4 py-2.5 font-mono text-text-secondary text-xs whitespace-nowrap">
+                          {d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                        </td>
+                        <td className="px-4 py-2.5" colSpan={2}>
+                          <div className="flex items-center gap-1.5 text-xs">
+                            {fx.fromCurrency && fx.fromAmount && (
+                              <span className="font-mono text-red">
+                                -{formatMoney(parseFloat(fx.fromAmount), fx.fromCurrency)}
+                              </span>
+                            )}
+                            <ArrowRight size={12} className="text-yellow shrink-0" />
+                            {fx.toCurrency && fx.toAmount && (
+                              <span className="font-mono text-green">
+                                +{formatMoney(parseFloat(fx.toAmount), fx.toCurrency)}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono font-medium whitespace-nowrap text-yellow text-xs">
+                          FX
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="inline-block px-2 py-0.5 rounded text-[10px] font-mono bg-yellow-dim text-yellow">
+                            FX Conversion
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-[10px] font-mono text-text-tertiary uppercase">
+                            {fx.accountName}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-[10px] font-mono text-text-tertiary">
+                            <Repeat size={10} className="inline mr-1" />
+                            Exchange
                           </span>
                         </td>
                       </tr>

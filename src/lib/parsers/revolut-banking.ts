@@ -77,12 +77,13 @@ function categorize(tipo: string, descricao: string, produto: string): Categoriz
   };
 
   // FX conversion
-  if (tipo === "Câmbio" || descricao.includes("Conversão cambial") || descricao.includes("Conversão cambial")) {
+  if (tipo === "Câmbio" || descricao.includes("Conversão cambial")) {
     result.category = "Finances // FX Conversion";
-    // If it's a transfer to investment/savings sub-account
     if (descricao.includes("Transfer to Revolut")) {
       result.transferType = "internal";
       result.linkedAccountType = "investment";
+    } else {
+      result.transferType = "fx";
     }
     return result;
   }

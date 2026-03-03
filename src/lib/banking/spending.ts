@@ -28,7 +28,7 @@ export async function getSpendingBreakdown(opts: {
   if (opts.excludeTransfers !== false) {
     // Exclude internal transfers by default
     conditions.push(
-      sql`(${bankingTransactions.transferType} IS NULL OR ${bankingTransactions.transferType} != 'internal')`
+      sql`(${bankingTransactions.transferType} IS NULL OR ${bankingTransactions.transferType} NOT IN ('internal', 'fx'))`
     );
   }
 

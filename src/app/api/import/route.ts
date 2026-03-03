@@ -9,6 +9,7 @@ import { parseRevolutSavingsCSV } from "@/lib/parsers/revolut-savings";
 import { and, eq, sql } from "drizzle-orm";
 import type { NewTransaction, NewBankingTransaction } from "@/db/schema";
 import { reconcileTransfers } from "@/lib/banking/reconcile-transfers";
+import { reconcileFxConversions } from "@/lib/banking/reconcile-fx";
 import { merchantOverrides } from "@/db/schema";
 
 function normalizeNumLike(value: string | null | undefined): string {
@@ -292,6 +293,7 @@ export async function POST(req: NextRequest) {
 
     if (inserted > 0) {
       await reconcileTransfers();
+      await reconcileFxConversions();
       await applyMerchantOverrides();
     }
 
@@ -323,6 +325,7 @@ export async function POST(req: NextRequest) {
 
     if (bankingResult.inserted > 0) {
       await reconcileTransfers();
+      await reconcileFxConversions();
       await applyMerchantOverrides();
     }
 
@@ -352,6 +355,7 @@ export async function POST(req: NextRequest) {
 
     if (inserted > 0) {
       await reconcileTransfers();
+      await reconcileFxConversions();
       await applyMerchantOverrides();
     }
 

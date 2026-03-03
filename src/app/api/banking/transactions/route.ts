@@ -13,6 +13,7 @@ export async function GET(req: NextRequest) {
   const status = url.searchParams.get("status");
   const transferType = url.searchParams.get("transferType");
   const excludeTransfers = url.searchParams.get("excludeTransfers") !== "false"; // default true
+  const excludeFx = url.searchParams.get("excludeFx") !== "false"; // default true
   const tag = url.searchParams.get("tag");
   const search = url.searchParams.get("search");
   const limit = parseInt(url.searchParams.get("limit") || "50");
@@ -29,10 +30,16 @@ export async function GET(req: NextRequest) {
   if (status) conditions.push(eq(bankingTransactions.status, status));
   if (transferType) {
     conditions.push(eq(bankingTransactions.transferType, transferType));
-  } else if (excludeTransfers) {
-    conditions.push(
-      sql`(${bankingTransactions.transferType} IS NULL OR ${bankingTransactions.transferType} != 'internal')`
-    );
+  } else {
+    const excludeTypes: string[] = [];
+    if (excludeTransfers) excludeTypes.push("internal");
+    if (excludeFx) excludeTypes.push("fx");
+    if (excludeTypes.length > 0) {
+      const list = excludeTypes.map((t) => `'${t}'`).join(", ");
+      conditions.push(
+        sql`(${bankingTransactions.transferType} IS NULL OR ${bankingTransactions.transferType} NOT IN (${sql.raw(list)}))`
+      );
+    }
   }
   if (tag) {
     conditions.push(sql`${bankingTransactions.tags} @> ARRAY[${tag}]::text[]`);
