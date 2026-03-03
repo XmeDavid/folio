@@ -13,6 +13,7 @@ export async function GET(req: NextRequest) {
   const status = url.searchParams.get("status");
   const transferType = url.searchParams.get("transferType");
   const excludeTransfers = url.searchParams.get("excludeTransfers") !== "false"; // default true
+  const tag = url.searchParams.get("tag");
   const search = url.searchParams.get("search");
   const limit = parseInt(url.searchParams.get("limit") || "50");
   const offset = parseInt(url.searchParams.get("offset") || "0");
@@ -32,6 +33,9 @@ export async function GET(req: NextRequest) {
     conditions.push(
       sql`(${bankingTransactions.transferType} IS NULL OR ${bankingTransactions.transferType} != 'internal')`
     );
+  }
+  if (tag) {
+    conditions.push(sql`${bankingTransactions.tags} @> ARRAY[${tag}]::text[]`);
   }
   if (search) {
     conditions.push(

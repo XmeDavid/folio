@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { Suspense, useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { LoadingSpinner } from "@/components/ui/loading";
@@ -15,6 +16,11 @@ import {
   ChevronsUpDown,
   ArrowRightLeft,
   ArrowRight,
+  X,
+  Calendar,
+  Check,
+  Plus,
+  Tag,
 } from "lucide-react";
 
 interface BankingTxRow {
@@ -31,6 +37,7 @@ interface BankingTxRow {
     category: string | null;
     merchant: string | null;
     transferType: string | null;
+    tags: string[];
   };
   accountName: string;
   accountType: string;
@@ -50,8 +57,6 @@ interface TransferRow {
 
 type SortKey = "date" | "amount" | "merchant" | "category" | "description";
 type SortDir = "asc" | "desc";
-
-// Unified row type for interleaving
 type DisplayRow =
   | { kind: "transaction"; data: BankingTxRow }
   | { kind: "transfer"; data: TransferRow };
@@ -63,19 +68,70 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function BankingPage() {
+  return (
+    <Suspense fallback={<LoadingSpinner />}>
+      <BankingContent />
+    </Suspense>
+  );
+}
+
+function BankingContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Read initial filter values from URL
   const [rows, setRows] = useState<BankingTxRow[]>([]);
   const [transfers, setTransfers] = useState<TransferRow[]>([]);
   const [total, setTotal] = useState(0);
   const [transferTotal, setTransferTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
-  const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("All");
-  const [categories, setCategories] = useState<string[]>([]);
+
+  const [search, setSearch] = useState(searchParams.get("search") || "");
+  const [dateFrom, setDateFrom] = useState(searchParams.get("from") || "");
+  const [dateTo, setDateTo] = useState(searchParams.get("to") || "");
+  const [categoryFilter, setCategoryFilter] = useState(searchParams.get("category") || "");
+  const [tagFilter, setTagFilter] = useState(searchParams.get("tag") || "");
+  const [merchantFilter, setMerchantFilter] = useState(searchParams.get("merchant") || "");
+  const [showTransfers, setShowTransfers] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
   const [sortBy, setSortBy] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [showTransfers, setShowTransfers] = useState(false);
+
+  const [allCategories, setAllCategories] = useState<string[]>([]);
+  const [allTags, setAllTags] = useState<string[]>([]);
+
   const limit = 50;
+
+  // Auto-open filters if URL has filter params
+  useEffect(() => {
+    if (dateFrom || dateTo || categoryFilter || tagFilter || merchantFilter) {
+      setFiltersOpen(true);
+    }
+  }, []);
+
+  // Fetch categories and tags
+  useEffect(() => {
+    fetch("/api/categories").then((r) => r.json()).then((j) => setAllCategories(j.data));
+    fetch("/api/tags").then((r) => r.json()).then((j) => setAllTags(j.data));
+  }, []);
+
+  // Count active filters
+  const activeFilterCount = [dateFrom, dateTo, categoryFilter, tagFilter, merchantFilter].filter(Boolean).length;
+
+  // Update URL when filters change
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (search) params.set("search", search);
+    if (dateFrom) params.set("from", dateFrom);
+    if (dateTo) params.set("to", dateTo);
+    if (categoryFilter) params.set("category", categoryFilter);
+    if (tagFilter) params.set("tag", tagFilter);
+    if (merchantFilter) params.set("merchant", merchantFilter);
+    const qs = params.toString();
+    router.replace(`/banking${qs ? `?${qs}` : ""}`, { scroll: false });
+  }, [search, dateFrom, dateTo, categoryFilter, tagFilter, merchantFilter]);
 
   function toggleSort(key: SortKey) {
     if (sortBy === key) {
@@ -86,7 +142,7 @@ export default function BankingPage() {
     setSortDir(key === "date" ? "desc" : "asc");
   }
 
-  function header(key: SortKey, label: string, className: string) {
+  function headerCell(key: SortKey, label: string, className: string) {
     const active = sortBy === key;
     return (
       <th className={className}>
@@ -117,7 +173,11 @@ export default function BankingPage() {
       sortDir,
     });
     if (search) params.set("search", search);
-    if (categoryFilter !== "All") params.set("category", categoryFilter);
+    if (dateFrom) params.set("from", dateFrom);
+    if (dateTo) params.set("to", dateTo);
+    if (categoryFilter) params.set("category", categoryFilter);
+    if (tagFilter) params.set("tag", tagFilter);
+    if (merchantFilter) params.set("merchant", merchantFilter);
 
     const fetches: Promise<any>[] = [
       fetch(`/api/banking/transactions?${params}`).then((r) => r.json()),
@@ -128,6 +188,8 @@ export default function BankingPage() {
         limit: limit.toString(),
         offset: (page * limit).toString(),
       });
+      if (dateFrom) transferParams.set("from", dateFrom);
+      if (dateTo) transferParams.set("to", dateTo);
       fetches.push(
         fetch(`/api/banking/transfers?${transferParams}`).then((r) => r.json())
       );
@@ -145,23 +207,8 @@ export default function BankingPage() {
       setTransferTotal(0);
     }
 
-    // Extract unique categories from first large fetch for filter
-    if (categories.length === 0 && txJson.data.length > 0) {
-      const catRes = await fetch("/api/banking/transactions?limit=1&offset=0");
-      const catJson = await catRes.json();
-      if (catJson.total > 0) {
-        const allRes = await fetch(`/api/banking/transactions?limit=${Math.min(catJson.total, 5000)}&offset=0`);
-        const allJson = await allRes.json();
-        const allCats = new Set<string>();
-        allJson.data.forEach((r: BankingTxRow) => {
-          if (r.transaction.category) allCats.add(r.transaction.category);
-        });
-        setCategories([...allCats].sort());
-      }
-    }
-
     setLoading(false);
-  }, [page, search, categoryFilter, sortBy, sortDir, showTransfers]);
+  }, [page, search, dateFrom, dateTo, categoryFilter, tagFilter, merchantFilter, sortBy, sortDir, showTransfers]);
 
   useEffect(() => {
     fetchData();
@@ -169,27 +216,32 @@ export default function BankingPage() {
 
   useEffect(() => {
     setPage(0);
-  }, [search, categoryFilter, sortBy, sortDir, showTransfers]);
+  }, [search, dateFrom, dateTo, categoryFilter, tagFilter, merchantFilter, sortBy, sortDir, showTransfers]);
 
-  // Merge transactions and transfers, sorted by date
   const displayRows = useMemo<DisplayRow[]>(() => {
     const txRows: DisplayRow[] = rows.map((r) => ({ kind: "transaction", data: r }));
     if (!showTransfers || transfers.length === 0) return txRows;
 
     const transferRows: DisplayRow[] = transfers.map((t) => ({ kind: "transfer", data: t }));
     const merged = [...txRows, ...transferRows];
-
-    // Sort by date (respect current sort direction)
     merged.sort((a, b) => {
       const dateA = new Date(a.kind === "transaction" ? a.data.transaction.date : a.data.date).getTime();
       const dateB = new Date(b.kind === "transaction" ? b.data.transaction.date : b.data.date).getTime();
       return sortDir === "desc" ? dateB - dateA : dateA - dateB;
     });
-
     return merged;
   }, [rows, transfers, showTransfers, sortDir]);
 
   const totalPages = Math.ceil(total / limit);
+
+  function clearAllFilters() {
+    setSearch("");
+    setDateFrom("");
+    setDateTo("");
+    setCategoryFilter("");
+    setTagFilter("");
+    setMerchantFilter("");
+  }
 
   return (
     <div className="space-y-6">
@@ -200,12 +252,10 @@ export default function BankingPage() {
         </p>
       </div>
 
+      {/* Main filter row */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative w-full sm:flex-1 sm:min-w-[200px] sm:max-w-xs">
-          <Search
-            size={14}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary"
-          />
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
           <input
             type="text"
             placeholder="Search description or merchant..."
@@ -215,21 +265,23 @@ export default function BankingPage() {
           />
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <Filter size={14} className="text-text-tertiary" />
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="bg-bg-tertiary border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent font-mono appearance-none cursor-pointer max-w-full sm:max-w-[250px]"
-          >
-            <option value="All">All Categories</option>
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-        </div>
+        <button
+          onClick={() => setFiltersOpen((v) => !v)}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-mono font-medium border transition-colors",
+            filtersOpen || activeFilterCount > 0
+              ? "bg-accent-glow border-accent text-accent"
+              : "bg-bg-tertiary border-border-subtle text-text-tertiary hover:text-text-secondary"
+          )}
+        >
+          <Filter size={12} />
+          Filters
+          {activeFilterCount > 0 && (
+            <span className="ml-0.5 px-1.5 py-0.5 bg-accent text-bg-primary rounded-full text-[10px] font-bold">
+              {activeFilterCount}
+            </span>
+          )}
+        </button>
 
         <button
           onClick={() => setShowTransfers((v) => !v)}
@@ -252,6 +304,85 @@ export default function BankingPage() {
         </span>
       </div>
 
+      {/* Collapsible filter row */}
+      {filtersOpen && (
+        <div className="flex flex-wrap items-end gap-3 p-3 bg-bg-secondary border border-border-subtle rounded-lg">
+          {/* Date range */}
+          <div className="flex items-end gap-2">
+            <div>
+              <label className="block text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-1">From</label>
+              <div className="relative">
+                <Calendar size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary" />
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="pl-7 pr-2 py-1.5 bg-bg-tertiary border border-border-subtle rounded text-xs font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-1">To</label>
+              <div className="relative">
+                <Calendar size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary" />
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="pl-7 pr-2 py-1.5 bg-bg-tertiary border border-border-subtle rounded text-xs font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Category */}
+          <div>
+            <label className="block text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-1">Category</label>
+            <FilterCombobox
+              value={categoryFilter}
+              options={allCategories}
+              placeholder="All categories"
+              onChange={setCategoryFilter}
+            />
+          </div>
+
+          {/* Tag */}
+          <div>
+            <label className="block text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-1">Tag</label>
+            <FilterCombobox
+              value={tagFilter}
+              options={allTags}
+              placeholder="All tags"
+              onChange={setTagFilter}
+              icon={<Tag size={10} />}
+            />
+          </div>
+
+          {/* Merchant */}
+          {merchantFilter && (
+            <div>
+              <label className="block text-[10px] font-mono text-text-tertiary uppercase tracking-wider mb-1">Merchant</label>
+              <div className="flex items-center gap-1 px-2 py-1.5 bg-bg-tertiary border border-border-subtle rounded text-xs font-mono text-text-primary">
+                <span className="truncate max-w-[120px]">{merchantFilter}</span>
+                <button onClick={() => setMerchantFilter("")} className="text-text-tertiary hover:text-text-primary">
+                  <X size={10} />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Clear all */}
+          {activeFilterCount > 0 && (
+            <button
+              onClick={clearAllFilters}
+              className="px-2 py-1.5 text-[10px] font-mono text-text-tertiary hover:text-text-primary transition-colors"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+      )}
+
       <Card>
         <div className="overflow-x-auto">
           {loading ? (
@@ -262,11 +393,11 @@ export default function BankingPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-[11px] text-text-tertiary uppercase tracking-wider font-mono border-b border-border-subtle">
-                  {header("date", "Date", "px-4 py-3 font-medium")}
-                  {header("description", "Description", "px-4 py-3 font-medium")}
-                  {header("merchant", "Merchant", "px-4 py-3 font-medium")}
-                  {header("amount", "Amount", "px-4 py-3 font-medium text-right")}
-                  {header("category", "Category", "px-4 py-3 font-medium")}
+                  {headerCell("date", "Date", "px-4 py-3 font-medium")}
+                  {headerCell("description", "Description", "px-4 py-3 font-medium")}
+                  {headerCell("merchant", "Merchant", "px-4 py-3 font-medium")}
+                  {headerCell("amount", "Amount", "px-4 py-3 font-medium text-right")}
+                  {headerCell("category", "Category", "px-4 py-3 font-medium")}
                   <th className="px-4 py-3 font-medium">Account</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                 </tr>
@@ -282,11 +413,7 @@ export default function BankingPage() {
                         className="bg-accent-glow/30 hover:bg-accent-glow/50 transition-colors"
                       >
                         <td className="px-4 py-2.5 font-mono text-text-secondary text-xs whitespace-nowrap">
-                          {d.toLocaleDateString("en-GB", {
-                            day: "2-digit",
-                            month: "short",
-                            year: "numeric",
-                          })}
+                          {d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
                         </td>
                         <td className="px-4 py-2.5" colSpan={2}>
                           <div className="flex items-center gap-1.5 text-xs">
@@ -318,21 +445,11 @@ export default function BankingPage() {
                   const d = new Date(tx.date);
                   const amount = parseFloat(tx.amount);
                   return (
-                    <tr
-                      key={tx.id}
-                      className="hover:bg-bg-hover transition-colors"
-                    >
+                    <tr key={tx.id} className="hover:bg-bg-hover transition-colors">
                       <td className="px-4 py-2.5 font-mono text-text-secondary text-xs whitespace-nowrap">
-                        {d.toLocaleDateString("en-GB", {
-                          day: "2-digit",
-                          month: "short",
-                          year: "numeric",
-                        })}
+                        {d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
                         <span className="text-text-tertiary ml-1.5">
-                          {d.toLocaleTimeString("en-GB", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
+                          {d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
                         </span>
                       </td>
                       <td className="px-4 py-2.5 text-text-secondary max-w-[300px] truncate" title={tx.description}>
@@ -350,10 +467,7 @@ export default function BankingPage() {
                           <span className="text-text-tertiary">--</span>
                         )}
                       </td>
-                      <td className={cn(
-                        "px-4 py-2.5 text-right font-mono font-medium whitespace-nowrap",
-                        pnlColor(amount)
-                      )}>
+                      <td className={cn("px-4 py-2.5 text-right font-mono font-medium whitespace-nowrap", pnlColor(amount))}>
                         {formatMoney(amount, tx.currency)}
                       </td>
                       <td className="px-4 py-2.5">
@@ -371,12 +485,10 @@ export default function BankingPage() {
                         </span>
                       </td>
                       <td className="px-4 py-2.5">
-                        <span
-                          className={cn(
-                            "inline-block px-2 py-0.5 rounded text-[10px] font-mono font-medium uppercase",
-                            STATUS_COLORS[tx.status] || "bg-bg-tertiary text-text-tertiary"
-                          )}
-                        >
+                        <span className={cn(
+                          "inline-block px-2 py-0.5 rounded text-[10px] font-mono font-medium uppercase",
+                          STATUS_COLORS[tx.status] || "bg-bg-tertiary text-text-tertiary"
+                        )}>
                           {tx.status}
                         </span>
                       </td>
@@ -410,6 +522,114 @@ export default function BankingPage() {
           </div>
         )}
       </Card>
+    </div>
+  );
+}
+
+/* ---- Filter combobox (search + select from options) ---- */
+function FilterCombobox({
+  value,
+  options,
+  placeholder,
+  onChange,
+  icon,
+}: {
+  value: string;
+  options: string[];
+  placeholder: string;
+  onChange: (value: string) => void;
+  icon?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const filtered = query
+    ? options.filter((o) => o.toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  function select(val: string) {
+    onChange(val);
+    setQuery("");
+    setOpen(false);
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => { setOpen(!open); setQuery(""); }}
+        className="flex items-center gap-1.5 px-2 py-1.5 bg-bg-tertiary border border-border-subtle rounded text-xs font-mono text-text-primary min-w-[130px] max-w-[200px]"
+      >
+        {icon}
+        <span className={cn("truncate flex-1 text-left", !value && "text-text-tertiary")}>
+          {value || placeholder}
+        </span>
+        {value ? (
+          <button
+            onClick={(e) => { e.stopPropagation(); onChange(""); setOpen(false); }}
+            className="text-text-tertiary hover:text-text-primary"
+          >
+            <X size={10} />
+          </button>
+        ) : (
+          <ChevronsUpDown size={10} className="text-text-tertiary shrink-0" />
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-56 bg-bg-secondary border border-border-subtle rounded-lg shadow-lg overflow-hidden">
+          <div className="p-1.5">
+            <input
+              autoFocus
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && filtered.length === 1) select(filtered[0]);
+                if (e.key === "Escape") setOpen(false);
+              }}
+              placeholder="Search..."
+              className="w-full px-2 py-1.5 bg-bg-tertiary border border-border-subtle rounded text-xs font-mono text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            <button
+              onClick={() => select("")}
+              className={cn(
+                "w-full text-left px-3 py-1.5 text-xs font-mono hover:bg-bg-hover transition-colors flex items-center gap-2",
+                !value && "text-accent"
+              )}
+            >
+              {!value && <Check size={10} />}
+              <span className="text-text-tertiary italic">{placeholder}</span>
+            </button>
+            {filtered.map((opt) => (
+              <button
+                key={opt}
+                onClick={() => select(opt)}
+                className={cn(
+                  "w-full text-left px-3 py-1.5 text-xs font-mono hover:bg-bg-hover transition-colors flex items-center gap-2",
+                  value === opt && "text-accent"
+                )}
+              >
+                {value === opt && <Check size={10} />}
+                <span className="truncate">{opt}</span>
+              </button>
+            ))}
+            {filtered.length === 0 && (
+              <p className="px-3 py-2 text-xs text-text-tertiary text-center">No matches</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

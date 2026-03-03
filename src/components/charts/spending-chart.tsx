@@ -29,10 +29,12 @@ export function SpendingChart({
   data,
   currency,
   height = 400,
+  onBarClick,
 }: {
   data: CategoryData[];
   currency: string;
   height?: number;
+  onBarClick?: (category: string) => void;
 }) {
   if (!data || data.length === 0) {
     return (
@@ -94,7 +96,12 @@ export function SpendingChart({
             formatter={(value) => [formatMoney(Number(value), currency), "Spent"]}
             labelFormatter={(label) => String(label)}
           />
-          <Bar dataKey="amount" radius={[0, 4, 4, 0]}>
+          <Bar
+            dataKey="amount"
+            radius={[0, 4, 4, 0]}
+            cursor={onBarClick ? "pointer" : undefined}
+            onClick={(_data: any) => onBarClick?.(_data?.fullCategory ?? _data?.payload?.fullCategory)}
+          >
             {chartData.map((_, i) => (
               <Cell key={i} fill={COLORS[i % COLORS.length]} />
             ))}

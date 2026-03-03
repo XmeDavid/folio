@@ -24,10 +24,12 @@ export function MonthlyTrendChart({
   data,
   currency,
   height = 320,
+  onBarClick,
 }: {
   data: MonthlyData[];
   currency: string;
   height?: number;
+  onBarClick?: (month: string) => void;
 }) {
   if (!data || data.length === 0) {
     return (
@@ -94,8 +96,20 @@ export function MonthlyTrendChart({
             wrapperStyle={{ fontSize: "11px", fontFamily: "var(--font-geist-mono)" }}
           />
           <ReferenceLine y={0} stroke="#2a2f3e" strokeDasharray="3 3" />
-          <Bar dataKey="Income" fill="#22c55e" radius={[2, 2, 0, 0]} />
-          <Bar dataKey="Spending" fill="#ef4444" radius={[2, 2, 0, 0]} />
+          <Bar
+            dataKey="Income"
+            fill="#22c55e"
+            radius={[2, 2, 0, 0]}
+            cursor={onBarClick ? "pointer" : undefined}
+            onClick={(_data: any, _idx: number, e: any) => onBarClick?.(e?.month ?? _data?.month ?? _data?.payload?.month)}
+          />
+          <Bar
+            dataKey="Spending"
+            fill="#ef4444"
+            radius={[2, 2, 0, 0]}
+            cursor={onBarClick ? "pointer" : undefined}
+            onClick={(_data: any, _idx: number, e: any) => onBarClick?.(e?.month ?? _data?.month ?? _data?.payload?.month)}
+          />
         </BarChart>
       </ResponsiveContainer>
     </div>

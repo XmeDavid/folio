@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { LoadingSpinner } from "@/components/ui/loading";
 import { formatMoney, pnlColor } from "@/lib/utils";
@@ -42,10 +44,39 @@ function getPeriodDates(period: Period): { from?: string; to?: string } {
 }
 
 export default function SpendingPage() {
+  const router = useRouter();
   const [data, setData] = useState<SpendingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>("3M");
   const currency = "CHF";
+
+  function navigateToBanking(extra: Record<string, string>) {
+    const { from, to } = getPeriodDates(period);
+    const params = new URLSearchParams();
+    if (from && !extra.from) params.set("from", from);
+    if (to && !extra.to) params.set("to", to);
+    for (const [k, v] of Object.entries(extra)) {
+      if (v) params.set(k, v);
+    }
+    router.push(`/banking?${params.toString()}`);
+  }
+
+  function handleMonthClick(month: string) {
+    // month is "YYYY-MM" — compute first and last day
+    const [year, m] = month.split("-").map(Number);
+    const from = `${year}-${String(m).padStart(2, "0")}-01`;
+    const lastDay = new Date(year, m, 0).getDate();
+    const to = `${year}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    navigateToBanking({ from, to });
+  }
+
+  function handleCategoryClick(category: string) {
+    navigateToBanking({ category });
+  }
+
+  function handleMerchantClick(merchant: string) {
+    navigateToBanking({ merchant });
+  }
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -146,7 +177,7 @@ export default function SpendingPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <MonthlyTrendChart data={data.byMonth} currency={currency} />
+          <MonthlyTrendChart data={data.byMonth} currency={currency} onBarClick={handleMonthClick} />
         </CardContent>
       </Card>
 
@@ -157,7 +188,7 @@ export default function SpendingPage() {
             <CardTitle>Spending by Category</CardTitle>
           </CardHeader>
           <CardContent>
-            <SpendingChart data={data.byCategory} currency={currency} />
+            <SpendingChart data={data.byCategory} currency={currency} onBarClick={handleCategoryClick} />
           </CardContent>
         </Card>
 
@@ -169,9 +200,10 @@ export default function SpendingPage() {
           <CardContent>
             <div className="space-y-2">
               {data.topMerchants.slice(0, 15).map((m) => (
-                <div
+                <button
                   key={m.merchant}
-                  className="flex items-center justify-between py-1.5 border-b border-border-subtle last:border-0"
+                  onClick={() => handleMerchantClick(m.merchant)}
+                  className="w-full flex items-center justify-between py-1.5 border-b border-border-subtle last:border-0 hover:bg-bg-hover transition-colors rounded px-1 -mx-1 cursor-pointer"
                 >
                   <div>
                     <span className="text-sm text-text-primary">{m.merchant}</span>
@@ -182,7 +214,7 @@ export default function SpendingPage() {
                   <span className="font-mono text-sm text-red">
                     {formatMoney(Math.abs(m.total), currency)}
                   </span>
-                </div>
+                </button>
               ))}
               {data.topMerchants.length === 0 && (
                 <p className="text-sm text-text-tertiary font-mono">No merchant data</p>
