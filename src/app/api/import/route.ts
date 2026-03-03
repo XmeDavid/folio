@@ -8,6 +8,7 @@ import { parseRevolutBankingCSV } from "@/lib/parsers/revolut-banking";
 import { parseRevolutSavingsCSV } from "@/lib/parsers/revolut-savings";
 import { and, eq } from "drizzle-orm";
 import type { NewTransaction, NewBankingTransaction } from "@/db/schema";
+import { reconcileTransfers } from "@/lib/banking/reconcile-transfers";
 
 function normalizeNumLike(value: string | null | undefined): string {
   if (value === null || value === undefined || value === "") return "";
@@ -276,6 +277,8 @@ export async function POST(req: NextRequest) {
       parsed, [checkingAccount.id, savingsAccount.id]
     );
 
+    if (inserted > 0) await reconcileTransfers();
+
     return NextResponse.json({
       accountId: checkingAccount.id,
       accountName: "Revolut Current + Savings",
@@ -302,6 +305,8 @@ export async function POST(req: NextRequest) {
       investmentTxns, investmentAccount.id, "second"
     );
 
+    if (bankingResult.inserted > 0) await reconcileTransfers();
+
     return NextResponse.json({
       accountId: savingsAccount.id,
       accountName: "Revolut Money Market",
@@ -325,6 +330,8 @@ export async function POST(req: NextRequest) {
     const { inserted, duplicatesSkipped } = await dedupAndInsertBankingTransactions(
       parsed, [account.id]
     );
+
+    if (inserted > 0) await reconcileTransfers();
 
     return NextResponse.json({
       accountId: account.id,
