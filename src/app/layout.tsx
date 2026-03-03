@@ -9,6 +9,7 @@ import {
   Landmark,
   CreditCard,
   Wallet,
+  Building2,
 } from "lucide-react";
 import { Providers } from "@/components/providers";
 import "./globals.css";
@@ -36,6 +37,7 @@ const navItems = [
   { href: "/positions", label: "Positions", icon: Layers },
   { href: "/transactions", label: "Trades", icon: ArrowLeftRight },
   { href: "/import", label: "Import", icon: Upload },
+  { href: "/accounts", label: "Accounts", icon: Building2 },
 ];
 
 export default function RootLayout({
