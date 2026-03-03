@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState, useCallback } from "react";
+import { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { LoadingSpinner } from "@/components/ui/loading";
@@ -14,6 +14,7 @@ import {
   ChevronsUpDown,
   X,
   Plus,
+  Check,
 } from "lucide-react";
 
 interface MerchantRow {
@@ -21,12 +22,6 @@ interface MerchantRow {
   tx_count: number;
   total_spent: string;
   override_category: string | null;
-}
-
-interface CategoryOption {
-  id: number;
-  name: string;
-  parentGroup: string | null;
 }
 
 interface TransactionRow {
@@ -70,7 +65,8 @@ function MerchantsContent() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const [selected, setSelected] = useState<string | null>(selectedParam);
-  const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [allCategories, setAllCategories] = useState<string[]>([]);
+  const [allTags, setAllTags] = useState<string[]>([]);
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
   const [txTotal, setTxTotal] = useState(0);
   const [txPage, setTxPage] = useState(0);
@@ -80,7 +76,6 @@ function MerchantsContent() {
 
   const txLimit = 30;
 
-  // Fetch merchants
   const fetchMerchants = useCallback(async () => {
     setLoading(true);
     const params = new URLSearchParams({ sortBy, sortDir, limit: "200" });
@@ -92,18 +87,26 @@ function MerchantsContent() {
     setLoading(false);
   }, [search, sortBy, sortDir]);
 
-  // Fetch categories once
-  useEffect(() => {
+  // Fetch categories + tags once
+  function refreshCategories() {
     fetch("/api/categories")
       .then((r) => r.json())
-      .then((json) => setCategories(json.data));
+      .then((json) => setAllCategories(json.data));
+  }
+  function refreshTags() {
+    fetch("/api/tags")
+      .then((r) => r.json())
+      .then((json) => setAllTags(json.data));
+  }
+  useEffect(() => {
+    refreshCategories();
+    refreshTags();
   }, []);
 
   useEffect(() => {
     fetchMerchants();
   }, [fetchMerchants]);
 
-  // Fetch detail when selected changes
   const fetchTransactions = useCallback(async () => {
     if (!selected) return;
     setTxLoading(true);
@@ -125,7 +128,6 @@ function MerchantsContent() {
   useEffect(() => {
     if (selected) {
       fetchTransactions();
-      // Set the category from override
       const m = merchants.find((m) => m.merchant === selected);
       setSelectedCategory(m?.override_category ?? null);
     } else {
@@ -152,6 +154,7 @@ function MerchantsContent() {
     setSaving(false);
     fetchMerchants();
     fetchTransactions();
+    refreshCategories();
   }
 
   async function updateTransactionCategory(txId: string, category: string | null) {
@@ -161,6 +164,7 @@ function MerchantsContent() {
       body: JSON.stringify({ category }),
     });
     fetchTransactions();
+    refreshCategories();
   }
 
   async function updateTransactionTags(txId: string, tags: string[]) {
@@ -170,6 +174,7 @@ function MerchantsContent() {
       body: JSON.stringify({ tags }),
     });
     fetchTransactions();
+    refreshTags();
   }
 
   function toggleSort(key: SortKey) {
@@ -227,7 +232,6 @@ function MerchantsContent() {
               </div>
             ) : (
               <div className="max-h-[calc(100vh-260px)] overflow-y-auto">
-                {/* Sort controls */}
                 <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle text-[10px] font-mono text-text-tertiary uppercase tracking-wider">
                   <button
                     onClick={() => toggleSort("name")}
@@ -337,25 +341,15 @@ function MerchantsContent() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <label className="text-xs font-mono text-text-tertiary">
+                    <label className="text-xs font-mono text-text-tertiary shrink-0">
                       Default category:
                     </label>
-                    <select
-                      value={selectedCategory ?? ""}
-                      onChange={(e) => {
-                        const val = e.target.value || null;
-                        saveMerchantCategory(val);
-                      }}
+                    <CategoryCombobox
+                      value={selectedCategory}
+                      options={allCategories}
+                      onChange={saveMerchantCategory}
                       disabled={saving}
-                      className="bg-bg-tertiary border border-border-subtle rounded px-2 py-1 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent font-mono appearance-none cursor-pointer"
-                    >
-                      <option value="">None</option>
-                      {categories.map((c) => (
-                        <option key={c.id} value={c.name}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
+                    />
                     {saving && (
                       <span className="text-[10px] font-mono text-text-tertiary">
                         Saving...
@@ -378,9 +372,7 @@ function MerchantsContent() {
                         <tr className="text-left text-[11px] text-text-tertiary uppercase tracking-wider font-mono border-b border-border-subtle">
                           <th className="px-4 py-3 font-medium">Date</th>
                           <th className="px-4 py-3 font-medium">Description</th>
-                          <th className="px-4 py-3 font-medium text-right">
-                            Amount
-                          </th>
+                          <th className="px-4 py-3 font-medium text-right">Amount</th>
                           <th className="px-4 py-3 font-medium">Category</th>
                           <th className="px-4 py-3 font-medium">Tags</th>
                         </tr>
@@ -421,7 +413,7 @@ function MerchantsContent() {
                                   txId={tx.id}
                                   category={tx.category}
                                   isManual={tx.categoryManual}
-                                  categories={categories}
+                                  options={allCategories}
                                   onUpdate={updateTransactionCategory}
                                 />
                               </td>
@@ -429,6 +421,7 @@ function MerchantsContent() {
                                 <TagsCell
                                   txId={tx.id}
                                   tags={tx.tags ?? []}
+                                  allTags={allTags}
                                   onUpdate={updateTransactionTags}
                                 />
                               </td>
@@ -482,41 +475,167 @@ function MerchantsContent() {
   );
 }
 
-/* ---- Inline category editor ---- */
+/* ---- Category combobox (type to search/create, pick from existing) ---- */
+function CategoryCombobox({
+  value,
+  options,
+  onChange,
+  disabled,
+  small,
+}: {
+  value: string | null;
+  options: string[];
+  onChange: (value: string | null) => void;
+  disabled?: boolean;
+  small?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const filtered = query
+    ? options.filter((o) => o.toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  const showCreate =
+    query.trim() &&
+    !options.some((o) => o.toLowerCase() === query.trim().toLowerCase());
+
+  function select(val: string | null) {
+    onChange(val);
+    setQuery("");
+    setOpen(false);
+  }
+
+  const sz = small ? "text-[10px] px-1.5 py-0.5" : "text-sm px-2 py-1";
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => {
+          if (!disabled) {
+            setOpen(!open);
+            setQuery("");
+          }
+        }}
+        disabled={disabled}
+        className={cn(
+          "bg-bg-tertiary border border-border-subtle rounded font-mono text-left flex items-center gap-1 min-w-[120px] max-w-[240px]",
+          sz,
+          disabled && "opacity-50 cursor-not-allowed"
+        )}
+      >
+        <span className={cn("truncate flex-1", !value && "text-text-tertiary")}>
+          {value || "None"}
+        </span>
+        <ChevronsUpDown size={small ? 8 : 10} className="text-text-tertiary shrink-0" />
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-64 bg-bg-secondary border border-border-subtle rounded-lg shadow-lg overflow-hidden">
+          <div className="p-1.5">
+            <input
+              autoFocus
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  if (showCreate && query.trim()) {
+                    select(query.trim());
+                  } else if (filtered.length === 1) {
+                    select(filtered[0]);
+                  }
+                }
+                if (e.key === "Escape") setOpen(false);
+              }}
+              placeholder="Search or type new..."
+              className="w-full px-2 py-1.5 bg-bg-tertiary border border-border-subtle rounded text-xs font-mono text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            {/* None option */}
+            <button
+              onClick={() => select(null)}
+              className={cn(
+                "w-full text-left px-3 py-1.5 text-xs font-mono hover:bg-bg-hover transition-colors flex items-center gap-2",
+                !value && "text-accent"
+              )}
+            >
+              {!value && <Check size={10} />}
+              <span className="text-text-tertiary italic">None</span>
+            </button>
+            {filtered.map((opt) => (
+              <button
+                key={opt}
+                onClick={() => select(opt)}
+                className={cn(
+                  "w-full text-left px-3 py-1.5 text-xs font-mono hover:bg-bg-hover transition-colors flex items-center gap-2",
+                  value === opt && "text-accent"
+                )}
+              >
+                {value === opt && <Check size={10} />}
+                <span className="truncate">{opt}</span>
+              </button>
+            ))}
+            {showCreate && (
+              <button
+                onClick={() => select(query.trim())}
+                className="w-full text-left px-3 py-1.5 text-xs font-mono hover:bg-bg-hover transition-colors flex items-center gap-2 text-accent border-t border-border-subtle"
+              >
+                <Plus size={10} />
+                <span>Create &quot;{query.trim()}&quot;</span>
+              </button>
+            )}
+            {filtered.length === 0 && !showCreate && (
+              <p className="px-3 py-2 text-xs text-text-tertiary text-center">
+                No matches
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---- Inline category editor for transaction rows ---- */
 function CategoryCell({
   txId,
   category,
   isManual,
-  categories,
+  options,
   onUpdate,
 }: {
   txId: string;
   category: string | null;
   isManual: boolean;
-  categories: CategoryOption[];
+  options: string[];
   onUpdate: (txId: string, category: string | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
 
   if (editing) {
     return (
-      <select
-        autoFocus
-        value={category ?? ""}
-        onChange={(e) => {
-          onUpdate(txId, e.target.value || null);
+      <CategoryCombobox
+        value={category}
+        options={options}
+        onChange={(val) => {
+          onUpdate(txId, val);
           setEditing(false);
         }}
-        onBlur={() => setEditing(false)}
-        className="bg-bg-tertiary border border-border-subtle rounded px-1.5 py-0.5 text-[10px] font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent appearance-none cursor-pointer"
-      >
-        <option value="">None</option>
-        {categories.map((c) => (
-          <option key={c.id} value={c.name}>
-            {c.name}
-          </option>
-        ))}
-      </select>
+        small
+      />
     );
   }
 
@@ -546,26 +665,53 @@ function CategoryCell({
   );
 }
 
-/* ---- Inline tags editor ---- */
+/* ---- Inline tags editor with autocomplete ---- */
 function TagsCell({
   txId,
   tags,
+  allTags,
   onUpdate,
 }: {
   txId: string;
   tags: string[];
+  allTags: string[];
   onUpdate: (txId: string, tags: string[]) => void;
 }) {
   const [adding, setAdding] = useState(false);
-  const [newTag, setNewTag] = useState("");
+  const [query, setQuery] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
 
-  function addTag() {
-    const tag = newTag.trim().toLowerCase();
-    if (tag && !tags.includes(tag)) {
-      onUpdate(txId, [...tags, tag]);
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
     }
-    setNewTag("");
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const suggestions = query
+    ? allTags.filter(
+        (t) =>
+          t.toLowerCase().includes(query.toLowerCase()) && !tags.includes(t)
+      )
+    : allTags.filter((t) => !tags.includes(t));
+
+  const showCreate =
+    query.trim() &&
+    !allTags.some((t) => t.toLowerCase() === query.trim().toLowerCase()) &&
+    !tags.includes(query.trim().toLowerCase());
+
+  function addTag(tag: string) {
+    const normalized = tag.trim().toLowerCase();
+    if (normalized && !tags.includes(normalized)) {
+      onUpdate(txId, [...tags, normalized]);
+    }
+    setQuery("");
     setAdding(false);
+    setShowSuggestions(false);
   }
 
   function removeTag(tag: string) {
@@ -576,7 +722,7 @@ function TagsCell({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <div className="flex flex-wrap items-center gap-1" ref={ref}>
       {tags.map((tag) => (
         <span
           key={tag}
@@ -592,22 +738,54 @@ function TagsCell({
         </span>
       ))}
       {adding ? (
-        <input
-          autoFocus
-          type="text"
-          value={newTag}
-          onChange={(e) => setNewTag(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") addTag();
-            if (e.key === "Escape") {
-              setAdding(false);
-              setNewTag("");
-            }
-          }}
-          onBlur={addTag}
-          placeholder="tag..."
-          className="w-16 px-1 py-0.5 bg-bg-tertiary border border-border-subtle rounded text-[10px] font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
-        />
+        <div className="relative">
+          <input
+            autoFocus
+            type="text"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setShowSuggestions(true);
+            }}
+            onFocus={() => setShowSuggestions(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && query.trim()) {
+                addTag(query);
+              }
+              if (e.key === "Escape") {
+                setAdding(false);
+                setQuery("");
+                setShowSuggestions(false);
+              }
+            }}
+            placeholder="tag..."
+            className="w-20 px-1 py-0.5 bg-bg-tertiary border border-border-subtle rounded text-[10px] font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+          />
+          {showSuggestions && (suggestions.length > 0 || showCreate) && (
+            <div className="absolute z-50 mt-1 w-36 bg-bg-secondary border border-border-subtle rounded shadow-lg overflow-hidden">
+              <div className="max-h-32 overflow-y-auto">
+                {suggestions.slice(0, 8).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => addTag(t)}
+                    className="w-full text-left px-2 py-1 text-[10px] font-mono hover:bg-bg-hover transition-colors text-text-secondary"
+                  >
+                    {t}
+                  </button>
+                ))}
+                {showCreate && (
+                  <button
+                    onClick={() => addTag(query)}
+                    className="w-full text-left px-2 py-1 text-[10px] font-mono hover:bg-bg-hover transition-colors text-accent border-t border-border-subtle flex items-center gap-1"
+                  >
+                    <Plus size={8} />
+                    {query.trim().toLowerCase()}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       ) : (
         <button
           onClick={() => setAdding(true)}
