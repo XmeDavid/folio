@@ -31,7 +31,7 @@ export function AccountFilter({
   return (
     <div className="flex items-center gap-1.5">
       <Building2 size={14} className="text-text-tertiary shrink-0" />
-      <div className="flex items-center bg-bg-tertiary rounded-lg p-0.5 border border-border-subtle">
+      <div className="flex items-center bg-bg-tertiary rounded-lg p-0.5 border border-border-subtle overflow-x-auto max-w-full">
         <button
           onClick={() => onChange(undefined)}
           className={cn(

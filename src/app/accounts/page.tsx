@@ -142,7 +142,7 @@ function CreateAccountForm({ onCreated }: { onCreated: () => void }) {
 
   return (
     <div className="p-4 border border-border-subtle rounded-lg bg-bg-secondary space-y-3">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className={labelClass}>Name</label>
           <input
@@ -756,7 +756,7 @@ function AccountDetail({ account }: { account: AccountRow }) {
       </div>
 
       {/* Stats */}
-      <div className="flex gap-4">
+      <div className="flex flex-wrap gap-4">
         <div className="px-3 py-2 bg-bg-tertiary rounded-lg">
           <div className="text-[10px] font-mono text-text-tertiary uppercase tracking-wider">Trades</div>
           <div className="text-sm font-mono font-medium text-text-primary">{account.investmentCount}</div>
@@ -840,9 +840,9 @@ export default function AccountsPage() {
         </p>
       </div>
 
-      <div className="flex gap-6 items-start">
+      <div className="flex flex-col md:flex-row gap-6 items-start">
         {/* Left panel — account list */}
-        <div className="w-80 shrink-0">
+        <div className="w-full md:w-80 shrink-0">
           <Card>
             <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
               <div className="flex items-center gap-1.5">
