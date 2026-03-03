@@ -31,7 +31,7 @@ export async function reconcileTransfers(): Promise<{ marked: number; unmarked: 
         SELECT 1 FROM banking_transactions other
         WHERE other.account_id != bt.account_id
           AND other.currency = bt.currency
-          AND DATE(other.date) = DATE(bt.date)
+          AND ABS(EXTRACT(EPOCH FROM other.date - bt.date)) < 93600
           AND ABS(other.amount::numeric + bt.amount::numeric) < 0.02
           AND SIGN(other.amount::numeric) != SIGN(bt.amount::numeric)
       )
@@ -47,7 +47,7 @@ export async function reconcileTransfers(): Promise<{ marked: number; unmarked: 
         SELECT 1 FROM banking_transactions other
         WHERE other.account_id != bt.account_id
           AND other.currency = bt.currency
-          AND DATE(other.date) = DATE(bt.date)
+          AND ABS(EXTRACT(EPOCH FROM other.date - bt.date)) < 93600
           AND ABS(other.amount::numeric + bt.amount::numeric) < 0.02
           AND SIGN(other.amount::numeric) != SIGN(bt.amount::numeric)
       )

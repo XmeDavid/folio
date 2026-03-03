@@ -64,15 +64,14 @@ export async function GET(req: NextRequest) {
     const outDate = out.date.toISOString().slice(0, 10);
     const outAbs = Math.abs(parseFloat(out.amount));
 
-    // Find matching incoming transaction
+    // Find matching incoming transaction (allow ±26h for timezone differences)
+    const outTime = out.date.getTime();
     const match = incoming.find((inc) => {
       if (paired.has(inc.id)) return false;
       if (inc.accountId === out.accountId) return false;
       if (inc.currency !== out.currency) return false;
-      const incDate = inc.date.toISOString().slice(0, 10);
-      if (incDate !== outDate) return false;
+      if (Math.abs(inc.date.getTime() - outTime) > 93600000) return false;
       const incAbs = Math.abs(parseFloat(inc.amount));
-      // Allow small rounding tolerance (0.01)
       return Math.abs(outAbs - incAbs) < 0.02;
     });
 

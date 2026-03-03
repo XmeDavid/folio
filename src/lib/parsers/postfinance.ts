@@ -19,11 +19,11 @@ interface PostFinanceMetadata {
 }
 
 function parseDate(raw: string): Date | null {
-  // DD.MM.YYYY → Date
+  // DD.MM.YYYY → Date (use UTC to avoid timezone-shifting the date)
   const match = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
   if (!match) return null;
   const [, day, month, year] = match;
-  const d = new Date(`${year}-${month}-${day}T00:00:00`);
+  const d = new Date(`${year}-${month}-${day}T12:00:00Z`);
   if (isNaN(d.getTime())) return null;
   return d;
 }
