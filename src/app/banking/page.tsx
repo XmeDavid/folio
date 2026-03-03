@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { LoadingSpinner } from "@/components/ui/loading";
 import { cn, formatMoney, pnlColor } from "@/lib/utils";
@@ -12,6 +12,8 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronsUpDown,
+  ArrowRightLeft,
+  ArrowRight,
 } from "lucide-react";
 
 interface BankingTxRow {
@@ -33,8 +35,25 @@ interface BankingTxRow {
   accountType: string;
 }
 
+interface TransferRow {
+  id: string;
+  date: string;
+  fromAccountId: string;
+  fromAccountName: string;
+  toAccountId: string;
+  toAccountName: string;
+  amount: string;
+  currency: string;
+  description: string;
+}
+
 type SortKey = "date" | "amount" | "merchant" | "category" | "description";
 type SortDir = "asc" | "desc";
+
+// Unified row type for interleaving
+type DisplayRow =
+  | { kind: "transaction"; data: BankingTxRow }
+  | { kind: "transfer"; data: TransferRow };
 
 const STATUS_COLORS: Record<string, string> = {
   completed: "bg-green-dim text-green",
@@ -44,7 +63,9 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function BankingPage() {
   const [rows, setRows] = useState<BankingTxRow[]>([]);
+  const [transfers, setTransfers] = useState<TransferRow[]>([]);
   const [total, setTotal] = useState(0);
+  const [transferTotal, setTransferTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
@@ -52,6 +73,7 @@ export default function BankingPage() {
   const [categories, setCategories] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [showTransfers, setShowTransfers] = useState(false);
   const limit = 50;
 
   function toggleSort(key: SortKey) {
@@ -96,22 +118,37 @@ export default function BankingPage() {
     if (search) params.set("search", search);
     if (categoryFilter !== "All") params.set("category", categoryFilter);
 
-    const res = await fetch(`/api/banking/transactions?${params}`);
-    const json = await res.json();
-    setRows(json.data);
-    setTotal(json.total);
+    const fetches: Promise<any>[] = [
+      fetch(`/api/banking/transactions?${params}`).then((r) => r.json()),
+    ];
+
+    if (showTransfers) {
+      const transferParams = new URLSearchParams({
+        limit: limit.toString(),
+        offset: (page * limit).toString(),
+      });
+      fetches.push(
+        fetch(`/api/banking/transfers?${transferParams}`).then((r) => r.json())
+      );
+    }
+
+    const [txJson, transferJson] = await Promise.all(fetches);
+    setRows(txJson.data);
+    setTotal(txJson.total);
+
+    if (transferJson) {
+      setTransfers(transferJson.data);
+      setTransferTotal(transferJson.total);
+    } else {
+      setTransfers([]);
+      setTransferTotal(0);
+    }
 
     // Extract unique categories from first large fetch for filter
-    if (categories.length === 0 && json.data.length > 0) {
-      const cats = new Set<string>();
-      json.data.forEach((r: BankingTxRow) => {
-        if (r.transaction.category) cats.add(r.transaction.category);
-      });
-      // Fetch all categories from a separate call
+    if (categories.length === 0 && txJson.data.length > 0) {
       const catRes = await fetch("/api/banking/transactions?limit=1&offset=0");
       const catJson = await catRes.json();
       if (catJson.total > 0) {
-        // Fetch distinct categories
         const allRes = await fetch(`/api/banking/transactions?limit=${Math.min(catJson.total, 5000)}&offset=0`);
         const allJson = await allRes.json();
         const allCats = new Set<string>();
@@ -123,7 +160,7 @@ export default function BankingPage() {
     }
 
     setLoading(false);
-  }, [page, search, categoryFilter, sortBy, sortDir]);
+  }, [page, search, categoryFilter, sortBy, sortDir, showTransfers]);
 
   useEffect(() => {
     fetchData();
@@ -131,7 +168,25 @@ export default function BankingPage() {
 
   useEffect(() => {
     setPage(0);
-  }, [search, categoryFilter, sortBy, sortDir]);
+  }, [search, categoryFilter, sortBy, sortDir, showTransfers]);
+
+  // Merge transactions and transfers, sorted by date
+  const displayRows = useMemo<DisplayRow[]>(() => {
+    const txRows: DisplayRow[] = rows.map((r) => ({ kind: "transaction", data: r }));
+    if (!showTransfers || transfers.length === 0) return txRows;
+
+    const transferRows: DisplayRow[] = transfers.map((t) => ({ kind: "transfer", data: t }));
+    const merged = [...txRows, ...transferRows];
+
+    // Sort by date (respect current sort direction)
+    merged.sort((a, b) => {
+      const dateA = new Date(a.kind === "transaction" ? a.data.transaction.date : a.data.date).getTime();
+      const dateB = new Date(b.kind === "transaction" ? b.data.transaction.date : b.data.date).getTime();
+      return sortDir === "desc" ? dateB - dateA : dateA - dateB;
+    });
+
+    return merged;
+  }, [rows, transfers, showTransfers, sortDir]);
 
   const totalPages = Math.ceil(total / limit);
 
@@ -175,8 +230,24 @@ export default function BankingPage() {
           </select>
         </div>
 
+        <button
+          onClick={() => setShowTransfers((v) => !v)}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-mono font-medium border transition-colors",
+            showTransfers
+              ? "bg-accent-glow border-accent text-accent"
+              : "bg-bg-tertiary border-border-subtle text-text-tertiary hover:text-text-secondary"
+          )}
+        >
+          <ArrowRightLeft size={12} />
+          Transfers
+        </button>
+
         <span className="text-xs font-mono text-text-tertiary ml-auto">
           {total.toLocaleString()} transactions
+          {showTransfers && transferTotal > 0 && (
+            <span className="text-accent ml-1">+ {transferTotal} transfers</span>
+          )}
         </span>
       </div>
 
@@ -200,7 +271,48 @@ export default function BankingPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border-subtle">
-                {rows.map((r) => {
+                {displayRows.map((row) => {
+                  if (row.kind === "transfer") {
+                    const t = row.data;
+                    const d = new Date(t.date);
+                    return (
+                      <tr
+                        key={`transfer-${t.id}`}
+                        className="bg-accent-glow/30 hover:bg-accent-glow/50 transition-colors"
+                      >
+                        <td className="px-4 py-2.5 font-mono text-text-secondary text-xs whitespace-nowrap">
+                          {d.toLocaleDateString("en-GB", {
+                            day: "2-digit",
+                            month: "short",
+                            year: "numeric",
+                          })}
+                        </td>
+                        <td className="px-4 py-2.5" colSpan={2}>
+                          <div className="flex items-center gap-1.5 text-xs">
+                            <span className="font-mono text-text-secondary">{t.fromAccountName}</span>
+                            <ArrowRight size={12} className="text-accent shrink-0" />
+                            <span className="font-mono text-text-secondary">{t.toAccountName}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono font-medium whitespace-nowrap text-accent">
+                          {formatMoney(parseFloat(t.amount), t.currency)}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="inline-block px-2 py-0.5 rounded text-[10px] font-mono bg-accent-glow text-accent">
+                            Transfer
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5" colSpan={2}>
+                          <span className="text-[10px] font-mono text-text-tertiary">
+                            <ArrowRightLeft size={10} className="inline mr-1" />
+                            Internal
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  const r = row.data;
                   const tx = r.transaction;
                   const d = new Date(tx.date);
                   const amount = parseFloat(tx.amount);

@@ -19,6 +19,8 @@ import {
   Search,
   Building2,
   ArrowLeftRight,
+  ArrowRightLeft,
+  ArrowRight,
   Wallet,
 } from "lucide-react";
 
@@ -66,6 +68,18 @@ interface BankingTxRow {
   };
   accountName: string;
   accountType: string;
+}
+
+interface TransferRow {
+  id: string;
+  date: string;
+  fromAccountId: string;
+  fromAccountName: string;
+  toAccountId: string;
+  toAccountName: string;
+  amount: string;
+  currency: string;
+  description: string;
 }
 
 /* ─── Constants ─── */
@@ -557,12 +571,15 @@ type BankingSortKey = "date" | "amount" | "merchant" | "category" | "description
 
 function BankingTab({ accountId }: { accountId: string }) {
   const [rows, setRows] = useState<BankingTxRow[]>([]);
+  const [transfers, setTransfers] = useState<TransferRow[]>([]);
   const [total, setTotal] = useState(0);
+  const [transferTotal, setTransferTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<BankingSortKey>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [showTransfers, setShowTransfers] = useState(false);
   const limit = 50;
 
   function toggleSort(key: BankingSortKey) {
@@ -606,12 +623,35 @@ function BankingTab({ accountId }: { accountId: string }) {
     });
     if (search) params.set("search", search);
 
-    const res = await fetch(`/api/banking/transactions?${params}`);
-    const json = await res.json();
-    setRows(json.data);
-    setTotal(json.total);
+    const fetches: Promise<any>[] = [
+      fetch(`/api/banking/transactions?${params}`).then((r) => r.json()),
+    ];
+
+    if (showTransfers) {
+      const transferParams = new URLSearchParams({
+        accountId,
+        limit: limit.toString(),
+        offset: (page * limit).toString(),
+      });
+      fetches.push(
+        fetch(`/api/banking/transfers?${transferParams}`).then((r) => r.json())
+      );
+    }
+
+    const [txJson, transferJson] = await Promise.all(fetches);
+    setRows(txJson.data);
+    setTotal(txJson.total);
+
+    if (transferJson) {
+      setTransfers(transferJson.data);
+      setTransferTotal(transferJson.total);
+    } else {
+      setTransfers([]);
+      setTransferTotal(0);
+    }
+
     setLoading(false);
-  }, [accountId, page, search, sortBy, sortDir]);
+  }, [accountId, page, search, sortBy, sortDir, showTransfers]);
 
   useEffect(() => {
     fetchData();
@@ -619,13 +659,31 @@ function BankingTab({ accountId }: { accountId: string }) {
 
   useEffect(() => {
     setPage(0);
-  }, [search, sortBy, sortDir, accountId]);
+  }, [search, sortBy, sortDir, accountId, showTransfers]);
+
+  // Merge and sort by date
+  type DisplayRow =
+    | { kind: "transaction"; data: BankingTxRow }
+    | { kind: "transfer"; data: TransferRow };
+
+  const displayRows: DisplayRow[] = (() => {
+    const txRows: DisplayRow[] = rows.map((r) => ({ kind: "transaction", data: r }));
+    if (!showTransfers || transfers.length === 0) return txRows;
+    const tRows: DisplayRow[] = transfers.map((t) => ({ kind: "transfer", data: t }));
+    const merged = [...txRows, ...tRows];
+    merged.sort((a, b) => {
+      const dateA = new Date(a.kind === "transaction" ? a.data.transaction.date : a.data.date).getTime();
+      const dateB = new Date(b.kind === "transaction" ? b.data.transaction.date : b.data.date).getTime();
+      return sortDir === "desc" ? dateB - dateA : dateA - dateB;
+    });
+    return merged;
+  })();
 
   const totalPages = Math.ceil(total / limit);
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3 px-1">
+      <div className="flex flex-wrap items-center gap-3 px-1">
         <div className="relative flex-1 max-w-xs">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
           <input
@@ -636,12 +694,29 @@ function BankingTab({ accountId }: { accountId: string }) {
             className="w-full pl-9 pr-3 py-1.5 bg-bg-tertiary border border-border-subtle rounded-lg text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent font-mono"
           />
         </div>
-        <span className="text-[11px] font-mono text-text-tertiary ml-auto">{total} transactions</span>
+        <button
+          onClick={() => setShowTransfers((v) => !v)}
+          className={cn(
+            "flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-mono font-medium border transition-colors",
+            showTransfers
+              ? "bg-accent-glow border-accent text-accent"
+              : "bg-bg-tertiary border-border-subtle text-text-tertiary hover:text-text-secondary"
+          )}
+        >
+          <ArrowRightLeft size={10} />
+          Transfers
+        </button>
+        <span className="text-[11px] font-mono text-text-tertiary ml-auto">
+          {total} transactions
+          {showTransfers && transferTotal > 0 && (
+            <span className="text-accent ml-1">+ {transferTotal}</span>
+          )}
+        </span>
       </div>
 
       {loading ? (
         <div className="py-12"><LoadingSpinner /></div>
-      ) : rows.length === 0 ? (
+      ) : displayRows.length === 0 ? (
         <div className="py-12 text-center text-sm text-text-tertiary">No banking transactions found</div>
       ) : (
         <div className="overflow-x-auto">
@@ -657,7 +732,36 @@ function BankingTab({ accountId }: { accountId: string }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-border-subtle">
-              {rows.map((r) => {
+              {displayRows.map((row) => {
+                if (row.kind === "transfer") {
+                  const t = row.data;
+                  const d = new Date(t.date);
+                  return (
+                    <tr key={`transfer-${t.id}`} className="bg-accent-glow/30 hover:bg-accent-glow/50 transition-colors">
+                      <td className="px-3 py-2 font-mono text-text-secondary text-xs whitespace-nowrap">
+                        {d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                      </td>
+                      <td className="px-3 py-2" colSpan={2}>
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <span className="font-mono text-text-secondary">{t.fromAccountName}</span>
+                          <ArrowRight size={10} className="text-accent shrink-0" />
+                          <span className="font-mono text-text-secondary">{t.toAccountName}</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono font-medium text-xs whitespace-nowrap text-accent">
+                        {formatMoney(parseFloat(t.amount), t.currency)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-mono bg-accent-glow text-accent">Transfer</span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <ArrowRightLeft size={10} className="text-text-tertiary" />
+                      </td>
+                    </tr>
+                  );
+                }
+
+                const r = row.data;
                 const tx = r.transaction;
                 const d = new Date(tx.date);
                 const amount = parseFloat(tx.amount);
