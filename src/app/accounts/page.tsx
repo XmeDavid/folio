@@ -774,7 +774,16 @@ function BankingTab({ accountId }: { accountId: string }) {
                       {tx.description}
                     </td>
                     <td className="px-3 py-2 font-mono text-text-secondary text-xs">
-                      {tx.merchant || <span className="text-text-tertiary">--</span>}
+                      {tx.merchant ? (
+                        <Link
+                          href={`/merchants?selected=${encodeURIComponent(tx.merchant)}`}
+                          className="hover:text-accent transition-colors underline decoration-border-subtle underline-offset-2 hover:decoration-accent"
+                        >
+                          {tx.merchant}
+                        </Link>
+                      ) : (
+                        <span className="text-text-tertiary">--</span>
+                      )}
                     </td>
                     <td className={cn("px-3 py-2 text-right font-mono font-medium text-xs whitespace-nowrap", pnlColor(amount))}>
                       {formatMoney(amount, tx.currency)}

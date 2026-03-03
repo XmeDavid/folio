@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
+import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { LoadingSpinner } from "@/components/ui/loading";
 import { cn, formatMoney, pnlColor } from "@/lib/utils";
@@ -338,7 +339,14 @@ export default function BankingPage() {
                         {tx.description}
                       </td>
                       <td className="px-4 py-2.5 font-mono text-text-secondary text-xs">
-                        {tx.merchant || (
+                        {tx.merchant ? (
+                          <Link
+                            href={`/merchants?selected=${encodeURIComponent(tx.merchant)}`}
+                            className="hover:text-accent transition-colors underline decoration-border-subtle underline-offset-2 hover:decoration-accent"
+                          >
+                            {tx.merchant}
+                          </Link>
+                        ) : (
                           <span className="text-text-tertiary">--</span>
                         )}
                       </td>

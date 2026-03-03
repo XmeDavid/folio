@@ -6,9 +6,11 @@ import {
   numeric,
   date,
   serial,
+  boolean,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -90,11 +92,16 @@ export const bankingTransactions = pgTable(
     balance: numeric("balance", { precision: 18, scale: 4 }),
     status: text("status").notNull().default("completed"),
     category: text("category"),
+    categoryManual: boolean("category_manual").notNull().default(false),
     merchant: text("merchant"),
     transferType: text("transfer_type"),
     linkedAccountType: text("linked_account_type"),
     originalType: text("original_type"),
     originalProduct: text("original_product"),
+    tags: text("tags")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
@@ -102,6 +109,7 @@ export const bankingTransactions = pgTable(
     index("idx_banking_tx_date").on(table.date),
     index("idx_banking_tx_category").on(table.category),
     index("idx_banking_tx_merchant").on(table.merchant),
+    index("idx_banking_tx_tags").using("gin", table.tags),
   ]
 );
 
@@ -112,6 +120,13 @@ export const categories = pgTable("categories", {
   subGroup: text("sub_group"),
 });
 
+export const merchantOverrides = pgTable("merchant_overrides", {
+  id: serial("id").primaryKey(),
+  merchantName: text("merchant_name").notNull().unique(),
+  category: text("category"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export type Account = typeof accounts.$inferSelect;
 export type NewAccount = typeof accounts.$inferInsert;
 export type Transaction = typeof transactions.$inferSelect;
@@ -119,5 +134,6 @@ export type NewTransaction = typeof transactions.$inferInsert;
 export type BankingTransaction = typeof bankingTransactions.$inferSelect;
 export type NewBankingTransaction = typeof bankingTransactions.$inferInsert;
 export type Category = typeof categories.$inferSelect;
+export type MerchantOverride = typeof merchantOverrides.$inferSelect;
 export type FxRate = typeof fxRates.$inferSelect;
 export type StockPrice = typeof stockPrices.$inferSelect;

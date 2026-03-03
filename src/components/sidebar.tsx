@@ -12,6 +12,7 @@ import {
   CreditCard,
   Wallet,
   Building2,
+  Store,
   Menu,
   X,
 } from "lucide-react";
@@ -24,6 +25,7 @@ const navItems = [
   { href: "/banking", label: "Banking", icon: Wallet },
   { href: "/positions", label: "Positions", icon: Layers },
   { href: "/transactions", label: "Trades", icon: ArrowLeftRight },
+  { href: "/merchants", label: "Merchants", icon: Store },
   { href: "/import", label: "Import", icon: Upload },
   { href: "/accounts", label: "Accounts", icon: Building2 },
 ];

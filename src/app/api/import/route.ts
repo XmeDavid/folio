@@ -6,9 +6,10 @@ import { parseIBKR } from "@/lib/parsers/ibkr";
 import { parsePostFinanceCSV } from "@/lib/parsers/postfinance";
 import { parseRevolutBankingCSV } from "@/lib/parsers/revolut-banking";
 import { parseRevolutSavingsCSV } from "@/lib/parsers/revolut-savings";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { NewTransaction, NewBankingTransaction } from "@/db/schema";
 import { reconcileTransfers } from "@/lib/banking/reconcile-transfers";
+import { merchantOverrides } from "@/db/schema";
 
 function normalizeNumLike(value: string | null | undefined): string {
   if (value === null || value === undefined || value === "") return "";
@@ -210,6 +211,18 @@ async function dedupAndInsertBankingTransactions(
   return { inserted, duplicatesSkipped };
 }
 
+async function applyMerchantOverrides() {
+  await db.execute(sql`
+    UPDATE banking_transactions bt
+    SET category = mo.category
+    FROM merchant_overrides mo
+    WHERE bt.merchant = mo.merchant_name
+      AND mo.category IS NOT NULL
+      AND bt.category_manual = false
+      AND bt.category IS DISTINCT FROM mo.category
+  `);
+}
+
 export async function POST(req: NextRequest) {
   try {
   const formData = await req.formData();
@@ -277,7 +290,10 @@ export async function POST(req: NextRequest) {
       parsed, [checkingAccount.id, savingsAccount.id]
     );
 
-    if (inserted > 0) await reconcileTransfers();
+    if (inserted > 0) {
+      await reconcileTransfers();
+      await applyMerchantOverrides();
+    }
 
     return NextResponse.json({
       accountId: checkingAccount.id,
@@ -305,7 +321,10 @@ export async function POST(req: NextRequest) {
       investmentTxns, investmentAccount.id, "second"
     );
 
-    if (bankingResult.inserted > 0) await reconcileTransfers();
+    if (bankingResult.inserted > 0) {
+      await reconcileTransfers();
+      await applyMerchantOverrides();
+    }
 
     return NextResponse.json({
       accountId: savingsAccount.id,
@@ -331,7 +350,10 @@ export async function POST(req: NextRequest) {
       parsed, [account.id]
     );
 
-    if (inserted > 0) await reconcileTransfers();
+    if (inserted > 0) {
+      await reconcileTransfers();
+      await applyMerchantOverrides();
+    }
 
     return NextResponse.json({
       accountId: account.id,
