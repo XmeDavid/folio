@@ -2,9 +2,11 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/identity"
@@ -23,6 +25,12 @@ func (h *Handler) MountTenantAdmin(r chi.Router) {
 	r.With(owner).Patch("/", h.patchTenant)
 	r.With(owner).Delete("/", h.softDeleteTenant)
 	r.With(owner).Post("/restore", h.restoreTenant)
+
+	// Role change: owner-only. Remove/leave dispatches inside the handler
+	// because the "any member can self-leave, only owners can remove
+	// others" rule is context-dependent on actor vs. target.
+	r.With(owner).Patch("/members/{userId}", h.changeMemberRole)
+	r.Delete("/members/{userId}", h.removeOrLeaveMember)
 }
 
 type patchTenantReq struct {
@@ -98,7 +106,95 @@ func (h *Handler) restoreTenant(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, restored)
 }
 
-// chiURLParam is kept as an aliased reference so wider refactors don't
-// silently break the chi import in this file (handlers that use URL params
-// are added in Tasks 10 and 11).
-var _ = chi.URLParam
+type patchMemberReq struct {
+	Role string `json:"role"`
+}
+
+// changeMemberRole is owner-gated (by the mount chain). Surfaces
+// ErrLastOwner as 422 so the UI can show a stable code.
+func (h *Handler) changeMemberRole(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	tenant := MustTenant(r)
+	actor := MustUser(r)
+	userID, err := uuid.Parse(chi.URLParam(r, "userId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "userId must be a UUID")
+		return
+	}
+
+	var body patchMemberReq
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
+		return
+	}
+	role := identity.Role(body.Role)
+	if !role.Valid() {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_role", "role must be 'owner' or 'member'")
+		return
+	}
+
+	err = h.svc.identity.ChangeRole(r.Context(), tenant.ID, userID, role)
+	switch {
+	case errors.Is(err, identity.ErrLastOwner):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "last_owner",
+			"cannot demote the last owner of this tenant")
+		return
+	case errors.Is(err, identity.ErrNotAMember):
+		httpx.WriteError(w, http.StatusNotFound, "not_a_member", "membership not found")
+		return
+	case err != nil:
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	h.svc.WriteAudit(r.Context(), tenant.ID, actor.ID,
+		"member.role_changed", "membership", userID, nil,
+		map[string]any{"role": string(role)})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeOrLeaveMember dispatches on (userID == actor.ID):
+//   - self-leave: any member may call (subject to last-owner / last-tenant guards).
+//   - remove-other: owner only.
+func (h *Handler) removeOrLeaveMember(w http.ResponseWriter, r *http.Request) {
+	tenant := MustTenant(r)
+	actor := MustUser(r)
+	userID, err := uuid.Parse(chi.URLParam(r, "userId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "userId must be a UUID")
+		return
+	}
+
+	var action string
+	if userID == actor.ID {
+		err = h.svc.identity.LeaveTenant(r.Context(), tenant.ID, userID)
+		action = "member.left"
+	} else {
+		role, _ := RoleFromCtx(r.Context())
+		if role != identity.RoleOwner {
+			httpx.WriteError(w, http.StatusForbidden, "forbidden",
+				"only owners can remove other members")
+			return
+		}
+		err = h.svc.identity.RemoveMember(r.Context(), tenant.ID, userID)
+		action = "member.removed"
+	}
+	switch {
+	case errors.Is(err, identity.ErrLastOwner):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "last_owner",
+			"cannot remove the last owner of this tenant")
+		return
+	case errors.Is(err, identity.ErrLastTenant):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "last_tenant",
+			"cannot leave your last tenant — create another workspace first")
+		return
+	case errors.Is(err, identity.ErrNotAMember):
+		httpx.WriteError(w, http.StatusNotFound, "not_a_member", "membership not found")
+		return
+	case err != nil:
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	h.svc.WriteAudit(r.Context(), tenant.ID, actor.ID, action,
+		"membership", userID, nil, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
