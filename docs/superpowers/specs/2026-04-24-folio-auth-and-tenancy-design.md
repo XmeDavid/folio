@@ -25,7 +25,7 @@ After this lands:
 - **SCIM / directory sync.** Not in scope.
 - **Magic-link (email-only) login.** Passkeys are the passwordless path.
 - **Row-level security.** Defer per the v2 domain design; isolation continues to come from service-layer scoping + composite FKs.
-- **Admin / impersonation console** for the self-host owner. Later.
+- **Admin impersonation** — viewing a tenant's financial data as if a member. Privacy/legal-sensitive for fintech; wants its own spec (reason-required, tightly audited, read-only, feature-flagged).
 - **Cross-tenant aggregate views** (e.g. "all my net worth across Personal + Household"). Different base currencies, different cycle anchors — non-trivial and out of scope.
 
 ## 3. Domain model
@@ -45,6 +45,7 @@ After this lands:
 - **Add:**
   - `email_verified_at timestamptz` — set by the email-verification flow.
   - `last_tenant_id uuid references tenants(id) on delete set null` — last-used tenant for post-login redirect.
+  - `is_admin boolean not null default false` — instance-level admin flag for the admin console (§11). Orthogonal to tenant membership; granted via CLI (`folio-admin grant`) or first-run env bootstrap.
 - `password_hash text not null` — tightened from nullable. Signup must supply a password (the existing `Bootstrap` handler becomes `auth.Signup` and takes a password).
 
 **`tenants`:**
@@ -386,8 +387,9 @@ Written to `audit_events` (existing schema) with `actor_user_id`, `tenant_id` (n
 | MFA | `mfa.passkey_added`, `mfa.passkey_removed`, `mfa.totp_enabled`, `mfa.totp_disabled`, `mfa.recovery_codes_regenerated`, `mfa.reauth_completed` |
 | tenant | `tenant.created`, `tenant.renamed`, `tenant.settings_changed`, `tenant.deleted`, `tenant.restored` |
 | membership | `member.invited`, `member.invite_revoked`, `member.invite_accepted`, `member.role_changed`, `member.removed`, `member.left` |
+| admin | `admin.granted`, `admin.revoked`, `admin.bootstrap_granted`, `admin.viewed_user`, `admin.viewed_tenant`, `admin.viewed_audit`, `admin.retried_job`, `admin.resent_email` |
 
-Failed-login events are keyed by email (not user) to avoid creating a row for every typo. User-scoped events (password change, session revoke, etc.) are written with `tenant_id = NULL`.
+Failed-login events are keyed by email (not user) to avoid creating a row for every typo. User-scoped events (password change, session revoke, etc.) are written with `tenant_id = NULL`. Admin events are always `tenant_id = NULL` (they're cross-tenant by definition).
 
 ## 9. Registration modes
 
@@ -406,11 +408,47 @@ The signup endpoint is one code path; the env toggle gates it at the handler lay
 - `POST /api/v1/t/{id}/restore` clears `deleted_at`. Owner-only. Step-up required.
 - While soft-deleted, a tenant is invisible to every API path except explicit restore / list-deleted.
 
-## 11. Rollout / migration strategy
+## 11. Admin console
+
+Read-only debugging surface + a small set of operational writes for the person who runs the Folio instance (self-host owner or SaaS operator). Orthogonal to tenant roles — admin status is a user-level boolean (`users.is_admin`), not a tenant role. An admin has no default read/write access to any tenant's financial data; accessing tenant data would require impersonation, which is deferred (§2 non-goals).
+
+### 11.1 Granting admin
+
+- **CLI (`backend/cmd/folio-admin`):** `folio-admin grant <email>`, `folio-admin revoke <email>`, `folio-admin list`. Talks to Postgres directly using `DATABASE_URL`. Shipped alongside the server binary.
+- **First-run bootstrap:** if the env var `ADMIN_BOOTSTRAP_EMAIL` is set, the signup whose email matches is auto-granted `is_admin=true` exactly once. Writes `admin.bootstrap_granted`. The env var is ignored after a matching grant exists (idempotent).
+- **Last-admin guard:** both the CLI and the `/admin/users/{id}/revoke-admin` endpoint refuse if the target would become the last admin (parallel to the last-owner tenant invariant).
+
+### 11.2 HTTP surface
+
+Mounted at `/api/v1/admin/…` (API) with Next.js pages at `/admin/…` (web). Middleware chain:
+
+1. `RequireSession`
+2. `RequireAdmin` — **404 on miss** (not 403) so admin-ness isn't enumerable.
+3. `RequireFreshReauth(5min)` on every write.
+
+| Route | Purpose |
+|---|---|
+| `GET /api/v1/admin/tenants` | Paginated list + search by name/slug/id. |
+| `GET /api/v1/admin/tenants/{id}` | Detail: member count, settings, `deleted_at`, last activity. Metadata only — no financial rows. |
+| `GET /api/v1/admin/users` | Paginated list + search by email. |
+| `GET /api/v1/admin/users/{id}` | Detail: memberships, active sessions, MFA state, last login. |
+| `GET /api/v1/admin/audit` | Cross-tenant feed of `audit_events` with filters (actor, tenant, action, time range). |
+| `GET /api/v1/admin/jobs` | River queue view (running / scheduled / retryable / dead-letter). |
+| `POST /api/v1/admin/jobs/{id}/retry` | Re-enqueue a failed job (step-up). |
+| `POST /api/v1/admin/emails/{id}/resend` | Re-send a transactional email that bounced (step-up). |
+| `POST /api/v1/admin/users/{id}/grant-admin` | Promote (step-up). |
+| `POST /api/v1/admin/users/{id}/revoke-admin` | Demote (step-up; last-admin guard). |
+
+### 11.3 Audit on every admin action
+
+Reads audit too. Every admin route writes an audit event with `tenant_id = NULL` — fintech staff access to customer data (even metadata) should always be answerable: "who looked at this, and when?". Actions: see the `admin` row in §8.3.
+
+## 12. Rollout / migration strategy
 
 The identity migration has not been shipped to any user. Rather than pile a v2 migration on top, we **rewrite `20260424000001_identity.sql` in place** to reflect the new shape:
 
 - Drop `users.tenant_id`.
+- Add `email_verified_at`, `last_tenant_id`, `is_admin` to `users`.
 - Add `slug`, `deleted_at` to `tenants`.
 - Add `last_seen_at`, `reauth_at` to `sessions`.
 - Drop `totp_credentials.recovery_codes_cipher`.
@@ -421,24 +459,25 @@ All downstream migrations need a review pass to update anything that currently F
 
 The existing `backend/internal/identity.Bootstrap` code and `backend/internal/httpx.RequireTenant` middleware are deleted entirely and replaced by the new `backend/internal/auth` package.
 
-## 12. Web surface (high-level)
+## 13. Web surface (high-level)
 
 Page inventory on the Next.js side, each with its own route and component tree:
 
 - Public: `/`, `/login`, `/signup`, `/forgot`, `/reset/{token}`, `/accept-invite/{token}`, `/auth/verify/{token}`.
 - Authed, non-tenant: `/settings/account`, `/settings/security`, `/settings/sessions`, `/tenants` (tenant picker / create new).
 - Tenant-scoped: `/t/{slug}/…` covers the existing dashboard, accounts, transactions, categories, etc., plus `/t/{slug}/settings/members`, `/t/{slug}/settings/invites`, `/t/{slug}/settings/tenant`.
+- Admin (only visible to `is_admin=true` users): `/admin/tenants`, `/admin/users`, `/admin/audit`, `/admin/jobs`. Linked from the user menu with a distinct "Admin" badge so admins don't forget what hat they're wearing.
 - Tenant switcher lives in the top bar / sidebar; backed by `/me.tenants`.
 
 The current `web/lib/hooks/use-identity.ts` localStorage dev-bridge is removed. The identity hook becomes a React Query wrapper around `GET /api/v1/me`.
 
-## 13. Open / deferred
+## 14. Open / deferred
 
 Things we deliberately chose not to design now. Each is a future spec of its own.
 
 - **Billing & plans** — tenants will grow `billing_*` columns and a separate `plans` table.
 - **SSO / social login** — adds an `auth_identities(provider, provider_user_id, user_id)` table; login ceremony branches.
-- **Admin console** — self-host owner impersonation, tenant list.
+- **Admin impersonation** — "view this tenant as a member" for support. Feature-flagged, reason-required, fully audited, read-only. Complements the admin console in §11.
 - **Cross-tenant aggregate views** — "show me net worth across all my tenants".
 - **Account / data deletion UX** — requires a full-data-export trigger first (§21 in the bible).
 - **Advanced MFA**: hardware-key-only enforcement, YubiKey OTP, WebAuthn attestation policies.
