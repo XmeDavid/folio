@@ -47,6 +47,9 @@ func Load() (*Config, error) {
 	if len(sessionSecret) < 32 {
 		return nil, errors.New("SESSION_SECRET must be at least 32 characters")
 	}
+	if strings.Contains(sessionSecret, "CHANGE_ME") {
+		return nil, errors.New("SESSION_SECRET is still the .env.example placeholder; generate with: openssl rand -base64 48")
+	}
 	cfg.SessionSecret = []byte(sessionSecret)
 
 	rawKey := os.Getenv("SECRET_ENCRYPTION_KEY")
