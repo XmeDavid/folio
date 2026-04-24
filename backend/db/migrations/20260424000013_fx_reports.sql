@@ -157,8 +157,8 @@ create table report_exports (
   created_at            timestamptz not null default now(),
   updated_at            timestamptz not null default now(),
   unique (tenant_id, id),
-  constraint re_user_fk foreign key (tenant_id, requested_by_user_id)
-    references users(tenant_id, id) on delete cascade,
+  constraint re_user_fk foreign key (requested_by_user_id)
+    references users(id) on delete cascade,
   -- file_attachment_id uses on delete restrict (not set null) so that deleting
   -- an attachment referenced by a ready report fails fast at the DB layer
   -- rather than producing a cryptic check-constraint violation from re_ready_chk.

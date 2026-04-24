@@ -67,8 +67,8 @@ create table attachments (
   -- tenant should collapse to one row. Cross-tenant dedupe is intentionally
   -- not attempted (tenant isolation > storage savings).
   unique (tenant_id, sha256),
-  constraint attachments_uploader_fk foreign key (tenant_id, uploaded_by_user_id)
-    references users(tenant_id, id) on delete set null,
+  constraint attachments_uploader_fk foreign key (uploaded_by_user_id)
+    references users(id) on delete set null,
   check (size_bytes >= 0),
   -- SHA-256 is exactly 32 bytes; guard against truncation or mis-encoding.
   check (length(sha256) = 32)
@@ -100,8 +100,8 @@ create table attachment_links (
   unique (attachment_id, entity_type, entity_id),
   constraint al_attachment_fk foreign key (tenant_id, attachment_id)
     references attachments(tenant_id, id) on delete cascade,
-  constraint al_linker_fk foreign key (tenant_id, linked_by_user_id)
-    references users(tenant_id, id) on delete set null
+  constraint al_linker_fk foreign key (linked_by_user_id)
+    references users(id) on delete set null
 );
 
 -- Index for the dominant read: "show all attachments for entity X".
@@ -143,8 +143,8 @@ create table saved_searches (
   updated_at   timestamptz not null default now(),
   unique (tenant_id, id),
   unique (tenant_id, user_id, name),
-  constraint ss_user_fk foreign key (tenant_id, user_id)
-    references users(tenant_id, id) on delete cascade
+  constraint ss_user_fk foreign key (user_id)
+    references users(id) on delete cascade
 );
 
 create trigger saved_searches_updated_at before update on saved_searches
@@ -160,10 +160,10 @@ create index saved_searches_user_pinned_idx on saved_searches(user_id, pinned de
 -- populated by the application (when available) for forensic context.
 create table audit_events (
   id              uuid primary key,
-  tenant_id       uuid not null references tenants(id) on delete cascade,
+  tenant_id       uuid references tenants(id) on delete cascade,
   entity_type     text not null,
   entity_id       uuid not null,
-  action          audit_action not null,
+  action          text not null,
   actor_user_id   uuid,
   before_jsonb    jsonb,
   after_jsonb     jsonb,
@@ -172,8 +172,8 @@ create table audit_events (
   user_agent      text,
   occurred_at     timestamptz not null default now(),
   unique (tenant_id, id),
-  constraint ae_actor_fk foreign key (tenant_id, actor_user_id)
-    references users(tenant_id, id) on delete set null
+  constraint ae_actor_fk foreign key (actor_user_id)
+    references users(id) on delete set null
 );
 
 -- Entity timeline: "history of entity X, newest first" — the dominant
@@ -216,7 +216,7 @@ declare
   v_entity_id uuid;
   v_before jsonb;
   v_after jsonb;
-  v_action audit_action;
+  v_action text;
 begin
   if tg_op = 'DELETE' then
     v_action := 'deleted';

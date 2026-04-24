@@ -76,8 +76,8 @@ create table category_history (
     references categories(tenant_id, id) on delete cascade,
   constraint ch_merged_into_fk foreign key (tenant_id, merged_into_category_id)
     references categories(tenant_id, id) on delete set null,
-  constraint ch_actor_fk foreign key (tenant_id, actor_user_id)
-    references users(tenant_id, id) on delete set null
+  constraint ch_actor_fk foreign key (actor_user_id)
+    references users(id) on delete set null
 );
 
 -- Per-category timeline lookup (also serves FK-side index for ch_category_fk).

@@ -142,8 +142,8 @@ create table import_batches (
     references import_profiles(tenant_id, id) on delete set null,
   constraint ib_conn_fk foreign key (tenant_id, provider_connection_id)
     references provider_connections(tenant_id, id) on delete set null,
-  constraint ib_actor_fk foreign key (tenant_id, created_by_user_id)
-    references users(tenant_id, id) on delete set null
+  constraint ib_actor_fk foreign key (created_by_user_id)
+    references users(id) on delete set null
 );
 
 -- Row-freshness signal for stuck-parse detection and parity with every

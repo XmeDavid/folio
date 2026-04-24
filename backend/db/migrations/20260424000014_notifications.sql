@@ -245,8 +245,8 @@ create table notification_preferences (
   unique (tenant_id, user_id, event_kind, channel),
   -- Composite FK to users keeps the preference row's tenant aligned with the
   -- user's tenant (defence in depth against cross-tenant assignment).
-  constraint np_user_fk foreign key (tenant_id, user_id)
-    references users(tenant_id, id) on delete cascade
+  constraint np_user_fk foreign key (user_id)
+    references users(id) on delete cascade
 );
 
 create trigger notification_preferences_updated_at before update on notification_preferences

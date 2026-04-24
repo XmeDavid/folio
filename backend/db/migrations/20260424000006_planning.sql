@@ -414,8 +414,8 @@ create table planned_event_matches (
     references planned_events(tenant_id, id) on delete cascade,
   constraint pem_txn_fk foreign key (tenant_id, transaction_id)
     references transactions(tenant_id, id) on delete cascade,
-  constraint pem_actor_fk foreign key (tenant_id, matched_by_user_id)
-    references users(tenant_id, id) on delete set null
+  constraint pem_actor_fk foreign key (matched_by_user_id)
+    references users(id) on delete set null
 );
 
 create index planned_event_matches_event_idx on planned_event_matches(planned_event_id);

@@ -171,8 +171,8 @@ create table transfer_matches (
     references transactions(tenant_id, id) on delete cascade,
   constraint tm_dest_fk foreign key (tenant_id, destination_transaction_id)
     references transactions(tenant_id, id) on delete cascade,
-  constraint tm_actor_fk foreign key (tenant_id, matched_by_user_id)
-    references users(tenant_id, id) on delete set null,
+  constraint tm_actor_fk foreign key (matched_by_user_id)
+    references users(id) on delete set null,
   -- fee_amount and fee_currency must be NULL together.
   constraint tm_fee_pair_chk
     check ((fee_amount is null) = (fee_currency is null))
@@ -200,8 +200,8 @@ create table refund_matches (
     references transactions(tenant_id, id) on delete cascade,
   constraint rm_refund_fk foreign key (tenant_id, refund_transaction_id)
     references transactions(tenant_id, id) on delete cascade,
-  constraint rm_actor_fk foreign key (tenant_id, matched_by_user_id)
-    references users(tenant_id, id) on delete set null
+  constraint rm_actor_fk foreign key (matched_by_user_id)
+    references users(id) on delete set null
 );
 
 -- FK-side indexes for cascades and per-side lookup.
