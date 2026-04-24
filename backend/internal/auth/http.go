@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/identity"
@@ -112,16 +113,25 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
-	sess, ok := SessionFromCtx(r.Context())
-	if !ok {
-		// Cookie-only logout: just clear the cookie.
-		ClearSessionCookie(w)
-		w.WriteHeader(http.StatusNoContent)
-		return
+	// Parse cookie directly — logout works even if the session is already
+	// expired in the DB, and is mounted without RequireSession upstream so
+	// the server-side DELETE must happen here.
+	if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
+		sid := SessionIDFromToken(c.Value)
+		var userID *uuid.UUID
+		if sess, ok := SessionFromCtx(r.Context()); ok {
+			userID = &sess.UserID
+		}
+		// Delete the row regardless of whether ctx had a user (best-effort
+		// unconditional invalidation).
+		_, _ = h.svc.pool.Exec(r.Context(), `delete from sessions where id = $1`, sid)
+		// Audit: we know the session id; actor may be nil if the cookie
+		// was stale. Swallow errors — audit is best-effort on logout.
+		if userID != nil {
+			ip := parseIPForStorage(ipFromRequest(r))
+			h.svc.logAuditDirect(r.Context(), nil, userID, "user.logout", "user", *userID, ip, r.UserAgent())
+		}
 	}
-	user, _ := UserFromCtx(r.Context())
-	ip := parseIPForStorage(ipFromRequest(r))
-	_ = h.svc.Logout(r.Context(), sess.ID, user.ID, ip, r.UserAgent())
 	ClearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 }
