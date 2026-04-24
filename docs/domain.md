@@ -1,5 +1,7 @@
 # Domain model
 
+> **Being rewritten** to match `docs/superpowers/specs/2026-04-24-folio-domain-v2-design.md`. Until the rewrite (tracked at the end of this plan), consult the spec for the authoritative column listing.
+
 ## Entities
 
 - **User** – one per person, owns everything via `user_id`.
