@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CreateAccountForm } from "@/components/accounts/create-account-form";
-import { fetchAccounts, fetchMe, type Account } from "@/lib/api/client";
+import { fetchAccounts, type Account } from "@/lib/api/client";
 import { useIdentity } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
 import { accountKindLabel } from "@/lib/accounts";
@@ -25,23 +25,19 @@ export default function AccountsPage() {
 
 function AccountsInner() {
   const identity = useIdentity();
-  const tenantId =
-    identity.status === "authenticated" ? identity.tenantId : null;
+  const tenant =
+    identity.status === "authenticated" ? identity.data.tenants[0] : null;
+  const tenantId = tenant?.id ?? null;
   const [creating, setCreating] = React.useState(false);
 
-  const meQuery = useQuery({
-    queryKey: ["me", tenantId],
-    queryFn: () => fetchMe(tenantId!),
-    enabled: !!tenantId,
-  });
   const accountsQuery = useQuery({
     queryKey: ["accounts", tenantId],
     queryFn: () => fetchAccounts(tenantId!),
     enabled: !!tenantId,
   });
 
-  const locale = meQuery.data?.tenant.locale;
-  const baseCurrency = meQuery.data?.tenant.baseCurrency ?? "CHF";
+  const locale = tenant?.locale;
+  const baseCurrency = tenant?.baseCurrency ?? "CHF";
 
   return (
     <div className="flex flex-col gap-8">

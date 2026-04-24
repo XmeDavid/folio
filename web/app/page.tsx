@@ -9,7 +9,7 @@ import { EmptyState, ErrorBanner } from "@/components/app/empty";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { fetchAccounts, fetchTransactions, fetchMe } from "@/lib/api/client";
+import { fetchAccounts, fetchTransactions } from "@/lib/api/client";
 import { useIdentity } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
 import { accountKindLabel } from "@/lib/accounts";
@@ -24,14 +24,13 @@ export default function HomePage() {
 
 function DashboardInner() {
   const identity = useIdentity();
-  const tenantId =
-    identity.status === "authenticated" ? identity.tenantId : null;
+  // §14 will promote this to a slug-scoped route; for §12 we pick the first
+  // tenant on the session so the dashboard keeps compiling and fetching.
+  const tenant =
+    identity.status === "authenticated" ? identity.data.tenants[0] : null;
+  const user = identity.status === "authenticated" ? identity.data.user : null;
+  const tenantId = tenant?.id ?? null;
 
-  const meQuery = useQuery({
-    queryKey: ["me", tenantId],
-    queryFn: () => fetchMe(tenantId!),
-    enabled: !!tenantId,
-  });
   const accountsQuery = useQuery({
     queryKey: ["accounts", tenantId],
     queryFn: () => fetchAccounts(tenantId!),
@@ -43,25 +42,25 @@ function DashboardInner() {
     enabled: !!tenantId,
   });
 
-  const locale = meQuery.data?.tenant.locale;
+  const locale = tenant?.locale;
 
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
         eyebrow="Overview"
         title={
-          meQuery.data
-            ? `Welcome back, ${meQuery.data.user.displayName}`
+          user
+            ? `Welcome back, ${user.displayName}`
             : "Welcome to Folio"
         }
         description={
-          meQuery.data
-            ? `Base currency ${meQuery.data.tenant.baseCurrency}  -  cycle anchor ${meQuery.data.tenant.cycleAnchorDay}.`
+          tenant
+            ? `Base currency ${tenant.baseCurrency}  -  cycle anchor ${tenant.cycleAnchorDay}.`
             : "Loading your workspace..."
         }
       />
 
-      {meQuery.isError ? (
+      {accountsQuery.isError || txQuery.isError ? (
         <ErrorBanner
           title="Couldn't reach the Folio API"
           description="Make sure the backend is running on :8080. The dev server proxies /api/* to it."
@@ -85,7 +84,7 @@ function DashboardInner() {
         />
         <StatCard
           label="Base currency"
-          value={meQuery.data?.tenant.baseCurrency ?? "-"}
+          value={tenant?.baseCurrency ?? "-"}
           hint="Reporting roll-up"
         />
       </section>

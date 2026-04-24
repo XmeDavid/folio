@@ -12,7 +12,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CreateTransactionForm } from "@/components/transactions/create-transaction-form";
 import {
   fetchAccounts,
-  fetchMe,
   fetchTransactions,
   type Account,
   type Transaction,
@@ -31,15 +30,11 @@ export default function TransactionsPage() {
 
 function TransactionsInner() {
   const identity = useIdentity();
-  const tenantId =
-    identity.status === "authenticated" ? identity.tenantId : null;
+  const tenant =
+    identity.status === "authenticated" ? identity.data.tenants[0] : null;
+  const tenantId = tenant?.id ?? null;
   const [creating, setCreating] = React.useState(false);
 
-  const meQuery = useQuery({
-    queryKey: ["me", tenantId],
-    queryFn: () => fetchMe(tenantId!),
-    enabled: !!tenantId,
-  });
   const accountsQuery = useQuery({
     queryKey: ["accounts", tenantId],
     queryFn: () => fetchAccounts(tenantId!),
@@ -51,7 +46,7 @@ function TransactionsInner() {
     enabled: !!tenantId,
   });
 
-  const locale = meQuery.data?.tenant.locale;
+  const locale = tenant?.locale;
   const accounts = accountsQuery.data ?? [];
   const hasAccounts = accounts.length > 0;
 
