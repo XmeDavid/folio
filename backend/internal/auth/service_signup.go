@@ -7,8 +7,6 @@ import (
 	"net"
 	"strings"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
@@ -211,6 +209,3 @@ func ipString(ip net.IP) string {
 	return ip.String()
 }
 
-// ensure these are used to avoid unused-import complaints from refactors.
-var _ = uuid.Nil
-var _ pgx.Tx = nil

@@ -6,7 +6,10 @@ import (
 	"github.com/xmedavid/folio/backend/internal/httpx"
 )
 
-const minPasswordLen = 12
+const (
+	minPasswordLen = 12
+	maxPasswordLen = 128
+)
 
 // CheckPasswordPolicy enforces: minimum length, blocks substring-of-email-
 // local-part or display-name tokens (case-insensitive, tokens >=4 chars),
@@ -14,6 +17,9 @@ const minPasswordLen = 12
 func CheckPasswordPolicy(password, email, displayName string) error {
 	if len(password) < minPasswordLen {
 		return httpx.NewValidationError("password must be at least 12 characters")
+	}
+	if len(password) > maxPasswordLen {
+		return httpx.NewValidationError("password is too long (max 128 characters)")
 	}
 	lower := strings.ToLower(password)
 	if local, _, ok := splitEmailLocal(email); ok && len(local) >= 4 && strings.Contains(lower, strings.ToLower(local)) {

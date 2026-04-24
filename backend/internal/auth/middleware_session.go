@@ -28,7 +28,7 @@ func (s *Service) RequireSession(next http.Handler) http.Handler {
 			from sessions where id = $1
 		`, sid).Scan(&sess.ID, &sess.UserID, &sess.CreatedAt, &sess.ExpiresAt, &sess.LastSeenAt, &sess.ReauthAt)
 		if err != nil && errors.Is(err, pgx.ErrNoRows) {
-			ClearSessionCookie(w)
+			ClearSessionCookie(w, s.cfg.SecureCookies)
 			httpx.WriteError(w, http.StatusUnauthorized, "session_expired", "sign in again")
 			return
 		}
@@ -38,13 +38,13 @@ func (s *Service) RequireSession(next http.Handler) http.Handler {
 		}
 		if !sess.ExpiresAt.After(now) {
 			_, _ = s.pool.Exec(r.Context(), `delete from sessions where id = $1`, sid)
-			ClearSessionCookie(w)
+			ClearSessionCookie(w, s.cfg.SecureCookies)
 			httpx.WriteError(w, http.StatusUnauthorized, "session_expired", "sign in again")
 			return
 		}
 		if now.Sub(sess.LastSeenAt) > s.cfg.SessionIdle {
 			_, _ = s.pool.Exec(r.Context(), `delete from sessions where id = $1`, sid)
-			ClearSessionCookie(w)
+			ClearSessionCookie(w, s.cfg.SecureCookies)
 			httpx.WriteError(w, http.StatusUnauthorized, "session_idle", "sign in again")
 			return
 		}

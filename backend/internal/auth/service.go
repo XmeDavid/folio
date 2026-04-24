@@ -24,6 +24,10 @@ type Config struct {
 	SessionAbsolute time.Duration // default 90*24h
 	Registration    RegistrationMode
 	BootstrapEmail  string // ADMIN_BOOTSTRAP_EMAIL; plan 5 consumes this
+	// SecureCookies controls the Secure flag on the session cookie.
+	// Callers must set this explicitly: true in prod, false in dev over
+	// http://localhost (Firefox refuses to store Secure cookies over http).
+	SecureCookies bool
 }
 
 // Service wraps the db pool and the identity.Service. Handlers call Signup,
@@ -46,6 +50,8 @@ func NewService(pool *pgxpool.Pool, identitySvc *identity.Service, cfg Config) *
 	if cfg.Registration == "" {
 		cfg.Registration = RegistrationOpen
 	}
+	// SecureCookies is a required knob: zero-value (false) is only acceptable
+	// when the caller explicitly passes it (e.g. APP_ENV=development).
 	return &Service{pool: pool, identity: identitySvc, cfg: cfg, now: time.Now}
 }
 

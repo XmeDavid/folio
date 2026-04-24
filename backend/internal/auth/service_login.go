@@ -106,8 +106,10 @@ func (s *Service) logLoginFailed(ctx context.Context, email string, ip net.IP, u
 	`, uuidx.New(), uuidx.New(), email, ipString(ip), ua)
 }
 
-// logAuditDirect writes to audit_events outside a tx (steady-state, no
-// surrounding write to bind to).
+// logAuditDirect writes an audit event outside a transaction — used for
+// steady-state events (login, logout) that don't have a surrounding write.
+// Intentionally omits before_jsonb/after_jsonb to keep these events slim;
+// use writeAuditTx inside a transaction for full-fidelity change audit.
 func (s *Service) logAuditDirect(ctx context.Context, tenantID *uuid.UUID, actorUserID *uuid.UUID, action, entityType string, entityID uuid.UUID, ip net.IP, ua string) {
 	_, _ = s.pool.Exec(ctx, `
 		insert into audit_events (id, tenant_id, actor_user_id, action, entity_type, entity_id, ip, user_agent)

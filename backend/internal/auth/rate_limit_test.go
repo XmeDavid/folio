@@ -3,6 +3,7 @@ package auth
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -56,21 +57,41 @@ func TestRateLimitByIP(t *testing.T) {
 }
 
 func TestIpFromRequest(t *testing.T) {
-	cases := []struct{ name, xff, remote, want string }{
-		{"xff first entry", "1.2.3.4, 5.6.7.8", "10.0.0.1:5000", "1.2.3.4"},
-		{"xff single", "1.2.3.4", "10.0.0.1:5000", "1.2.3.4"},
-		{"remote fallback", "", "10.0.0.1:5000", "10.0.0.1"},
+	cases := []struct{ name, remote, want string }{
+		{"remote with port", "10.0.0.1:5000", "10.0.0.1"},
+		{"remote without port", "10.0.0.1", "10.0.0.1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/", nil)
-			if tc.xff != "" {
-				req.Header.Set("X-Forwarded-For", tc.xff)
-			}
 			req.RemoteAddr = tc.remote
 			if got := ipFromRequest(req); got != tc.want {
 				t.Errorf("ipFromRequest() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestTokenBucket_lazyEviction(t *testing.T) {
+	b := newTokenBucket(1, 10*time.Millisecond)
+	base := time.Now()
+	// Seed >1024 expired entries directly (bypass take() to avoid triggering
+	// the sweep during setup).
+	for i := 0; i < 2000; i++ {
+		b.counters[strconv.Itoa(i)] = &bucketCount{count: 1, resetAt: base.Add(10 * time.Millisecond)}
+	}
+	before := len(b.counters)
+	if before <= 1024 {
+		t.Fatalf("expected >1024 seeded entries, got %d", before)
+	}
+	// Advance the bucket's clock past all resetAt values so entries are expired.
+	b.now = func() time.Time { return base.Add(time.Hour) }
+	// Any take() call should trigger the sweep.
+	b.take("trigger")
+	after := len(b.counters)
+	// Post-sweep: nearly everything should be gone; only the "trigger" entry
+	// should remain (and maybe a couple of racers). Accept any significant drop.
+	if after >= before/2 {
+		t.Fatalf("expected sweep to evict most expired entries; before=%d after=%d", before, after)
 	}
 }

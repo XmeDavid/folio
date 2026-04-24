@@ -3,7 +3,6 @@ package auth
 import (
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +35,17 @@ func (b *tokenBucket) take(key string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := b.now()
+
+	// Lazy eviction: when the map has grown past a threshold, sweep once.
+	// Cheap amortised cost; prevents unbounded growth from high-cardinality IPs.
+	if len(b.counters) > 1024 {
+		for k, c := range b.counters {
+			if now.After(c.resetAt) {
+				delete(b.counters, k)
+			}
+		}
+	}
+
 	c := b.counters[key]
 	if c == nil || now.After(c.resetAt) {
 		c = &bucketCount{count: 0, resetAt: now.Add(b.window)}
@@ -48,15 +58,10 @@ func (b *tokenBucket) take(key string) bool {
 	return true
 }
 
-// ipFromRequest returns the best-effort client IP for the request. Prefers
-// X-Forwarded-For (first entry) then RemoteAddr (stripped of port).
+// ipFromRequest returns the best-effort client IP for the request.
+// chimw.RealIP runs globally and has already normalized r.RemoteAddr
+// from any trusted X-Forwarded-For. Trust it.
 func ipFromRequest(r *http.Request) string {
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		if i := strings.IndexByte(v, ','); i > 0 {
-			return strings.TrimSpace(v[:i])
-		}
-		return strings.TrimSpace(v)
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

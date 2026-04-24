@@ -45,7 +45,8 @@ func NewRouter(d Deps) http.Handler {
 
 	identitySvc := identity.NewService(d.DB)
 	authSvc := auth.NewService(d.DB, identitySvc, auth.Config{
-		Registration: auth.RegistrationMode(os.Getenv("REGISTRATION_MODE")),
+		Registration:  auth.RegistrationMode(os.Getenv("REGISTRATION_MODE")),
+		SecureCookies: os.Getenv("APP_ENV") != "development",
 	})
 	authH := auth.NewHandler(authSvc)
 

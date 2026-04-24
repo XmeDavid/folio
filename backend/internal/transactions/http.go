@@ -64,15 +64,8 @@ type patchReq struct {
 	CountAsExpense  json.RawMessage `json:"countAsExpense"`
 }
 
-func requireTenant(_ http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	return auth.MustTenant(r).ID, true
-}
-
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
-	if !ok {
-		return
-	}
+	tenantID := auth.MustTenant(r).ID
 
 	q := r.URL.Query()
 	f := ListFilter{}
@@ -126,10 +119,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
-	if !ok {
-		return
-	}
+	tenantID := auth.MustTenant(r).ID
 	var req createReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
@@ -221,10 +211,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
-	if !ok {
-		return
-	}
+	tenantID := auth.MustTenant(r).ID
 	id, err := uuid.Parse(chi.URLParam(r, "transactionId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "transactionId must be a UUID")
@@ -239,10 +226,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
-	if !ok {
-		return
-	}
+	tenantID := auth.MustTenant(r).ID
 	id, err := uuid.Parse(chi.URLParam(r, "transactionId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "transactionId must be a UUID")
@@ -276,10 +260,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
-	if !ok {
-		return
-	}
+	tenantID := auth.MustTenant(r).ID
 	id, err := uuid.Parse(chi.URLParam(r, "transactionId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "transactionId must be a UUID")

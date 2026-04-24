@@ -2,6 +2,7 @@ package auth
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
 )
@@ -25,7 +26,11 @@ func CSRF(allowedOrigins []string) func(http.Handler) http.Handler {
 			}
 			origin := r.Header.Get("Origin")
 			if origin == "" {
-				origin = r.Header.Get("Referer")
+				if ref := r.Header.Get("Referer"); ref != "" {
+					if u, err := url.Parse(ref); err == nil && u.Scheme != "" && u.Host != "" {
+						origin = u.Scheme + "://" + u.Host
+					}
+				}
 			}
 			if _, ok := allowed[origin]; !ok {
 				httpx.WriteError(w, http.StatusForbidden, "csrf_origin", "origin not allowed")

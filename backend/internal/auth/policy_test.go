@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
@@ -19,6 +20,7 @@ func TestCheckPasswordPolicy(t *testing.T) {
 		{"contains display name token", "Hello Alice Smith long", "x@y.com", "Alice Smith", true},
 		{"common", "password1234567", "x@y.com", "Xyzabc", true},
 		{"empty", "", "x@y.com", "Xyzabc", true},
+		{"too long", strings.Repeat("a", 129), "x@y.com", "Xyzabc", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

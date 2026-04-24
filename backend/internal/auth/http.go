@@ -57,6 +57,7 @@ type signupReq struct {
 }
 
 func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB cap on auth payloads
 	var body signupReq
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
@@ -73,7 +74,7 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteServiceError(w, err)
 		return
 	}
-	SetSessionCookie(w, out.SessionToken)
+	SetSessionCookie(w, out.SessionToken, h.svc.cfg.SecureCookies)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"user":        out.User,
 		"tenant":      out.Tenant,
@@ -88,6 +89,7 @@ type loginReq struct {
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB cap on auth payloads
 	var body loginReq
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
@@ -105,7 +107,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteServiceError(w, err)
 		return
 	}
-	SetSessionCookie(w, out.SessionToken)
+	SetSessionCookie(w, out.SessionToken, h.svc.cfg.SecureCookies)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":        out.User,
 		"mfaRequired": out.MFARequired,
@@ -132,7 +134,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 			h.svc.logAuditDirect(r.Context(), nil, userID, "user.logout", "user", *userID, ip, r.UserAgent())
 		}
 	}
-	ClearSessionCookie(w)
+	ClearSessionCookie(w, h.svc.cfg.SecureCookies)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -159,6 +161,7 @@ type createTenantReq struct {
 
 func (h *Handler) createTenant(w http.ResponseWriter, r *http.Request) {
 	user := MustUser(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB cap on auth payloads
 	var body createTenantReq
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
@@ -196,6 +199,3 @@ func parseIPForStorage(s string) net.IP {
 	ip := net.ParseIP(s)
 	return ip
 }
-
-// silence unused import if chi isn't referenced at compile (it is, by router).
-var _ = chi.NewRouter

@@ -9,7 +9,7 @@ import (
 
 func TestSetSessionCookie(t *testing.T) {
 	rec := httptest.NewRecorder()
-	SetSessionCookie(rec, "abc123")
+	SetSessionCookie(rec, "abc123", true)
 	resp := rec.Result()
 	cookies := resp.Cookies()
 	if len(cookies) != 1 {
@@ -38,7 +38,7 @@ func TestSetSessionCookie(t *testing.T) {
 
 func TestClearSessionCookie(t *testing.T) {
 	rec := httptest.NewRecorder()
-	ClearSessionCookie(rec)
+	ClearSessionCookie(rec, true)
 	h := rec.Header().Get("Set-Cookie")
 	if !strings.Contains(h, "Max-Age=0") {
 		t.Errorf("expected Max-Age=0 (from MaxAge=-1), got %q", h)

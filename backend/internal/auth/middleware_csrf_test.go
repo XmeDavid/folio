@@ -58,3 +58,17 @@ func TestCSRF_allows(t *testing.T) {
 		t.Fatalf("code = %d, want 204", rec.Code)
 	}
 }
+
+func TestCSRF_refererFallbackOriginExtracted(t *testing.T) {
+	h := CSRF([]string{"http://localhost:3000"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(204)
+	}))
+	req := httptest.NewRequest("POST", "/", nil)
+	req.Header.Set("Referer", "http://localhost:3000/some/path")
+	req.Header.Set("X-Folio-Request", "1")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 204 {
+		t.Fatalf("expected Referer fallback to match, got %d", rec.Code)
+	}
+}
