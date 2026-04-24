@@ -55,9 +55,10 @@ Rationale:
 
 ### 3.3 Money
 
-Every monetary column is `numeric(28,8) not null`, always paired with a `currency varchar(10) not null check (currency ~ '^[A-Z0-9]{3,10}$')`.
+Every monetary column is `numeric(28,8) not null`, always paired with a currency column typed as the `money_currency` domain (a `varchar(10)` with the regex check `^[A-Z0-9]{3,10}$`). The domain is created once in `001_identity.sql` and used by every migration that follows — no migration should re-inline the check.
 
 - Width accommodates crypto tickers (`USDT`, `USDC`, `DOGE`, `MATIC`, `1INCH`, `WBTC`, …) alongside ISO 4217 fiat codes. API layer uppercase-normalises on input.
+- Column listings in §5 use the shorthand `varchar(10)` for readability; in the actual SQL every such column uses `money_currency`.
 - No separate `currencies` lookup table. Adding a new currency never requires a migration.
 - No pre-computed base-currency columns on facts. Base values derive at read time from `fx_rates`. FX corrections automatically recompute reports.
 - The only stored base-currency cache is `networth_snapshots.total_value`, which has an explicit recompute trigger list.
