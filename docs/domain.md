@@ -1,53 +1,114 @@
 # Domain model
 
-> **Being rewritten** to match `docs/superpowers/specs/2026-04-24-folio-domain-v2-design.md`. Until the rewrite (tracked at the end of this plan), consult the spec for the authoritative column listing.
+Folio's data model is documented in full at
+`docs/superpowers/specs/2026-04-24-folio-domain-v2-design.md`. This
+document is the high-level narrative; the spec is the authoritative
+column listing.
 
-## Entities
+## Identity and tenancy
 
-- **User** – one per person, owns everything via `user_id`.
-- **Account** – anything with a balance (bank, brokerage, cash pot, credit card, loan). Has a `source` (`manual | gocardless | ibkr_flex | camt053_import | csv_import`) indicating where data comes from.
-- **Category** – user-defined hierarchical taxonomy for transactions.
-- **Transaction** – one posted ledger entry. Signed amount (negative = outflow). Idempotent via `(account_id, external_id)` unique index.
-- **ProviderConnection** – one per external link (e.g. one requisition to Revolut, one IBKR Flex token). Secrets are AES-GCM encrypted.
+- **Tenants** own all financial data. Financial rows carry `tenant_id`.
+- **Users** authenticate into a tenant. v1 enforces one user per tenant
+  via `users.tenant_id UNIQUE`.
+- Tenant isolation is enforced by **composite foreign keys** (every
+  tenant-scoped table has `UNIQUE (tenant_id, id)`; every FK from
+  another tenant-scoped table is composite).
 
-## Money rules
+## Money and currency
 
-| Rule | Reason |
+- Every amount is `numeric(28,8)` — a single precision for fiat,
+  crypto, and FX.
+- Every amount carries a currency (`money_currency` domain over
+  `varchar(10)`, ISO 4217 plus crypto tickers).
+- Base-currency values are **derived** from `fx_rates` at read time.
+  The only stored base-currency cache is `networth_snapshots.total_value`.
+- UUIDv7 primary keys, generated app-side (backend: `uuid.NewV7()`;
+  web PWA: any JS UUIDv7 lib).
+
+## Facts, intentions, interpretations
+
+The schema separates three layers:
+
+| Layer | Tables |
 |---|---|
-| Store as `numeric(19,4)` (fiat) or `numeric(28,8)` (crypto) | No float rounding |
-| Go side: `shopspring/decimal.Decimal` | Matches `numeric` semantics |
-| Wire format: JSON `string`, never `number` | JS `number` is IEEE-754 → loses precision above ~15 digits |
-| Every amount carries a currency | No ambiguity, explicit FX |
-| FX stored separately (not baked into amount) | Preserves original + converted both |
+| **Facts** (what happened) | `transactions`, `transaction_lines`, `account_balance_snapshots`, `investment_trades`, `investment_lots`, `dividend_events`, `asset_valuations`, `fx_rates` |
+| **Intentions** (what you plan) | `recurring_templates`, `cycle_plans`, `cycle_plan_lines`, `planned_events`, `action_items`, `goals`, `savings_rules`, `rollover_policies` |
+| **Interpretations** (how Folio reads the data) | `categories`, `merchants`, `tags`, `categorization_rules`, `transfer_matches`, `refund_matches`, `planned_event_matches`, `goal_contributions`, `split_bill_allocations`, `trip_transaction_links` |
 
-## Multi-currency
+## Accounts and balances
 
-- Each user has a `base_currency` (default `CHF`) for reporting and net-worth rollups.
-- Accounts are single-currency. If Revolut has CHF + EUR + USD, that's three accounts under the same GoCardless connection.
-- Each transaction records:
-  - `amount` + `currency` — the account's currency (what actually hit the balance)
-  - `original_amount` + `original_currency` — pre-FX (nullable; same as above if no FX)
-- FX rates: pull daily rates (ECB or Open Exchange Rates) into a `fx_rates` table (planned). Reports join on date.
+- An **account** is anything with a balance: bank account, brokerage,
+  cash pot, credit card, loan, mortgage, physical asset, retirement
+  pillar.
+- Balances are derived from `account_balance_snapshots` + post-snapshot
+  transactions. No cached balance column on `accounts`.
+- Reconciliation checkpoints assert "at date D, balance was B" and
+  surface drift.
 
-## Idempotent sync
+## Transactions and classification
 
-- Every provider transaction has a stable `external_id` (GoCardless `transactionId`, IBKR Flex `tradeID` or `cashTransactionID`).
-- Upsert pattern: `INSERT ... ON CONFLICT (account_id, external_id) DO UPDATE`.
-- Manual transactions have `external_id = NULL` — never conflict.
-- Balance field on `accounts` is a **cached** value from the provider's latest balance pull; don't derive it by summing transactions (transactions history may be truncated).
+- `transactions` carries `status` (`draft/posted/reconciled/voided`)
+  and optional `category_id`.
+- Splits create `transaction_lines`; each line has its own category
+  and amount. When lines exist, `category_id` on the parent must be
+  null (enforced by trigger).
+- Uncategorised transactions (no `category_id`, no lines) are valid —
+  they surface in the "Uncategorised" bucket or are classified by
+  relationship (`transfer_matches`, `investment_trades.linked_cash_transaction_id`,
+  `dividend_events.linked_cash_transaction_id`,
+  `mortgage_payments.linked_transaction_id`,
+  `asset_events.linked_transaction_id`).
+- Transfers, refunds, reimbursements, goal contributions, trip spend,
+  and split-bill shares all live in **typed relationship tables**, not
+  in transaction fields.
 
-## Planning (future module)
+## Imports and providers
 
-Not in the initial migration. Rough shape:
+- `provider_connections` holds encrypted tokens for external sources
+  (GoCardless, IBKR Flex, crypto addresses).
+- `import_batches` records each file or sync run.
+- Dedupe keys live in `source_refs` (polymorphic, tenant-scoped).
 
-- **Budget** – period (monthly/yearly) + category limits.
-- **Goal** – target amount + date (e.g. "6 months emergency fund").
-- **Forecast** – projects balances forward using recurring transactions + planned cashflows.
-- **Recurring** – pattern-matched from historic transactions (detected by counterparty + cadence).
+## Planning, goals, investments, assets, travel, wishlist
 
-## Soft invariants worth enforcing
+- **Planning**: payment cycles, recurring templates, cycle plans with
+  per-line kinds (expected_income / recurring_expense /
+  flexible_budget / one_off / savings_rule / planned_investment /
+  trip_budget), planned_events + action_items for execution,
+  rollover_policies per category.
+- **Goals**: hierarchical goals, multi-account allocations, savings
+  rules with priority-ordered evaluation.
+- **Investments**: global `instruments` + `instrument_prices`;
+  tenant-scoped trades, lots, lot_consumptions, dividends, corporate
+  actions, and a materialized `investment_positions` cache.
+- **Physical assets & retirement**: `assets` are 1:1 with asset-kind
+  accounts; valuations drive networth. `mortgage_schedules` and
+  `mortgage_payments` split each payment into principal/interest.
+  `retirement_contribution_limits` is country/year reference data.
+- **Travel & split bills**: trips with per-category budgets,
+  participants (app users or external `people`), split-bill events
+  with per-allocation amounts, receivables ledger + settlements.
+- **Wishlist**: items with price-observation history; purchase_links
+  flip the item to `bought` and connect it to the real transaction.
 
-1. A transaction's `currency` must match its account's `currency`. (Check constraint or service-level guard.)
-2. Deleting an account cascades to its transactions (already in schema).
-3. Archived accounts are excluded from sums by default (query helper).
-4. Provider connections in `status = 'error'` block their sync worker until resolved.
+## Cross-cutting
+
+- **Attachments**: deduped by `(tenant_id, sha256)`; linked to any
+  entity via the polymorphic `attachment_links`.
+- **Audit**: `audit_events` is append-only; triggers on every audited
+  table record create/update/delete with before/after JSON. Actor is
+  read from `current_setting('folio.actor_user_id')`.
+- **FX**: `fx_rates` is global. Base-currency reports derive from
+  rates at read time; retroactive rate corrections automatically
+  recompute.
+- **Notifications**: rules → events → deliveries; per-user channel
+  preferences; webhook destinations for external integrations.
+
+## Soft invariants
+
+- `transactions.currency = accounts.currency` (trigger).
+- A transaction's `category_id` must reference a leaf category
+  (trigger).
+- A transaction cannot have both `category_id` and lines (trigger).
+- Tenant isolation is composite-FK-enforced at the DB layer.
+- Archived accounts are excluded from sums by default (query helper).
