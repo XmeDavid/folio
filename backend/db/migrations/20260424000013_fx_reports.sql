@@ -195,6 +195,7 @@ create index report_exports_status_idx on report_exports(tenant_id, status) wher
 -- FK-side index on file_attachment_id so attachment delete-restrict checks
 -- don't require a full scan. Partial on non-null to stay small.
 create index report_exports_file_idx on report_exports(file_attachment_id) where file_attachment_id is not null;
+create index report_exports_requested_by_idx on report_exports (requested_by_user_id);
 -- TTL worker index: "find ready reports whose expires_at has passed". Partial
 -- on status='ready' keeps it narrow — that's the only state eligible for expiry.
 create index report_exports_expires_idx on report_exports(expires_at)

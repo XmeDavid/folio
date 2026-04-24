@@ -224,11 +224,10 @@ create index notification_deliveries_status_idx on notification_deliveries(tenan
 
 -- Notification preferences: per-user per-event per-channel routing override.
 -- UNIQUE (tenant_id, user_id, event_kind, channel) so a user has at most one
--- preference row for a given (event, channel) pair. The tenant_id prefix
--- follows the project's house rule that every tenant-scoped uniqueness key
--- leads with tenant_id; the composite FK to users enforces tenant alignment
--- today, but leading the uniqueness with tenant_id defends against future FK
--- relaxations. `digest_override` lets a user set e.g. daily digest for
+-- preference row for a given (event, channel) pair. Uniqueness leads with
+-- tenant_id to keep per-tenant scoping explicit. The user FK is plain
+-- users(id); tenant scoping is enforced by the row's own tenant_id FK to
+-- tenants(id). `digest_override` lets a user set e.g. daily digest for
 -- 'budget_overrun' email while the rule default is realtime. `enabled=false`
 -- opts out of that specific (event, channel) combination.
 create table notification_preferences (
@@ -243,11 +242,11 @@ create table notification_preferences (
   updated_at      timestamptz not null default now(),
   unique (tenant_id, id),
   unique (tenant_id, user_id, event_kind, channel),
-  -- Composite FK to users keeps the preference row's tenant aligned with the
-  -- user's tenant (defence in depth against cross-tenant assignment).
   constraint np_user_fk foreign key (user_id)
     references users(id) on delete cascade
 );
+
+create index notification_preferences_user_id_idx on notification_preferences (user_id);
 
 create trigger notification_preferences_updated_at before update on notification_preferences
   for each row execute function set_updated_at();

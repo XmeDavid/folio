@@ -46,8 +46,9 @@ create type audit_action as enum ('created', 'updated', 'deleted', 'restored', '
 -- storage_key; this row is the referenceable handle. sha256 is bytea (not
 -- hex text) because it's fixed-width 32 bytes — half the storage of the
 -- hex form, and equality compares on raw bytes. uploaded_by_user_id is
--- nullable (system uploads, e.g. bank statement imports) and uses a
--- composite FK to enforce tenant consistency.
+-- nullable (system uploads have no actor) and references users(id).
+-- Tenant scoping is enforced by the row's tenant_id FK to tenants(id),
+-- not a composite FK into users.
 create table attachments (
   id                  uuid primary key,
   tenant_id           uuid not null references tenants(id) on delete cascade,
@@ -86,7 +87,8 @@ create index attachments_ocr_pending_idx on attachments(tenant_id)
 -- (entity_type, entity_id) is a loose pointer — no FK, because the target
 -- entity type varies. UNIQUE(attachment_id, entity_type, entity_id)
 -- prevents duplicate links. linked_by_user_id is optional (system links
--- have none) and uses a composite FK for tenant consistency.
+-- have no actor) and references users(id). Tenant scoping is enforced by
+-- the row's tenant_id FK to tenants(id).
 create table attachment_links (
   id                uuid primary key,
   tenant_id         uuid not null references tenants(id) on delete cascade,

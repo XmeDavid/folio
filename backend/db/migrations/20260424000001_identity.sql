@@ -116,6 +116,9 @@ create index tenant_invites_pending_email_idx
   on tenant_invites (email)
   where accepted_at is null and revoked_at is null;
 
+create index tenant_invites_invited_by_idx
+  on tenant_invites (invited_by_user_id);
+
 -- auth_tokens: unified single-use tokens for email verify / password reset /
 -- email change. Plan 3 populates this.
 create table auth_tokens (
