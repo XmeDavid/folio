@@ -145,7 +145,7 @@ Rationale: v2 principle #3 — "prefer relationship tables over overloaded enums
 
 ### 3.9 Enums vs text
 
-- **Enum** for closed domains that the app code switches on: `account_kind`, `account_source`, `transaction_status`, `goal_status`, `goal_type`, `notification_channel`, `recurring_template_kind`, `planned_event_status`, `allocation_method`, etc. `ALTER TYPE ADD VALUE` is fine when the domain grows.
+- **Enum** for closed domains that the app code switches on: `account_kind`, `transaction_status`, `goal_status`, `goal_type`, `notification_channel`, `recurring_template_kind`, `planned_event_status`, `allocation_method`, etc. `ALTER TYPE ADD VALUE` is fine when the domain grows.
 - **Text** for open-set domains: provider names, `entity_type`, `event_kind` on notifications. Enforced by service layer.
 
 ### 3.10 Naming
