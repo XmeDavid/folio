@@ -75,6 +75,57 @@ export async function fetchMe(): Promise<Me> {
 }
 
 // ---------------------------------------------------------------------------
+// Tenant
+// ---------------------------------------------------------------------------
+
+export type TenantPatchInput = {
+  name?: string;
+  slug?: string;
+  baseCurrency?: string;
+  cycleAnchorDay?: number;
+};
+
+export type TenantRow = {
+  id: string;
+  name: string;
+  slug: string;
+  baseCurrency: string;
+  cycleAnchorDay: number;
+  locale: string;
+  timezone: string;
+  deletedAt?: string;
+  createdAt: string;
+};
+
+export async function patchTenant(
+  tenantId: string,
+  body: TenantPatchInput,
+): Promise<TenantRow> {
+  return request<TenantRow>(`/api/v1/t/${tenantId}`, {
+    method: "PATCH",
+    json: body,
+  });
+}
+
+export async function deleteTenant(tenantId: string): Promise<void> {
+  return request<void>(`/api/v1/t/${tenantId}`, { method: "DELETE" });
+}
+
+export async function restoreTenant(tenantId: string): Promise<TenantRow> {
+  return request<TenantRow>(`/api/v1/t/${tenantId}/restore`, {
+    method: "POST",
+  });
+}
+
+/**
+ * toApiError parses a Response into an ApiError. Useful for callers that use
+ * raw fetch() rather than the request<T> helper.
+ */
+export async function toApiError(res: Response): Promise<ApiError> {
+  return parseError(res);
+}
+
+// ---------------------------------------------------------------------------
 // Accounts
 // ---------------------------------------------------------------------------
 
