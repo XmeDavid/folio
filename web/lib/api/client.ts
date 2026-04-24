@@ -183,6 +183,30 @@ export async function removeMember(
   });
 }
 
+export type InviteCreateInput = {
+  email: string;
+  role: MemberRole;
+};
+
+export async function createInvite(
+  tenantId: string,
+  body: InviteCreateInput,
+): Promise<PendingInvite> {
+  return request<PendingInvite>(`/api/v1/t/${tenantId}/invites`, {
+    method: "POST",
+    json: body,
+  });
+}
+
+export async function revokeInvite(
+  tenantId: string,
+  inviteId: string,
+): Promise<void> {
+  return request<void>(`/api/v1/t/${tenantId}/invites/${inviteId}`, {
+    method: "DELETE",
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Accounts
 // ---------------------------------------------------------------------------
