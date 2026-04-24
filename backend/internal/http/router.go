@@ -66,6 +66,9 @@ func NewRouter(d Deps) http.Handler {
 
 		// Public auth surface: /auth/signup, /auth/login, /auth/logout
 		authH.MountPublic(r)
+		// Public invite surface: GET /auth/invites/{token} (no auth),
+		// POST /auth/invites/{token}/accept (RequireSession).
+		inviteH.MountPublicInvites(r)
 
 		// Authenticated, non-tenant-scoped: /me, POST /tenants
 		r.Group(func(r chi.Router) {

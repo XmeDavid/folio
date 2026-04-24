@@ -42,6 +42,17 @@ func (h *InviteHandler) MountTenantInvites(r chi.Router) {
 	r.Delete("/{inviteId}", h.revokeInvite)
 }
 
+// MountPublicInvites mounts the two public invite endpoints at
+// `/auth/invites/{token}` (no auth — preview) and
+// `/auth/invites/{token}/accept` (session required). The caller positions
+// these under /api/v1 alongside the other auth routes.
+func (h *InviteHandler) MountPublicInvites(r chi.Router) {
+	r.Route("/auth/invites/{token}", func(r chi.Router) {
+		r.Get("/", h.previewInvite)
+		r.With(h.auth.RequireSession).Post("/accept", h.acceptInvite)
+	})
+}
+
 type createInviteReq struct {
 	Email string `json:"email"`
 	Role  string `json:"role"`
@@ -135,4 +146,84 @@ func inviteURL(plaintext string) string {
 		base = "http://localhost:3000"
 	}
 	return base + "/accept-invite/" + plaintext
+}
+
+// previewInvite is the no-auth endpoint that returns sanitized invite
+// metadata (tenant name, inviter, role, expiry, invited email) so the
+// landing page can show "Alice invited you to join Household as a member".
+// Invalid/expired/revoked/consumed invites return 410 with a typed code.
+func (h *InviteHandler) previewInvite(w http.ResponseWriter, r *http.Request) {
+	token := chi.URLParam(r, "token")
+	if token == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_token", "token is required")
+		return
+	}
+	prev, err := h.invites.Preview(r.Context(), token)
+	switch {
+	case errors.Is(err, identity.ErrInviteNotFound),
+		errors.Is(err, identity.ErrInviteRevoked),
+		errors.Is(err, identity.ErrInviteAlreadyUsed),
+		errors.Is(err, identity.ErrInviteExpired):
+		httpx.WriteError(w, http.StatusGone, inviteErrCode(err), err.Error())
+		return
+	case err != nil:
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, prev)
+}
+
+// acceptInvite consumes an invite on behalf of the authenticated user.
+// Requires RequireSession (mounted by MountPublicInvites). Email-mismatch
+// and unverified-email rejections surface as 403 with typed codes so the
+// UI can show the right remediation (sign in as a different account,
+// verify your email first).
+func (h *InviteHandler) acceptInvite(w http.ResponseWriter, r *http.Request) {
+	token := chi.URLParam(r, "token")
+	if token == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_token", "token is required")
+		return
+	}
+	user := MustUser(r)
+	mem, err := h.invites.Accept(r.Context(), token, user.ID)
+	switch {
+	case errors.Is(err, identity.ErrInviteEmailMismatch):
+		httpx.WriteError(w, http.StatusForbidden, "email_mismatch",
+			"invite email does not match your account")
+		return
+	case errors.Is(err, identity.ErrEmailUnverified):
+		httpx.WriteError(w, http.StatusForbidden, "email_unverified",
+			"verify your email before accepting this invite")
+		return
+	case errors.Is(err, identity.ErrInviteExpired),
+		errors.Is(err, identity.ErrInviteRevoked),
+		errors.Is(err, identity.ErrInviteAlreadyUsed),
+		errors.Is(err, identity.ErrInviteNotFound):
+		httpx.WriteError(w, http.StatusGone, inviteErrCode(err), err.Error())
+		return
+	case err != nil:
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	h.auth.WriteAudit(r.Context(), mem.TenantID, user.ID,
+		"member.invite_accepted", "membership", mem.UserID, nil,
+		map[string]any{"role": string(mem.Role)})
+	httpx.WriteJSON(w, http.StatusOK, mem)
+}
+
+// inviteErrCode maps sentinel errors to wire-stable error codes so the UI
+// can pick the right CTA (expired → "get a new invite", already-used →
+// "sign in instead", revoked → "contact the inviter").
+func inviteErrCode(err error) string {
+	switch {
+	case errors.Is(err, identity.ErrInviteNotFound):
+		return "invite_not_found"
+	case errors.Is(err, identity.ErrInviteRevoked):
+		return "invite_revoked"
+	case errors.Is(err, identity.ErrInviteAlreadyUsed):
+		return "invite_already_used"
+	case errors.Is(err, identity.ErrInviteExpired):
+		return "invite_expired"
+	}
+	return "invite_invalid"
 }
