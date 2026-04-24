@@ -4,7 +4,7 @@
 
 **Goal:** Land tenant administration — settings edits, soft-delete/restore, member role changes, leave/remove, invite create/revoke/accept — plus the `/accept-invite` flow, the soft-delete sweeper, and the `mailer.Mailer` interface used by all transactional email from plan 3 onwards.
 
-**Architecture:** Extends `backend/internal/identity` with tenant-lifecycle and member-management methods, adds an `InviteService` for the invite lifecycle, and introduces `backend/internal/mailer` (interface + log-only stub). Tenant-scoped routes mount under `/api/v1/t/{tenantId}` behind the middleware chain from plan 1 (`RequireSession` → `RequireMembership` → `RequireRole` → `RequireFreshReauth`). Soft-delete cleanup ships as a standalone `backend/cmd/folio-sweeper` binary that plan 3 re-uses inside a River periodic job.
+**Architecture:** Extends `backend/internal/identity` with tenant-lifecycle and member-management methods, adds an `InviteService` for the invite lifecycle, and introduces `backend/internal/mailer` (interface + log-only stub). Tenant-scoped routes mount under `/api/v1/t/{tenantId}` behind the plan-1 middleware chain (`RequireSession` → `RequireMembership` → `RequireRole`). `RequireFreshReauth` is deliberately deferred to Plan 4 (see §0.2). Soft-delete cleanup ships as a standalone `backend/cmd/folio-sweeper` binary that plan 3 re-uses inside a River periodic job.
 
 **Tech Stack:** Go 1.25, pgx/v5, chi v5, go-chi routing; Next.js 16, React Query, Tailwind.
 
@@ -15,6 +15,55 @@
 ---
 
 ## 0. Setup and shared patterns
+
+### 0.0 Pre-flight fixes (Plan 2 prerequisites)
+
+Plan 1 shipped the logout-audit fix (`fix(auth): logout always writes user.logout audit`) and the tenant-shell consolidation (`refactor(web): consolidate tenant shell before Plan 2 settings pages`) as pre-flight. **Plan 2 assumes those have landed.**
+
+Before Task 1, run the following pre-flight task to unblock signup/login/audit INSERTs that currently pass `""` into `inet` columns:
+
+- [ ] **Task 0.P1: nullable IP for sessions + audit inserts** *(run before Task 1)*
+
+Plan 1 ships `auth.ipString(ip net.IP) string` that returns `""` for nil IP. The DB columns are `inet` and `pgx` rejects `""` when inserting into `inet`. Symptom: any signup/login without a client IP (unit tests without `RemoteAddr`, or proxy-stripped requests) fails at INSERT. Plan 2 expands audit writes (`member.*`, `tenant.*`) and will hit the same issue.
+
+In `backend/internal/auth/service_signup.go`, `service_login.go`, `audit.go`, and anywhere else that writes `inet` columns, replace `ipString(ip)` calls with a helper that returns `any` — the `ip.String()` for non-nil, and **nil** (not `""`) when the IP is nil. Typical shape:
+
+```go
+// ipForStorage returns ip.String() for non-nil IPs and nil otherwise.
+// Pass the result directly into pgx.Exec for `inet` columns so empty
+// strings never reach the driver (Postgres rejects '' for inet).
+func ipForStorage(ip net.IP) any {
+    if ip == nil {
+        return nil
+    }
+    return ip.String()
+}
+```
+
+Update every call site in the auth package that currently passes `ipString(ip)` to a session or audit INSERT. Add a unit test that inserts a session / audit event with a nil IP and asserts no error:
+
+```go
+func TestAudit_NilIP_StoresNull(t *testing.T) {
+    pool := testdb.Pool(t)
+    svc := auth.NewService(pool, /* deps */)
+    // Drive a code path that writes audit with nil IP (e.g. a path where
+    // RemoteAddr is unparseable), then:
+    var ip *string
+    if err := pool.QueryRow(context.Background(),
+        `select ip::text from audit_events order by occurred_at desc limit 1`).Scan(&ip); err != nil {
+        t.Fatalf("read audit: %v", err)
+    }
+    if ip != nil {
+        t.Fatalf("expected null ip, got %q", *ip)
+    }
+}
+```
+
+Commit:
+
+```
+fix(auth): pass nil (not empty string) for inet columns when IP unknown
+```
 
 ### 0.1 Working directory and reset
 
@@ -38,7 +87,7 @@ cd /Users/xmedavid/dev/folio/web
 - **Commit style.** Conventional Commits. Feature scopes: `feat(tenants): …`, `feat(invites): …`, `feat(mailer): …`, `feat(jobs): …`, `feat(web): …`, `test(…): …`.
 - **TDD.** Every task writes service-layer tests first (`_test.go` alongside the implementation file), then the handler, then (where applicable) the frontend page.
 - **Tenant-scope rule.** Every service method takes `tenantID uuid.UUID` as the first argument after `ctx`. Handlers read tenant and user from `auth.TenantFromCtx` / `auth.UserFromCtx`, never from the request body.
-- **RequireFreshReauth caveat.** Plan 1 ships a stub: the middleware always returns `403 { code: "reauth_required" }` unless `sessions.reauth_at > now() - window`. Plan 4 adds the re-auth flow that bumps that column. **Until plan 4 lands, routes gated by `RequireFreshReauth` are mounted but unusable from the UI.** Tests in this plan call `testdb.SetSessionReauth(t, pool, sessionID, time.Now())` to simulate fresh re-auth; that helper is introduced in §0.4.
+- **Step-up re-auth (`RequireFreshReauth`) is deliberately NOT mounted in Plan 2.** The spec §5.6 step-up list applies to every sensitive route Plan 2 introduces (`PATCH /t/{id}`, `DELETE /t/{id}`, `POST /t/{id}/restore`, `PATCH /t/{id}/members/{userId}`, `DELETE /t/{id}/members/{userId}`, `POST /t/{id}/invites`, `DELETE /t/{id}/invites/{id}`), but without Plan 4's `/auth/reauth` endpoint there is no way to satisfy freshness, so mounting the middleware here would 403 every call. Plan 2's owner-only routes use `RequireRole(identity.RoleOwner)` as the authorization barrier — that is sufficient for v1 until step-up exists. Plan 4 re-mounts `RequireFreshReauth` across these routes when the real implementation and `/auth/reauth` endpoint land. The `testdb.SetSessionReauth` helper in §0.4 is retained for Plan 4's tests; Plan 2 tests do not need it.
 
 ### 0.3 Mailer interface (defined in this plan, implemented in plan 3)
 
@@ -211,12 +260,11 @@ func Base64URL(b []byte) string {
     return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// Slugify lowercases, replaces non-alphanumeric runs with '-', trims edges.
-// Must match identity.slugify (wire it identically in Task 1).
-func Slugify(name string) string { /* inline duplicate of identity.slugify */ }
+// testdb re-uses identity.Slugify directly — no duplicate slug helper.
+// Plan 1 (Task 5.2) already ships identity.Slugify as an exported function.
 ```
 
-The `Slugify` body is kept identical to the production helper in Task 1 so tests and production agree. After Task 1 lands, this helper imports the production function directly.
+Task 2 wires `testdb` to import `identity.Slugify` directly; no re-implementation needed.
 
 ### 0.5 Per-task verification baseline
 
@@ -577,40 +625,11 @@ EOF
 **Spec:** §0.4 above; needed by Tasks 3 onwards.
 
 **Files:**
-- Modify: `backend/internal/identity/service.go` — export `Slugify`
 - Create: `backend/internal/testdb/fixtures.go`
 
-- [ ] **Step 1: Export `identity.Slugify`**
+- [ ] **Step 1: `identity.Slugify` — already public**
 
-Plan 1 introduces an internal `slugify` helper used by `CreateTenant`. Rename it to the exported `Slugify` so tests can reuse it:
-
-```go
-// Slugify lowercases name, replaces non-alphanumeric runs with '-',
-// and trims leading/trailing '-'. Guaranteed to satisfy slugPattern.
-func Slugify(name string) string {
-    var b strings.Builder
-    prevDash := false
-    for _, r := range strings.ToLower(strings.TrimSpace(name)) {
-        switch {
-        case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-            b.WriteRune(r)
-            prevDash = false
-        default:
-            if !prevDash && b.Len() > 0 {
-                b.WriteByte('-')
-                prevDash = true
-            }
-        }
-    }
-    s := strings.TrimRight(b.String(), "-")
-    if s == "" || !slugPattern.MatchString(s) {
-        return "t"
-    }
-    return s
-}
-```
-
-Update every call site in plan 1's code from `slugify(...)` to `Slugify(...)`.
+Plan 1 (Task 5.2) already ships `identity.Slugify` as an exported function with full unit tests in `backend/internal/identity/slug_test.go`. No re-export and no duplicate tests are needed here; `testdb` imports the production `identity.Slugify` directly in Step 2.
 
 - [ ] **Step 2: Write `backend/internal/testdb/fixtures.go`**
 
@@ -746,13 +765,14 @@ Expected: identity tests still green; `go build ./internal/testdb/...` succeeds.
 
 ```bash
 cd /Users/xmedavid/dev/folio
-git add backend/internal/identity/service.go backend/internal/testdb/
+git add backend/internal/testdb/
 git commit -m "$(cat <<'EOF'
 test: add shared testdb fixtures for tenants, users, sessions
 
 Introduces CreateTestTenant / CreateTestUser / CreateTestMembership /
 CreateTestSession and the SetSessionReauth helper that simulates
-completed step-up re-auth until plan 4 lands.
+completed step-up re-auth until plan 4 lands. Reuses identity.Slugify
+(already public from plan 1 Task 5.2) for tenant fixtures.
 EOF
 )"
 ```
@@ -902,6 +922,7 @@ EOF
 
 **Files:**
 - Modify: `backend/internal/identity/service.go`
+- Create: `backend/internal/identity/types.go` — declare `MemberWithUser` (consumed by Task 6)
 - Create: `backend/internal/identity/members_test.go`
 
 - [ ] **Step 1: Write the failing tests**
@@ -997,14 +1018,24 @@ const (
     RoleMember Role = "member"
 )
 
-// Membership is the read-model row returned by ListMembers.
+// Membership is the plan-1 membership row (no user display fields).
+// Plan 1 Task 5 introduces this type; Plan 2 keeps the shape unchanged
+// and adds MemberWithUser (see types.go) for the enriched members page.
 type Membership struct {
     TenantID  uuid.UUID `json:"tenantId"`
     UserID    uuid.UUID `json:"userId"`
-    Email     string    `json:"email"`
-    DisplayName string  `json:"displayName"`
     Role      Role      `json:"role"`
     CreatedAt time.Time `json:"createdAt"`
+}
+
+// MemberWithUser is a Membership enriched with the user's display fields.
+// Returned by Service.ListMembers so the tenant members page in Plan 2
+// renders email + name in one round-trip. Lives in
+// `backend/internal/identity/types.go`.
+type MemberWithUser struct {
+    Membership
+    Email       string `json:"email"`
+    DisplayName string `json:"displayName"`
 }
 
 // Sentinel errors surfaced by the member-management methods.
@@ -1179,28 +1210,34 @@ Expected: five tests green.
 
 ```bash
 cd /Users/xmedavid/dev/folio
-git add backend/internal/identity/service.go backend/internal/identity/members_test.go
+git add backend/internal/identity/service.go \
+        backend/internal/identity/types.go \
+        backend/internal/identity/members_test.go
 git commit -m "$(cat <<'EOF'
 feat(tenants): add ChangeRole / RemoveMember / LeaveTenant
 
 Service-layer methods with row-level locking and the last-owner +
 last-tenant guards from spec §3.4. Sentinel errors surface the guard
-name so handlers can map 422 with stable codes.
+name so handlers can map 422 with stable codes. Also declares
+MemberWithUser in types.go (consumed by Task 6's ListMembers rewrite).
 EOF
 )"
 ```
 
 ---
 
-## Task 6: Extend ListMembers to include pending invites
+## Task 6: Extend ListMembers to include user fields + pending invites
 
 **Spec:** §4.4 (`GET /api/v1/t/{id}/members` returns memberships + pending invites).
 
 **Files:**
-- Modify: `backend/internal/identity/service.go` — extend `ListMembers`
+- Create: `backend/internal/identity/types.go` — add `MemberWithUser`
+- Modify: `backend/internal/identity/service.go` — widen `ListMembers` return shape and JOIN users
 - Modify: `backend/internal/identity/tenants_test.go` — add a test
 
 - [ ] **Step 1: Update the read model**
+
+The `MemberWithUser` type is declared in `backend/internal/identity/types.go` (see Task 5). Task 6 consumes it here and wires `ListMembers` to return enriched rows via a JOIN on `users`.
 
 ```go
 // PendingInvite is the pending-invite row embedded in the members response.
@@ -1215,21 +1252,25 @@ type PendingInvite struct {
 
 // MembersResponse is the payload for GET /t/{id}/members.
 type MembersResponse struct {
-    Members        []Membership    `json:"members"`
-    PendingInvites []PendingInvite `json:"pendingInvites"`
+    Members        []MemberWithUser `json:"members"`
+    PendingInvites []PendingInvite  `json:"pendingInvites"`
 }
 ```
 
-- [ ] **Step 2: Rewrite `ListMembers`**
+- [ ] **Step 2: Rewrite `ListMembers` to JOIN users**
+
+Plan 1 shipped `ListMembers` returning `[]Membership` (no user fields). Plan 2 widens the return type to `*MembersResponse` and populates Email + DisplayName via a join so the members page renders in one round-trip.
 
 ```go
-// ListMembers returns memberships + currently-pending invites for tenantID.
-// "Pending" means accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now().
+// ListMembers returns memberships (enriched with user display fields)
+// plus currently-pending invites for tenantID. "Pending" means
+// accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now().
 func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) (*MembersResponse, error) {
-    out := &MembersResponse{Members: []Membership{}, PendingInvites: []PendingInvite{}}
+    out := &MembersResponse{Members: []MemberWithUser{}, PendingInvites: []PendingInvite{}}
 
     rows, err := s.pool.Query(ctx, `
-        select m.tenant_id, m.user_id, u.email, u.display_name, m.role::text, m.created_at
+        select m.tenant_id, m.user_id, m.role::text, m.created_at,
+               u.email, u.display_name
         from tenant_memberships m
         join users u on u.id = m.user_id
         where m.tenant_id = $1
@@ -1239,9 +1280,9 @@ func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) (*Members
         return nil, fmt.Errorf("list memberships: %w", err)
     }
     for rows.Next() {
-        var m Membership
+        var m MemberWithUser
         var role string
-        if err := rows.Scan(&m.TenantID, &m.UserID, &m.Email, &m.DisplayName, &role, &m.CreatedAt); err != nil {
+        if err := rows.Scan(&m.TenantID, &m.UserID, &role, &m.CreatedAt, &m.Email, &m.DisplayName); err != nil {
             rows.Close()
             return nil, err
         }
@@ -1322,13 +1363,17 @@ go vet ./...
 
 ```bash
 cd /Users/xmedavid/dev/folio
-git add backend/internal/identity/service.go backend/internal/identity/tenants_test.go
+git add backend/internal/identity/types.go \
+        backend/internal/identity/service.go \
+        backend/internal/identity/tenants_test.go
 git commit -m "$(cat <<'EOF'
-feat(tenants): extend ListMembers with pending invites
+feat(tenants): extend ListMembers with user fields + pending invites
 
-ListMembers now returns a MembersResponse containing both memberships
-and invites where accepted_at is null, revoked_at is null, and
-expires_at is still in the future.
+Adds MemberWithUser (Membership + Email + DisplayName) and rewires
+ListMembers to JOIN users, returning MembersResponse with enriched
+members plus pending invites (accepted_at null, revoked_at null,
+expires_at still in the future). Removes a second round-trip on the
+settings/members page in Plan 2.
 EOF
 )"
 ```
@@ -1765,7 +1810,7 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
     }
 
     return &Membership{
-        TenantID: tenantID, UserID: userID, Email: userEmail,
+        TenantID: tenantID, UserID: userID,
         Role: Role(role), CreatedAt: s.now(),
     }, nil
 }
@@ -2081,18 +2126,17 @@ func NewTenantHandler(svc *Service) *TenantHandler { return &TenantHandler{svc: 
 
 // Mount installs tenant-admin routes behind the plan-1 middleware chain.
 // The caller is responsible for wrapping with RequireSession +
-// RequireMembership before this Mount; this function only adds role
-// and fresh-reauth gates as required by spec §4.4.
+// RequireMembership before this Mount; this function only adds the role
+// gate. RequireFreshReauth is deliberately NOT mounted here — Plan 4
+// adds the /auth/reauth endpoint and re-mounts the step-up middleware
+// across these routes at that point (see §0.2).
 func (h *TenantHandler) Mount(r chi.Router) {
-    // PATCH /t/{id} — owner; settings change implies sensitive change, so fresh.
-    r.With(auth.RequireRole(RoleOwner), auth.RequireFreshReauth(5*60)).
-        Patch("/", h.update)
-    // DELETE /t/{id} — owner; fresh.
-    r.With(auth.RequireRole(RoleOwner), auth.RequireFreshReauth(5*60)).
-        Delete("/", h.softDelete)
-    // POST /t/{id}/restore — owner; fresh.
-    r.With(auth.RequireRole(RoleOwner), auth.RequireFreshReauth(5*60)).
-        Post("/restore", h.restore)
+    // PATCH /t/{id} — owner.
+    r.With(auth.RequireRole(RoleOwner)).Patch("/", h.update)
+    // DELETE /t/{id} — owner.
+    r.With(auth.RequireRole(RoleOwner)).Delete("/", h.softDelete)
+    // POST /t/{id}/restore — owner.
+    r.With(auth.RequireRole(RoleOwner)).Post("/restore", h.restore)
 }
 
 type patchTenantReq struct {
@@ -2219,37 +2263,40 @@ r.Route("/t/{tenantId}", func(r chi.Router) {
 
 - [ ] **Step 4: Handler test (route + middleware chain)**
 
+`RequireFreshReauth` is not mounted in Plan 2 (see §0.2). The owner-only gate is sufficient: a non-owner gets 403, an owner succeeds.
+
 ```go
-func TestTenantHandler_Patch_RequiresOwnerRoleAndFreshReauth(t *testing.T) {
+func TestTenantHandler_Patch_RequiresOwnerRole(t *testing.T) {
     pool := testdb.Pool(t)
     srv := newTestServer(t, pool)
 
     tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
     alice := testdb.CreateTestUser(t, pool, "alice@example.com", true)
     testdb.CreateTestMembership(t, pool, tenantID, alice, "owner")
-    sessionID, rawToken := testdb.CreateTestSession(t, pool, alice)
+    _, rawToken := testdb.CreateTestSession(t, pool, alice)
 
-    // Without fresh reauth, handler returns 403.
-    body := bytes.NewBufferString(`{"name":"Renamed"}`)
-    req := httptest.NewRequest("PATCH", "/api/v1/t/"+tenantID.String(), body)
+    req := httptest.NewRequest("PATCH", "/api/v1/t/"+tenantID.String(),
+        bytes.NewBufferString(`{"name":"Renamed"}`))
     req.Header.Set("Cookie", "folio_session="+rawToken)
     req.Header.Set("X-Folio-Request", "1")
     w := httptest.NewRecorder()
     srv.ServeHTTP(w, req)
-    if w.Code != http.StatusForbidden {
-        t.Fatalf("want 403 (reauth_required), got %d", w.Code)
+    if w.Code != http.StatusOK {
+        t.Fatalf("want 200, got %d (body=%s)", w.Code, w.Body.String())
     }
 
-    // Bump reauth_at and try again.
-    testdb.SetSessionReauth(t, pool, sessionID, time.Now())
+    // A non-owner member is rejected.
+    bob := testdb.CreateTestUser(t, pool, "bob@example.com", true)
+    testdb.CreateTestMembership(t, pool, tenantID, bob, "member")
+    _, bobToken := testdb.CreateTestSession(t, pool, bob)
     req2 := httptest.NewRequest("PATCH", "/api/v1/t/"+tenantID.String(),
-        bytes.NewBufferString(`{"name":"Renamed"}`))
-    req2.Header.Set("Cookie", "folio_session="+rawToken)
+        bytes.NewBufferString(`{"name":"NopeFromBob"}`))
+    req2.Header.Set("Cookie", "folio_session="+bobToken)
     req2.Header.Set("X-Folio-Request", "1")
     w2 := httptest.NewRecorder()
     srv.ServeHTTP(w2, req2)
-    if w2.Code != http.StatusOK {
-        t.Fatalf("want 200, got %d (body=%s)", w2.Code, w2.Body.String())
+    if w2.Code != http.StatusForbidden {
+        t.Fatalf("want 403 (non-owner), got %d", w2.Code)
     }
 }
 ```
@@ -2276,10 +2323,10 @@ git add backend/internal/identity/http_tenants.go \
 git commit -m "$(cat <<'EOF'
 feat(tenants): add PATCH /t/{id}, DELETE /t/{id}, POST /t/{id}/restore
 
-Gated behind RequireSession + RequireMembership + RequireRole(owner) +
-RequireFreshReauth(5m). Plan 4 activates fresh-reauth; until then the
-UI surfaces a 403 { code: "reauth_required" } and prompts the user.
-Audit events: tenant.settings_changed / tenant.deleted / tenant.restored.
+Gated behind RequireSession + RequireMembership + RequireRole(owner).
+RequireFreshReauth is deliberately deferred to Plan 4 — no /auth/reauth
+endpoint yet, so mounting step-up here would 403 every call. Audit
+events: tenant.settings_changed / tenant.deleted / tenant.restored.
 EOF
 )"
 ```
@@ -2303,15 +2350,14 @@ func (h *TenantHandler) Mount(r chi.Router) {
     // Any-member: list members + pending invites.
     r.Get("/members", h.listMembers)
 
-    // Owner + fresh: change role, remove member.
-    r.With(auth.RequireRole(RoleOwner), auth.RequireFreshReauth(5*60)).
+    // Owner only: change role.
+    r.With(auth.RequireRole(RoleOwner)).
         Patch("/members/{userId}", h.changeRole)
     // DELETE /members/{userId} has split semantics:
-    //   userId == self → LeaveTenant (any member, fresh)
-    //   userId != self → RemoveMember (owner, fresh)
-    // The handler decides; both paths require fresh reauth.
-    r.With(auth.RequireFreshReauth(5*60)).
-        Delete("/members/{userId}", h.removeOrLeave)
+    //   userId == self → LeaveTenant (any member)
+    //   userId != self → RemoveMember (owner; enforced inside handler)
+    // RequireFreshReauth is deliberately deferred to Plan 4 (see §0.2).
+    r.Delete("/members/{userId}", h.removeOrLeave)
 }
 
 func (h *TenantHandler) listMembers(w http.ResponseWriter, r *http.Request) {
@@ -2413,7 +2459,7 @@ func (h *TenantHandler) removeOrLeave(w http.ResponseWriter, r *http.Request) {
 `http_members_test.go` exercises:
 
 1. `GET /members` returns members + pending invites (seeded via `pool.Exec`).
-2. `PATCH /members/{userId}` promotes a member to owner (fresh reauth set; 204).
+2. `PATCH /members/{userId}` promotes a member to owner (204). RequireFreshReauth is not mounted in Plan 2 (§0.2), so no reauth setup is needed.
 3. `PATCH /members/{userId}` demoting the last owner returns 422 `last_owner`.
 4. `DELETE /members/{userId}` where `userId == actor.ID` calls LeaveTenant; succeeds when the actor has a second tenant.
 5. `DELETE /members/{userId}` where `userId != actor.ID` returns 403 unless actor is owner.
@@ -2523,10 +2569,12 @@ func NewInviteHandler(svc *Service, inv *InviteService, m mailer.Mailer) *Invite
 
 func (h *InviteHandler) Mount(r chi.Router) {
     // POST /t/{id}/invites — member may invite members; owner may invite any.
-    // RequireRole not used because rule depends on target role.
-    r.With(auth.RequireFreshReauth(5*60)).Post("/", h.create)
+    // RequireRole not used because the rule depends on the target role
+    // (enforced inside the handler against RoleFromCtx).
+    // RequireFreshReauth is deliberately deferred to Plan 4 (see §0.2).
+    r.Post("/", h.create)
     // DELETE /t/{id}/invites/{inviteId} — inviter OR owner (service enforces).
-    r.With(auth.RequireFreshReauth(5*60)).Delete("/{inviteId}", h.revoke)
+    r.Delete("/{inviteId}", h.revoke)
 }
 
 type createInviteReq struct {
@@ -2658,8 +2706,8 @@ func TestInviteHandler_Create_MemberInvitesMember(t *testing.T) {
     tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
     alice := testdb.CreateTestUser(t, pool, "alice@example.com", true)
     testdb.CreateTestMembership(t, pool, tenantID, alice, "member")
-    sid, rawToken := testdb.CreateTestSession(t, pool, alice)
-    testdb.SetSessionReauth(t, pool, sid, time.Now())
+    _, rawToken := testdb.CreateTestSession(t, pool, alice)
+    // RequireFreshReauth is not mounted in Plan 2 (§0.2); no reauth setup needed.
 
     req := httptest.NewRequest("POST", "/api/v1/t/"+tenantID.String()+"/invites",
         bytes.NewBufferString(`{"email":"bob@example.com","role":"member"}`))
@@ -3125,6 +3173,8 @@ EOF
 - Create: `web/app/t/[slug]/settings/tenant/page.tsx`
 - Create: `web/lib/hooks/use-tenant-settings.ts`
 - Modify: `web/lib/api/client.ts` — add `patchTenant`, `deleteTenant`, `restoreTenant` wrappers
+
+> `web/app/t/[slug]/settings/layout.tsx` and the `TenantShell` component were added in the pre-plan-2 consolidation commit (`refactor(web): consolidate tenant shell before Plan 2 settings pages`). Plan 2's settings pages (Tasks 15/16/17) live inside this layout and receive the side-nav for free. **Do not create a new layout or shell.**
 
 - [ ] **Step 1: Design compliance gate**
 
@@ -3805,9 +3855,7 @@ func TestE2E_InviteRoundTrip(t *testing.T) {
     mustGetJSON(t, srv, "/api/v1/me", aliceCookie, &me)
     tenantID := me.Tenants[0].ID
 
-    // Fresh reauth so owner-gated invite create works.
-    _ = pool.QueryRow(context.Background(),
-        `update sessions set reauth_at = now() where user_id = $1`, me.User.ID)
+    // RequireFreshReauth is not mounted in Plan 2 (§0.2); no reauth setup needed.
 
     // 3. Alice creates an invite for Bob.
     body, status := post(t, srv, "/api/v1/t/"+tenantID+"/invites",
@@ -3953,7 +4001,7 @@ Expected: clean (all prior tasks committed their own work).
 - [ ] Every task has a commit step using Conventional Commits scopes (`feat(tenants)`, `feat(invites)`, `feat(mailer)`, `feat(jobs)`, `feat(web)`, `refactor(httpx)`, `test(invites)`).
 - [ ] No "TODO", "TBD", "similar to Task N", "pseudocode", or "add appropriate error handling" strings remain.
 - [ ] Every code block is real code the implementer can paste and compile, not sketches.
-- [ ] Fresh-reauth middleware is mounted on every spec-required route and the stub-period caveat is documented in §0.2 and Task 9.
+- [ ] Fresh-reauth middleware is deliberately NOT mounted in Plan 2 (deferred to Plan 4); the rationale is documented in §0.2 and Tasks 9/10/11.
 - [ ] Plan 3's dependency on the sweeper is satisfied by `folio-sweeper` (Task 13) — no River-adjacent placeholders.
 - [ ] Web pages follow the folio-frontend-design skill: Task 15's step 1 enforces the pre-read.
 - [ ] Task count: 20 (in range 20–30).
