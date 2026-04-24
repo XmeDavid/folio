@@ -15,6 +15,7 @@ import (
 	"github.com/xmedavid/folio/backend/internal/config"
 	"github.com/xmedavid/folio/backend/internal/db"
 	folioHTTP "github.com/xmedavid/folio/backend/internal/http"
+	"github.com/xmedavid/folio/backend/internal/mailer"
 )
 
 func main() {
@@ -39,10 +40,15 @@ func main() {
 	}
 	defer pool.Close()
 
+	// Plan 2 wires a LogMailer stub. Plan 3 swaps in a Resend-backed
+	// implementation driven by River jobs; handler signatures don't change.
+	mailClient := mailer.NewLogMailer(logger)
+
 	handler := folioHTTP.NewRouter(folioHTTP.Deps{
 		Logger: logger,
 		DB:     pool,
 		Cfg:    cfg,
+		Mailer: mailClient,
 	})
 
 	srv := &http.Server{

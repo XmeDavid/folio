@@ -17,6 +17,7 @@ import (
 	"github.com/xmedavid/folio/backend/internal/classification"
 	"github.com/xmedavid/folio/backend/internal/config"
 	"github.com/xmedavid/folio/backend/internal/identity"
+	"github.com/xmedavid/folio/backend/internal/mailer"
 	"github.com/xmedavid/folio/backend/internal/transactions"
 )
 
@@ -24,6 +25,7 @@ type Deps struct {
 	Logger *slog.Logger
 	DB     *pgxpool.Pool
 	Cfg    *config.Config
+	Mailer mailer.Mailer
 }
 
 func NewRouter(d Deps) http.Handler {
