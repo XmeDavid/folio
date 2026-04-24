@@ -200,11 +200,12 @@ func isUsersEmailKey(err error) bool {
 	return pe.Code == "23505" && pe.ConstraintName == "users_email_key"
 }
 
-// ipString renders an IP for storage in `sessions.ip` / `audit_events.ip`.
-// Empty IP → empty string (which pgx coerces to SQL NULL when column is inet).
-func ipString(ip net.IP) string {
+// ipString renders an IP for storage in `sessions.ip` / `audit_events.ip`
+// (both `inet` columns). Returns nil for a nil IP so pgx writes SQL NULL —
+// returning "" produces a malformed-inet error from Postgres.
+func ipString(ip net.IP) any {
 	if ip == nil {
-		return ""
+		return nil
 	}
 	return ip.String()
 }
