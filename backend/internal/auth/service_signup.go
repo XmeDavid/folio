@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/identity"
@@ -191,15 +192,14 @@ func (s *Service) enforceRegistrationMode(ctx context.Context) error {
 }
 
 func isUsersEmailKey(err error) bool {
-	type pgErr interface {
-		SQLState() string
-		ConstraintName() string
-	}
-	var pe pgErr
+	// *pgconn.PgError exposes Code and ConstraintName as fields (not methods),
+	// so an interface-based errors.As would never match. Unwrap to the concrete
+	// type instead.
+	var pe *pgconn.PgError
 	if !errors.As(err, &pe) {
 		return false
 	}
-	return pe.SQLState() == "23505" && pe.ConstraintName() == "users_email_key"
+	return pe.Code == "23505" && pe.ConstraintName == "users_email_key"
 }
 
 // ipString renders an IP for storage in `sessions.ip` / `audit_events.ip`.
