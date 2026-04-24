@@ -207,6 +207,39 @@ export async function revokeInvite(
   });
 }
 
+export type InvitePreview = {
+  tenantId: string;
+  tenantName: string;
+  tenantSlug: string;
+  inviterDisplayName: string;
+  email: string;
+  role: MemberRole;
+  expiresAt: string;
+};
+
+export type InviteAcceptResponse = {
+  tenantId: string;
+  userId: string;
+  role: MemberRole;
+  createdAt: string;
+};
+
+export async function previewInvite(token: string): Promise<InvitePreview> {
+  return request<InvitePreview>(
+    `/api/v1/auth/invites/${encodeURIComponent(token)}`,
+    { method: "GET" },
+  );
+}
+
+export async function acceptInvite(
+  token: string,
+): Promise<InviteAcceptResponse> {
+  return request<InviteAcceptResponse>(
+    `/api/v1/auth/invites/${encodeURIComponent(token)}/accept`,
+    { method: "POST" },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Accounts
 // ---------------------------------------------------------------------------

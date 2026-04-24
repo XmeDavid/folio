@@ -6,7 +6,10 @@ import type { Route } from "next";
 import { useQueryClient } from "@tanstack/react-query";
 
 export default function SignupPage() {
-  const [email, setEmail] = useState("");
+  const sp = useSearchParams();
+  const inviteToken = sp.get("inviteToken") ?? undefined;
+  const inviteEmail = sp.get("email") ?? "";
+  const [email, setEmail] = useState(inviteEmail);
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [baseCurrency, setBaseCurrency] = useState("USD");
@@ -14,9 +17,8 @@ export default function SignupPage() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const router = useRouter();
-  const sp = useSearchParams();
-  const inviteToken = sp.get("inviteToken") ?? undefined;
   const qc = useQueryClient();
+  const emailLocked = !!inviteToken && !!inviteEmail;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -73,6 +75,8 @@ export default function SignupPage() {
           onChange={setEmail}
           required
           autoComplete="email"
+          disabled={emailLocked}
+          hint={emailLocked ? "Email is locked by your invite." : undefined}
         />
         <Field
           label="Password"
@@ -117,6 +121,7 @@ function Field({
   required,
   autoComplete,
   hint,
+  disabled,
 }: {
   label: string;
   value: string;
@@ -125,6 +130,7 @@ function Field({
   required?: boolean;
   autoComplete?: string;
   hint?: string;
+  disabled?: boolean;
 }) {
   return (
     <label className="flex flex-col gap-1">
@@ -135,7 +141,8 @@ function Field({
         onChange={(e) => onChange(e.target.value)}
         required={required}
         autoComplete={autoComplete}
-        className="rounded border px-3 py-2"
+        disabled={disabled}
+        className="rounded border px-3 py-2 disabled:opacity-60"
       />
       {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
     </label>
