@@ -66,14 +66,30 @@ Every monetary column is `numeric(28,8) not null`, always paired with a `currenc
 
 Every financial row carries `tenant_id`. Isolation is enforced at two layers:
 
-1. **Composite foreign keys.** Every tenant-scoped table has `UNIQUE (tenant_id, id)` alongside its primary key. Every cross-table FK to a tenant-scoped parent is composite:
+1. **Composite foreign keys.** Every tenant-scoped table has `UNIQUE (tenant_id, id)` alongside its primary key. **Every** FK from a tenant-scoped child to a tenant-scoped parent is composite — cross-table, self-referential, and user references alike:
 
    ```sql
    foreign key (tenant_id, account_id)
      references accounts(tenant_id, id) on delete cascade
+
+   -- self-referential (categories.parent_id, goals.parent_goal_id,
+   -- goals.auto_redirect_on_reach_goal_id, allocation_buckets.parent_bucket_id):
+   foreign key (tenant_id, parent_id)
+     references categories(tenant_id, id) on delete set null
+
+   -- user references on tenant-scoped tables (audit_events.actor_user_id,
+   -- saved_searches.user_id, report_exports.requested_by_user_id,
+   -- attachments.uploaded_by_user_id, attachment_links.linked_by_user_id,
+   -- notification_preferences.user_id, import_batches.created_by_user_id,
+   -- transfer_matches.matched_by_user_id, refund_matches.matched_by_user_id,
+   -- category_history.actor_user_id):
+   foreign key (tenant_id, actor_user_id)
+     references users(tenant_id, id) on delete set null
    ```
 
-   This locks `tenant_id` to match on both sides at the DB layer — a service bug can no longer create a transaction in tenant A that points at tenant B's account/category/merchant. Self-referential FKs (`categories.parent_id`, `goals.parent_goal_id`) and polymorphic link tables stay as single-column FKs but still carry `tenant_id` for isolation.
+   This locks `tenant_id` to match on both sides at the DB layer — no service bug can create a row in tenant A that points at tenant B's data. Nullable composite FKs use MATCH SIMPLE semantics (default): the check is skipped when any referencing column is NULL, which is exactly what we want for nullable actor/parent columns.
+
+   The only exceptions are the polymorphic link tables (`attachment_links`, `audit_events`, `source_refs`) — there is no fixed parent table for a composite FK to target. They still carry `tenant_id`; isolation is enforced by service-layer validation on write.
 
 2. **Service layer.** Every query filters by the caller's `tenant_id`. No row-level security in v1 — RLS adds connection-pool and role-management overhead that is not justified while every tenant has a single user. Composite FKs give us the structural guarantee; service filters give us the query-shape guarantee.
 
@@ -218,18 +234,13 @@ Invariants:
 Enums: `categorization_source` (`ai, rule, merchant_default, similar_transaction`).
 
 - **`categories`**: id, tenant_id, parent_id nullable self-FK on delete set null, name, color, archived_at, sort_order int, created_at, updated_at. Unique (tenant_id, parent_id, name).
-- **`category_history`**: id, category_id, renamed_from text nullable, renamed_at, merged_into_category_id nullable FK, actor_user_id nullable.
+- **`category_history`**: id, tenant_id, category_id FK, renamed_from text nullable, renamed_at, merged_into_category_id nullable FK, actor_user_id nullable. Composite FKs to `(tenant_id, category_id)`, `(tenant_id, merged_into_category_id)`, `(tenant_id, actor_user_id)`.
 - **`merchants`**: id, tenant_id, canonical_name, logo_url text, default_category_id nullable FK, industry text, website text, notes text, archived_at, created_at, updated_at. Unique (tenant_id, canonical_name).
 - **`merchant_aliases`**: id, tenant_id, merchant_id FK cascade, raw_pattern text, is_regex bool default false, created_at. Unique (tenant_id, raw_pattern).
 - **`tags`**: id, tenant_id, name, color, archived_at, created_at, updated_at. Unique (tenant_id, name).
 - **`categorization_rules`**: id, tenant_id, priority int, when_jsonb jsonb, then_jsonb jsonb, enabled bool default true, last_matched_at timestamptz nullable, created_at, updated_at.
-- **`categorization_suggestions`**: id, tenant_id, transaction_id FK cascade (declared in 004 — this table adds the FK after transactions is created, or drop the cascade and let the service handle orphan cleanup; spec leaves the FK in this file and documents the cross-file dependency), suggested_category_id FK, confidence numeric(5,4), source enum, created_at, accepted_at nullable, dismissed_at nullable.
 
-Note on load order: `categorization_suggestions.transaction_id` points at `transactions` which doesn't exist yet (004). Two implementations:
-- Declare `categorization_suggestions` in `004_transactions.sql` instead (it's an annotation on transactions more than a classification primitive).
-- Keep it here without the FK and add the FK in `004_transactions.sql` via `alter table`.
-
-Recommendation: **declare in 004**, move the table out of this file. Listed here for completeness; actual CREATE is in 004.
+(`categorization_suggestions` is declared in `004_transactions.sql` — it's an annotation on transactions, and its FK target doesn't exist until that file loads.)
 
 Invariants:
 - Categories referenced by transactions are leaves (trigger rejects writes where the target category has children).
@@ -245,7 +256,7 @@ Enums: `transaction_status` (`draft, posted, reconciled, voided`), `match_proven
 - **`transaction_tags`**: (transaction_id, tag_id) composite PK, tenant_id. Composite FKs to `(tenant_id, transaction_id)` and `(tenant_id, tag_id)`.
 - **`transfer_matches`**: id, tenant_id, source_transaction_id FK, destination_transaction_id nullable FK (null = outbound-to-external), fx_rate numeric(28,10) nullable, fee_amount numeric(28,8) nullable, fee_currency varchar(10) nullable, tolerance_note text, provenance, matched_at timestamptz default now(), matched_by_user_id nullable.
 - **`refund_matches`**: id, tenant_id, original_transaction_id FK, refund_transaction_id FK, net_to_zero bool default true, provenance, matched_at, matched_by_user_id nullable.
-- **`categorization_suggestions`** (relocated from 5.3): id, tenant_id, transaction_id FK cascade, suggested_category_id FK, confidence numeric(5,4), source enum, created_at, accepted_at nullable, dismissed_at nullable.
+- **`categorization_suggestions`**: id, tenant_id, transaction_id FK cascade, suggested_category_id FK, confidence numeric(5,4), source enum, created_at, accepted_at nullable, dismissed_at nullable.
 
 Invariants:
 - `transactions.currency = accounts.currency` (trigger).
