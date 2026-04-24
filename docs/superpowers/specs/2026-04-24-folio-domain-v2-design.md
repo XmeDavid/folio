@@ -27,35 +27,57 @@ The deliverable is the data model — tables, constraints, enums, indexes. Handl
 Every tenant-owned row:
 
 ```sql
-id          uuid primary key default uuidv7(),
+id          uuid primary key,
 tenant_id   uuid not null references tenants(id) on delete cascade,
 created_at  timestamptz not null default now(),
-updated_at  timestamptz not null default now()
+updated_at  timestamptz not null default now(),
+unique (tenant_id, id)          -- target for composite FKs (see 3.4)
 ```
 
 `updated_at` is maintained by a single `set_updated_at()` trigger (already in scaffold) attached to every table that has the column.
 
 ### 3.2 UUIDv7
 
-Enable the `pg_uuidv7` extension. `id uuid default uuidv7()` on every table. Client-created rows (offline PWA captures) may override the server default with a client-generated v7 — the column is `default`, not `generated always`, so a supplied value is honoured. Bank-sourced rows use the server default.
+IDs are UUIDv7, generated **app-side**. The column has no server default:
+
+```sql
+id uuid primary key   -- always supplied by the caller
+```
+
+- Backend (Go): use `uuid.NewV7()` from `github.com/google/uuid` (v1.6+). Every service layer `INSERT` generates the v7 before calling the DB.
+- Web (PWA): any JS UUIDv7 library; the offline capture path needs it anyway, and having the client side own ID generation is the whole reason we picked v7.
+- No `pg_uuidv7` extension dependency. Self-hosted users run the stock `postgres:17` image unchanged. If Postgres 18 ships UUIDv7 natively (`uuidv7()` is proposed), we can later add a server default without changing the column shape.
 
 Rationale:
 - Time-sorted: index locality is good for the transaction-heavy tables. Listing "latest N" matches native btree order.
 - Single ID column (no `id` + `client_id` split): clients and server speak the same identifier.
+- Deployment simplicity: no custom DB image, no extension install step.
 
 ### 3.3 Money
 
-Every monetary column is `numeric(28,8) not null`, always paired with a `currency char(3) not null check (currency ~ '^[A-Z]{3}$')`.
+Every monetary column is `numeric(28,8) not null`, always paired with a `currency varchar(10) not null check (currency ~ '^[A-Z0-9]{3,10}$')`.
 
-- No separate `currencies` lookup table. ISO 4217 + common crypto tickers are validated by the regex; adding a new currency never requires a migration.
+- Width accommodates crypto tickers (`USDT`, `USDC`, `DOGE`, `MATIC`, `1INCH`, `WBTC`, …) alongside ISO 4217 fiat codes. API layer uppercase-normalises on input.
+- No separate `currencies` lookup table. Adding a new currency never requires a migration.
 - No pre-computed base-currency columns on facts. Base values derive at read time from `fx_rates`. FX corrections automatically recompute reports.
 - The only stored base-currency cache is `networth_snapshots.total_value`, which has an explicit recompute trigger list.
 
 ### 3.4 Tenant scoping
 
-Every financial row carries `tenant_id`. Every unique constraint that could collide across tenants includes `tenant_id` in its key (e.g. `(tenant_id, name)` on categories).
+Every financial row carries `tenant_id`. Isolation is enforced at two layers:
 
-Tenant isolation is enforced at the service layer — no row-level security in v1. RLS adds operational complexity (connection-pooling awareness, role management) that is not justified while every tenant has a single user.
+1. **Composite foreign keys.** Every tenant-scoped table has `UNIQUE (tenant_id, id)` alongside its primary key. Every cross-table FK to a tenant-scoped parent is composite:
+
+   ```sql
+   foreign key (tenant_id, account_id)
+     references accounts(tenant_id, id) on delete cascade
+   ```
+
+   This locks `tenant_id` to match on both sides at the DB layer — a service bug can no longer create a transaction in tenant A that points at tenant B's account/category/merchant. Self-referential FKs (`categories.parent_id`, `goals.parent_goal_id`) and polymorphic link tables stay as single-column FKs but still carry `tenant_id` for isolation.
+
+2. **Service layer.** Every query filters by the caller's `tenant_id`. No row-level security in v1 — RLS adds connection-pool and role-management overhead that is not justified while every tenant has a single user. Composite FKs give us the structural guarantee; service filters give us the query-shape guarantee.
+
+Unique constraints that could collide across tenants include `tenant_id` in the key (e.g. `(tenant_id, name)` on categories, `(tenant_id, email)` on users if we ever add multi-user-per-tenant).
 
 ### 3.5 Identity: tenants and users
 
@@ -132,8 +154,8 @@ Migrations are grouped by domain, loaded in order. File prefix is ordinal; times
 backend/db/migrations/
   20260424000001_identity.sql
   20260424000002_accounts.sql
-  20260424000003_transactions.sql
-  20260424000004_classification.sql
+  20260424000003_classification.sql
+  20260424000004_transactions.sql
   20260424000005_imports.sql
   20260424000006_planning.sql
   20260424000007_goals.sql
@@ -146,6 +168,23 @@ backend/db/migrations/
   20260424000014_notifications.sql
 ```
 
+Dependency DAG (each file only references earlier ones):
+
+- `001_identity` — tenants, users, sessions, credentials. No deps.
+- `002_accounts` — → tenants.
+- `003_classification` — → tenants, users. (No dependency on accounts.)
+- `004_transactions` — → accounts, classification. Includes `transfer_matches`, `refund_matches`.
+- `005_imports` — → accounts, transactions (via polymorphic `source_refs`).
+- `006_planning` — → accounts, classification, transactions. Includes `planned_event_matches` (which needs both `planned_events` and `transactions`).
+- `007_goals` — → accounts, transactions, planning.
+- `008_investments` — → accounts, transactions.
+- `009_assets` — → accounts, transactions.
+- `010_travel_splits` — → transactions, people (declared in this file).
+- `011_wishlist` — → goals, transactions.
+- `012_attachments_audit` — polymorphic references; load order independent.
+- `013_fx_reports` — → attachments (file output).
+- `014_notifications` — → users.
+
 The existing `20260424000000_init.sql` is deleted.
 
 Cross-file FKs reference earlier files. Where a later file needs to reference a table in the same or earlier domain, it does so directly. Back-references (e.g. `accounts.id` referenced by `transfer_matches` in a later file) are forward-legal because migrations run in order.
@@ -154,9 +193,9 @@ Cross-file FKs reference earlier files. Where a later file needs to reference a 
 
 ### 5.1 Identity (`001_identity.sql`)
 
-- **`tenants`**: id, name, base_currency char(3), cycle_anchor_day smallint (1–31), locale text, timezone text, created_at, updated_at.
+- **`tenants`**: id, name, base_currency varchar(10), cycle_anchor_day smallint (1–31), locale text, timezone text, created_at, updated_at.
 - **`users`**: id, tenant_id (**UNIQUE**), email citext unique, password_hash text nullable, display_name, last_login_at timestamptz nullable, created_at, updated_at.
-- **`user_preferences`**: user_id PK, theme text, date_format text, number_format text, display_currency char(3) nullable, feature_flags jsonb not null default '{}', updated_at.
+- **`user_preferences`**: user_id PK, theme text, date_format text, number_format text, display_currency varchar(10) nullable, feature_flags jsonb not null default '{}', updated_at.
 - **`sessions`**: id text PK (token hash), user_id FK cascade, created_at, expires_at, user_agent text, ip inet.
 - **`webauthn_credentials`**: id, user_id FK cascade, credential_id bytea UNIQUE, public_key bytea, sign_count bigint, transports text[], label, created_at.
 - **`totp_credentials`**: id, user_id FK cascade, secret_cipher text (AES-GCM ciphertext), verified_at, recovery_codes_cipher text, created_at.
@@ -167,34 +206,14 @@ Enums: `account_kind` (`checking, savings, cash, credit_card, brokerage, crypto_
 
 - **`accounts`**: id, tenant_id, name, nickname, kind, currency, institution, open_date, close_date nullable, opening_balance numeric(28,8) not null default 0, opening_balance_date date, include_in_networth bool default true, include_in_savings_rate bool not null, archived_at, created_at, updated_at.
 - **`account_balance_snapshots`**: id, tenant_id, account_id FK cascade, as_of timestamptz, balance, currency, source enum, note. Unique (account_id, as_of, source).
-- **`reconciliation_checkpoints`**: id, tenant_id, account_id, statement_date, asserted_balance, status, drift_amount numeric(28,8) nullable, drift_currency char(3) nullable, resolved_at timestamptz nullable, notes.
+- **`reconciliation_checkpoints`**: id, tenant_id, account_id, statement_date, asserted_balance, status, drift_amount numeric(28,8) nullable, drift_currency varchar(10) nullable, resolved_at timestamptz nullable, notes.
 
 Invariants:
 - Balance is derived, not stored on `accounts`. Service reads: latest snapshot + sum(transactions since snapshot).
 - An `opening` snapshot at `open_date` is seeded by the service on account insert.
 - Default `include_in_savings_rate`: true for {checking, savings, cash}; false for {credit_card, brokerage, crypto_wallet, loan, mortgage, asset, pillar_2, pillar_3a, other}. Computed in the service on insert; column is bool so it can be overridden.
 
-### 5.3 Transactions (`003_transactions.sql`)
-
-Enums: `transaction_status` (`draft, posted, reconciled, voided`), `match_provenance` (`auto_detected, manual, user_confirmed_auto`).
-
-- **`transactions`**: id, tenant_id, account_id, status, booked_at date, value_at date nullable, posted_at timestamptz nullable, amount numeric(28,8), currency, original_amount nullable, original_currency nullable, merchant_id nullable FK, category_id nullable FK (leaf only), counterparty_raw text nullable, description text nullable, notes text nullable, count_as_expense bool nullable (NULL = derive), raw jsonb, created_at, updated_at.
-- **`transaction_lines`**: id, tenant_id, transaction_id FK cascade, amount, currency, category_id FK (leaf only), merchant_id nullable FK, note text, sort_order int.
-- **`transaction_tags`**: (transaction_id, tag_id) composite PK, tenant_id.
-- **`transfer_matches`**: id, tenant_id, source_transaction_id FK, destination_transaction_id nullable FK (null = outbound-to-external), fx_rate numeric(28,10) nullable, fee_amount numeric(28,8) nullable, fee_currency char(3) nullable, tolerance_note text, provenance, matched_at timestamptz default now(), matched_by_user_id nullable.
-- **`refund_matches`**: id, tenant_id, original_transaction_id FK, refund_transaction_id FK, net_to_zero bool default true, provenance, matched_at, matched_by_user_id nullable.
-- **`planned_event_matches`**: id, tenant_id, planned_event_id FK, transaction_id FK, provenance, matched_at.
-
-Invariants:
-- `transactions.currency = accounts.currency` (trigger).
-- Exactly one of: (`transactions.category_id IS NOT NULL`) XOR (≥1 `transaction_lines` row). Enforced by trigger on insert/update.
-- When lines exist, `sum(transaction_lines.amount) = transactions.amount` and all line currencies match parent currency (service guard).
-- `amount` sign is account-relative: negative = outflow, positive = inflow. Credit-card refund on a credit_card account = positive.
-- Paired transactions (transfer_matches, refund_matches) are excluded from income/expense reports regardless of sign.
-
-Indexes: `(tenant_id, booked_at desc)`, `(account_id, booked_at desc)`, `(category_id)`, `(merchant_id)`, `(status)`.
-
-### 5.4 Classification (`004_classification.sql`)
+### 5.3 Classification (`003_classification.sql`)
 
 Enums: `categorization_source` (`ai, rule, merchant_default, similar_transaction`).
 
@@ -204,12 +223,42 @@ Enums: `categorization_source` (`ai, rule, merchant_default, similar_transaction
 - **`merchant_aliases`**: id, tenant_id, merchant_id FK cascade, raw_pattern text, is_regex bool default false, created_at. Unique (tenant_id, raw_pattern).
 - **`tags`**: id, tenant_id, name, color, archived_at, created_at, updated_at. Unique (tenant_id, name).
 - **`categorization_rules`**: id, tenant_id, priority int, when_jsonb jsonb, then_jsonb jsonb, enabled bool default true, last_matched_at timestamptz nullable, created_at, updated_at.
-- **`categorization_suggestions`**: id, tenant_id, transaction_id FK cascade, suggested_category_id FK, confidence numeric(5,4), source enum, created_at, accepted_at nullable, dismissed_at nullable.
+- **`categorization_suggestions`**: id, tenant_id, transaction_id FK cascade (declared in 004 — this table adds the FK after transactions is created, or drop the cascade and let the service handle orphan cleanup; spec leaves the FK in this file and documents the cross-file dependency), suggested_category_id FK, confidence numeric(5,4), source enum, created_at, accepted_at nullable, dismissed_at nullable.
+
+Note on load order: `categorization_suggestions.transaction_id` points at `transactions` which doesn't exist yet (004). Two implementations:
+- Declare `categorization_suggestions` in `004_transactions.sql` instead (it's an annotation on transactions more than a classification primitive).
+- Keep it here without the FK and add the FK in `004_transactions.sql` via `alter table`.
+
+Recommendation: **declare in 004**, move the table out of this file. Listed here for completeness; actual CREATE is in 004.
 
 Invariants:
 - Categories referenced by transactions are leaves (trigger rejects writes where the target category has children).
 - Rule evaluation order by `priority ASC` (first match wins, per FEATURE-BIBLE §5).
 - Merchant merge flow: update transactions / aliases / rules to point at survivor, then delete the merged merchant.
+
+### 5.4 Transactions (`004_transactions.sql`)
+
+Enums: `transaction_status` (`draft, posted, reconciled, voided`), `match_provenance` (`auto_detected, manual, user_confirmed_auto`).
+
+- **`transactions`**: id, tenant_id, account_id, status, booked_at date, value_at date nullable, posted_at timestamptz nullable, amount numeric(28,8), currency, original_amount nullable, original_currency nullable, merchant_id nullable FK, category_id nullable FK (leaf only), counterparty_raw text nullable, description text nullable, notes text nullable, count_as_expense bool nullable (NULL = derive), raw jsonb, created_at, updated_at. Composite FKs to `accounts`, `categories`, `merchants` using `(tenant_id, <id>)`.
+- **`transaction_lines`**: id, tenant_id, transaction_id FK cascade, amount, currency, category_id FK (leaf only), merchant_id nullable FK, note text, sort_order int. Composite FK to `(tenant_id, transaction_id)`.
+- **`transaction_tags`**: (transaction_id, tag_id) composite PK, tenant_id. Composite FKs to `(tenant_id, transaction_id)` and `(tenant_id, tag_id)`.
+- **`transfer_matches`**: id, tenant_id, source_transaction_id FK, destination_transaction_id nullable FK (null = outbound-to-external), fx_rate numeric(28,10) nullable, fee_amount numeric(28,8) nullable, fee_currency varchar(10) nullable, tolerance_note text, provenance, matched_at timestamptz default now(), matched_by_user_id nullable.
+- **`refund_matches`**: id, tenant_id, original_transaction_id FK, refund_transaction_id FK, net_to_zero bool default true, provenance, matched_at, matched_by_user_id nullable.
+- **`categorization_suggestions`** (relocated from 5.3): id, tenant_id, transaction_id FK cascade, suggested_category_id FK, confidence numeric(5,4), source enum, created_at, accepted_at nullable, dismissed_at nullable.
+
+Invariants:
+- `transactions.currency = accounts.currency` (trigger).
+- `transactions.category_id` and `transaction_lines` are NOT mutually required. Valid states:
+  - Only `category_id` set → classified directly.
+  - `category_id` NULL and ≥1 line → classified via splits.
+  - Both NULL/empty → **uncategorised** (FEATURE-BIBLE §5 has an explicit bucket for this). Acceptable when the transaction is either awaiting classification, or classified *by relationship* via `transfer_matches`, `refund_matches`, `investment_trades.linked_cash_transaction_id`, `dividend_events.linked_cash_transaction_id`, `asset_events.linked_transaction_id`, or `mortgage_payments.linked_transaction_id`.
+  - Disallowed: `category_id` set AND ≥1 line (contradictory double-classification). Enforced by trigger.
+- When lines exist: `sum(transaction_lines.amount) = transactions.amount` and all line currencies match parent currency (service guard).
+- `amount` sign is account-relative: negative = outflow, positive = inflow. Credit-card refund on a credit_card account = positive.
+- Paired transactions (transfer_matches, refund_matches) are excluded from income/expense reports regardless of sign.
+
+Indexes: `(tenant_id, booked_at desc)`, `(account_id, booked_at desc)`, `(category_id)`, `(merchant_id)`, `(status)`.
 
 ### 5.5 Imports & providers (`005_imports.sql`)
 
@@ -219,10 +268,11 @@ Enums: `provider_connection_status` (`active, error, revoked, consent_expired`),
 - **`provider_accounts`**: id, tenant_id, provider_connection_id FK, account_id nullable FK, external_account_id text, external_payload jsonb, linked_at nullable. Unique (provider_connection_id, external_account_id).
 - **`import_profiles`**: id, tenant_id, name, kind, mapping jsonb, options jsonb, created_at, updated_at.
 - **`import_batches`**: id, tenant_id, import_profile_id nullable FK, provider_connection_id nullable FK, source_kind, file_name text nullable, file_hash text nullable, status, summary jsonb, created_by_user_id, started_at, finished_at nullable, error text.
-- **`source_refs`**: id, tenant_id, entity_type text, entity_id uuid, provider text nullable, import_batch_id nullable FK on delete set null, external_id text, raw_payload jsonb, observed_at. Unique (entity_type, provider, external_id) where provider is not null.
+- **`source_refs`**: id, tenant_id, entity_type text, entity_id uuid, provider text nullable, import_batch_id nullable FK on delete set null, external_id text, raw_payload jsonb, observed_at. Unique (tenant_id, entity_type, provider, external_id) where provider is not null.
 
 Invariants:
-- Dedupe keys live in `source_refs`, not on the entity tables. A transaction can have multiple source_refs (re-import updates payload; unique key on `(entity_type, provider, external_id)` still idempotent).
+- Dedupe keys live in `source_refs`, not on the entity tables. A transaction can have multiple source_refs (re-import updates payload; the tenant-scoped unique key is still idempotent).
+- The unique key includes `tenant_id` so two tenants syncing the same provider + external_id never collide.
 - `source_refs` is the single polymorphic table — it covers transactions, accounts, balance snapshots, investment trades, dividend events, instrument prices.
 
 ### 5.6 Planning (`006_planning.sql`)
@@ -236,12 +286,14 @@ Enums: `cycle_anchor_kind` (`monthly_day, biweekly, weekly, custom`), `cycle_sta
 - **`cycle_plan_lines`**: id, tenant_id, cycle_plan_id FK cascade, kind, category_id nullable FK, recurring_template_id nullable FK, income_source_id nullable FK, goal_id nullable FK, trip_id nullable FK, planned_amount numeric(28,8), currency, note, sort_order int.
 - **`planned_events`**: id, tenant_id, cycle_plan_line_id nullable FK, recurring_template_id nullable FK, kind (shared enum with recurring), account_id, dest_account_id nullable, category_id nullable, merchant_id nullable, planned_for date, amount, currency, status, executed_transaction_id nullable FK, created_at, updated_at.
 - **`action_items`**: id, tenant_id, planned_event_id FK cascade, instruction text, due_at date, status, done_at nullable, notes text, created_at, updated_at.
-- **`rollover_policies`**: id, tenant_id, category_id FK, behavior, cap_amount numeric(28,8) nullable, cap_currency char(3) nullable, overspend, created_at, updated_at. Unique (tenant_id, category_id).
+- **`rollover_policies`**: id, tenant_id, category_id FK, behavior, cap_amount numeric(28,8) nullable, cap_currency varchar(10) nullable, overspend, created_at, updated_at. Unique (tenant_id, category_id).
+- **`planned_event_matches`** (relocated from 5.4 — needs both `planned_events` here and `transactions` from 004): id, tenant_id, planned_event_id FK, transaction_id FK, provenance, matched_at.
 
 Invariants:
 - `planned_events.status='executed'` requires `executed_transaction_id IS NOT NULL` (check constraint).
 - `cycle_plans.status='closed'` freezes `summary`; plan lines may still be edited (audit-logged) but no longer affect reports.
 - `rollover_policies` is one-per-category; categories without a policy default to `reset`.
+- `planned_event_matches` connects a planned event to the real transaction that fulfilled it (set at the same time as `planned_events.executed_transaction_id`; the match row carries provenance / auto-vs-manual metadata the denorm column can't).
 
 ### 5.7 Goals, buckets, savings rules (`007_goals.sql`)
 
@@ -264,7 +316,7 @@ Enums: `asset_class` (`equity, etf, bond, fund, reit, option, future, crypto, co
 
 - **`instruments`** (**global, no tenant_id**): id, symbol text, isin text nullable, name, asset_class, currency, exchange text nullable, metadata jsonb, active bool default true, created_at, updated_at. Unique (isin) where isin is not null; unique (symbol, exchange) where isin is null.
 - **`investment_accounts`**: account_id PK references accounts(id) on delete cascade, tenant_id, cost_basis_method default `fifo`, default_tax_lot_strategy text nullable.
-- **`investment_trades`**: id, tenant_id, account_id FK, instrument_id FK, side, quantity numeric(28,8), price numeric(28,8), currency, fee_amount numeric(28,8) default 0, fee_currency char(3), trade_date, settle_date nullable, linked_cash_transaction_id nullable FK, created_at, updated_at.
+- **`investment_trades`**: id, tenant_id, account_id FK, instrument_id FK, side, quantity numeric(28,8), price numeric(28,8), currency, fee_amount numeric(28,8) default 0, fee_currency varchar(10), trade_date, settle_date nullable, linked_cash_transaction_id nullable FK, created_at, updated_at.
 - **`investment_lots`**: id, tenant_id, account_id FK, instrument_id FK, acquired_at date, quantity_opening numeric(28,8), quantity_remaining numeric(28,8), cost_basis_per_unit numeric(28,8), currency, source_trade_id FK, closed_at nullable, created_at.
 - **`investment_lot_consumptions`**: id, tenant_id, lot_id FK, sell_trade_id FK, quantity_consumed numeric(28,8), realised_gain numeric(28,8), currency, consumed_at date.
 - **`dividend_events`**: id, tenant_id, account_id FK, instrument_id FK, ex_date date, pay_date date, amount_per_unit numeric(28,8), currency, total_amount numeric(28,8), tax_withheld numeric(28,8) default 0, linked_cash_transaction_id nullable FK, created_at.
@@ -285,9 +337,9 @@ Invariants:
 
 Enums: `asset_category` (`car, property, art, watch, collectible, crypto_physical, pension, other`), `asset_valuation_method` (`manual, plugin_eurotax, plugin_zestimate, plugin_crypto_oracle`), `asset_valuation_source` (`manual, plugin, appraisal, purchase, sale`), `asset_event_kind` (`purchase, sale, maintenance, depreciation, appraisal, improvement, transfer_of_ownership`), `depreciation_method` (`straight_line, declining_balance, manual`), `retirement_pillar` (`ch_pillar_3a, ch_pillar_2, other`), `mortgage_payment_status` (`upcoming, due, paid, skipped`).
 
-- **`assets`**: id, tenant_id, account_id FK **UNIQUE**, category, description text, acquired_date, acquired_cost numeric(28,8), currency, disposal_date nullable, disposal_amount nullable, disposal_currency char(3) nullable, valuation_method, notes text, created_at, updated_at.
+- **`assets`**: id, tenant_id, account_id FK **UNIQUE**, category, description text, acquired_date, acquired_cost numeric(28,8), currency, disposal_date nullable, disposal_amount nullable, disposal_currency varchar(10) nullable, valuation_method, notes text, created_at, updated_at.
 - **`asset_valuations`**: id, tenant_id, asset_id FK cascade, as_of date, value numeric(28,8), currency, source, note.
-- **`asset_events`**: id, tenant_id, asset_id FK cascade, kind, occurred_at date, amount numeric(28,8) nullable, currency char(3) nullable, linked_transaction_id nullable FK, note, created_at.
+- **`asset_events`**: id, tenant_id, asset_id FK cascade, kind, occurred_at date, amount numeric(28,8) nullable, currency varchar(10) nullable, linked_transaction_id nullable FK, note, created_at.
 - **`asset_depreciation_schedules`**: id, tenant_id, asset_id FK cascade UNIQUE, method, start_date, end_date nullable, salvage_value numeric(28,8) nullable, rate numeric(7,4) nullable, schedule_jsonb jsonb nullable.
 - **`retirement_contribution_limits`** (**reference data, no tenant_id**): id, country char(2), year int, pillar, amount numeric(28,8), currency. Unique (country, year, pillar).
 - **`mortgage_schedules`**: id, tenant_id, account_id FK **UNIQUE** (account of kind `mortgage`), original_principal numeric(28,8), currency, interest_rate numeric(7,4), term_months int, start_date, created_at, updated_at.
@@ -351,8 +403,8 @@ Indexes: `(tenant_id, entity_type, entity_id, occurred_at desc)` on `audit_event
 
 Enums: `fx_source` (`ecb, openexchangerates, manual`), `event_marker_kind` (`auto_large_inflow, auto_balance_jump, user_pinned`), `report_export_kind` (`csv_transactions, pdf_monthly, pdf_yearly, tax_year_gains, wealth_tax, full_data_bundle, custom_template`), `report_export_status` (`queued, running, ready, failed, expired`).
 
-- **`fx_rates`** (**global, no tenant_id**): id, base_currency char(3), quote_currency char(3), as_of date, rate numeric(28,10), source, fetched_at timestamptz default now(). Unique (base_currency, quote_currency, as_of, source).
-- **`networth_snapshots`**: id, tenant_id, as_of date, total_value numeric(28,8), base_currency char(3), breakdown_jsonb jsonb, computed_at timestamptz, created_at. Unique (tenant_id, as_of).
+- **`fx_rates`** (**global, no tenant_id**): id, base_currency varchar(10), quote_currency varchar(10), as_of date, rate numeric(28,10), source, fetched_at timestamptz default now(). Unique (base_currency, quote_currency, as_of, source).
+- **`networth_snapshots`**: id, tenant_id, as_of date, total_value numeric(28,8), base_currency varchar(10), breakdown_jsonb jsonb, computed_at timestamptz, created_at. Unique (tenant_id, as_of).
 - **`event_markers`**: id, tenant_id, as_of date, kind, label text, note text, created_at.
 - **`report_exports`**: id, tenant_id, requested_by_user_id FK, kind, params_jsonb, status, file_attachment_id nullable FK, requested_at, completed_at nullable, expires_at nullable, error text.
 - **`export_templates`**: id, tenant_id, name, kind, definition_jsonb, created_at, updated_at.
@@ -404,8 +456,9 @@ Keep it a high-level overview (≤2 pages). The spec (this document) is the refe
 
 - Existing `backend/db/migrations/20260424000000_init.sql` deleted.
 - 14 new migration files in load order, each under ~250 lines.
-- `atlas migrate apply --env local` against a fresh Postgres 17 database succeeds with no errors.
+- `atlas migrate apply --env local` against a fresh **unmodified** `postgres:17` image succeeds with no errors (no extensions required).
 - `sqlc generate` succeeds (no queries yet; schema is valid).
 - `backend/go build ./...` succeeds (only schema changed; no handler code to break).
-- `pg_uuidv7` extension available in the dev/prod images.
+- Every tenant-scoped table has `UNIQUE (tenant_id, id)`; every cross-table FK to a tenant-scoped parent is composite `(tenant_id, <ref>) REFERENCES parent(tenant_id, id)`.
+- UUIDv7 generator available in the backend (`github.com/google/uuid` ≥ 1.6) and web (any maintained JS UUIDv7 lib).
 - `docs/domain.md` rewritten; no references to scaffold-era shape remain.
