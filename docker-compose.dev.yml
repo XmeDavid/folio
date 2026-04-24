@@ -56,9 +56,9 @@ services:
       - go-build:/root/.cache/go-build
       - backend-tmp:/app/backend/tmp
     command: >
-      sh -lc "apk add --no-cache git ca-certificates &&
-              go install github.com/air-verse/air@latest &&
-              air -c .air.toml"
+      sh -c "apk add --no-cache git ca-certificates &&
+             go install github.com/air-verse/air@latest &&
+             air -c .air.toml"
 
   migrate:
     image: arigaio/atlas:latest
