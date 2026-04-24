@@ -1,8 +1,3 @@
-// Package identity owns tenants and users (the root of the financial data
-// graph) and the "bootstrap" onboarding flow that provisions them together.
-//
-// The v1 data model is intentionally 1:1 tenant→user; this package assumes
-// that invariant when resolving the current user from a tenant id.
 package identity
 
 import (
@@ -21,74 +16,78 @@ import (
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
-// Service is the identity service. It owns writes to tenants/users.
+// Service owns writes and reads for users, tenants, and memberships.
 type Service struct {
 	pool *pgxpool.Pool
 	now  func() time.Time
 }
 
-// NewService constructs an identity Service backed by pool.
+// NewService constructs a Service backed by pool.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, now: time.Now}
 }
 
-// Tenant is the read-model representation of a tenant row.
-type Tenant struct {
-	ID             uuid.UUID `json:"id"`
-	Name           string    `json:"name"`
-	BaseCurrency   string    `json:"baseCurrency"`
-	CycleAnchorDay int       `json:"cycleAnchorDay"`
-	Locale         string    `json:"locale"`
-	Timezone       string    `json:"timezone"`
-	CreatedAt      time.Time `json:"createdAt"`
+// Me returns the user + every tenant they belong to, with their role per
+// tenant. Soft-deleted tenants are excluded.
+func (s *Service) Me(ctx context.Context, userID uuid.UUID) (User, []TenantWithRole, error) {
+	var u User
+	err := s.pool.QueryRow(ctx, `
+		select id, email, display_name, email_verified_at, is_admin, last_tenant_id, created_at
+		from users
+		where id = $1
+	`, userID).Scan(&u.ID, &u.Email, &u.DisplayName, &u.EmailVerifiedAt, &u.IsAdmin, &u.LastTenantID, &u.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return u, nil, httpx.NewNotFoundError("user")
+		}
+		return u, nil, fmt.Errorf("select user: %w", err)
+	}
+	rows, err := s.pool.Query(ctx, `
+		select t.id, t.name, t.slug, t.base_currency, t.cycle_anchor_day, t.locale, t.timezone, t.deleted_at, t.created_at, m.role
+		from tenant_memberships m
+		join tenants t on t.id = m.tenant_id
+		where m.user_id = $1 and t.deleted_at is null
+		order by t.name
+	`, userID)
+	if err != nil {
+		return u, nil, fmt.Errorf("list memberships: %w", err)
+	}
+	defer rows.Close()
+	var tenants []TenantWithRole
+	for rows.Next() {
+		var tr TenantWithRole
+		if err := rows.Scan(&tr.ID, &tr.Name, &tr.Slug, &tr.BaseCurrency, &tr.CycleAnchorDay,
+			&tr.Locale, &tr.Timezone, &tr.DeletedAt, &tr.CreatedAt, &tr.Role); err != nil {
+			return u, nil, fmt.Errorf("scan membership: %w", err)
+		}
+		tenants = append(tenants, tr)
+	}
+	if rows.Err() != nil {
+		return u, nil, rows.Err()
+	}
+	return u, tenants, nil
 }
 
-// User is the read-model representation of a user row.
-type User struct {
-	ID          uuid.UUID `json:"id"`
-	TenantID    uuid.UUID `json:"tenantId"`
-	Email       string    `json:"email"`
-	DisplayName string    `json:"displayName"`
-	CreatedAt   time.Time `json:"createdAt"`
-}
-
-// OnboardInput is the validated input to Bootstrap.
-type OnboardInput struct {
-	TenantName     string
+// CreateTenantInput is the validated input to CreateTenant.
+type CreateTenantInput struct {
+	Name           string
 	BaseCurrency   string
 	CycleAnchorDay int
 	Locale         string
 	Timezone       string
-	Email          string
-	DisplayName    string
 }
 
-// OnboardResult is returned from Bootstrap.
-type OnboardResult struct {
-	Tenant Tenant `json:"tenant"`
-	User   User   `json:"user"`
-}
-
-// normalize applies defaults and validates an OnboardInput. Pure function —
-// tested directly without a database.
-func (in OnboardInput) normalize() (OnboardInput, error) {
-	in.TenantName = strings.TrimSpace(in.TenantName)
-	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
-	in.DisplayName = strings.TrimSpace(in.DisplayName)
+// Normalize trims + validates the input. Exported for cross-package use
+// (auth.Service.Signup reuses it).
+func (in CreateTenantInput) Normalize() (CreateTenantInput, error) {
+	in.Name = strings.TrimSpace(in.Name)
 	in.Locale = strings.TrimSpace(in.Locale)
 	in.Timezone = strings.TrimSpace(in.Timezone)
-
-	if in.TenantName == "" {
-		return in, httpx.NewValidationError("tenantName is required")
-	}
-	if in.Email == "" || !strings.Contains(in.Email, "@") {
-		return in, httpx.NewValidationError("email is required and must look like an email")
-	}
-	if in.DisplayName == "" {
-		return in, httpx.NewValidationError("displayName is required")
+	if in.Name == "" {
+		return in, httpx.NewValidationError("name is required")
 	}
 	if in.Locale == "" {
-		return in, httpx.NewValidationError("locale is required (e.g. en-US)")
+		return in, httpx.NewValidationError("locale is required")
 	}
 	if in.Timezone == "" {
 		in.Timezone = "UTC"
@@ -97,7 +96,7 @@ func (in OnboardInput) normalize() (OnboardInput, error) {
 		in.CycleAnchorDay = 1
 	}
 	if in.CycleAnchorDay < 1 || in.CycleAnchorDay > 31 {
-		return in, httpx.NewValidationError("cycleAnchorDay must be between 1 and 31")
+		return in, httpx.NewValidationError("cycleAnchorDay must be 1-31")
 	}
 	cur, err := money.ParseCurrency(in.BaseCurrency)
 	if err != nil {
@@ -107,74 +106,114 @@ func (in OnboardInput) normalize() (OnboardInput, error) {
 	return in, nil
 }
 
-// Bootstrap provisions a tenant and its first user in a single transaction.
-// Password auth is not yet implemented: password_hash is stored NULL and will
-// be populated by a future /auth flow.
-func (s *Service) Bootstrap(ctx context.Context, raw OnboardInput) (*OnboardResult, error) {
-	in, err := raw.normalize()
+// CreateTenant creates a tenant with a unique slug derived from its name,
+// and installs the calling user as an owner in the same transaction.
+func (s *Service) CreateTenant(ctx context.Context, userID uuid.UUID, raw CreateTenantInput) (Tenant, Membership, error) {
+	in, err := raw.Normalize()
 	if err != nil {
-		return nil, err
+		return Tenant{}, Membership{}, err
 	}
-
-	tenantID := uuidx.New()
-	userID := uuidx.New()
-
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("begin: %w", err)
+		return Tenant{}, Membership{}, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-
-	var tenant Tenant
-	err = tx.QueryRow(ctx, `
-		insert into tenants (id, name, base_currency, cycle_anchor_day, locale, timezone)
-		values ($1, $2, $3, $4, $5, $6)
-		returning id, name, base_currency, cycle_anchor_day, locale, timezone, created_at
-	`, tenantID, in.TenantName, in.BaseCurrency, in.CycleAnchorDay, in.Locale, in.Timezone).
-		Scan(&tenant.ID, &tenant.Name, &tenant.BaseCurrency, &tenant.CycleAnchorDay,
-			&tenant.Locale, &tenant.Timezone, &tenant.CreatedAt)
+	t, err := InsertTenantTx(ctx, tx, uuidx.New(), in)
 	if err != nil {
-		return nil, fmt.Errorf("insert tenant: %w", err)
+		return Tenant{}, Membership{}, err
 	}
-
-	var user User
-	err = tx.QueryRow(ctx, `
-		insert into users (id, tenant_id, email, display_name)
-		values ($1, $2, $3, $4)
-		returning id, tenant_id, email, display_name, created_at
-	`, userID, tenantID, in.Email, in.DisplayName).
-		Scan(&user.ID, &user.TenantID, &user.Email, &user.DisplayName, &user.CreatedAt)
+	m, err := InsertMembershipTx(ctx, tx, t.ID, userID, RoleOwner)
 	if err != nil {
-		return nil, fmt.Errorf("insert user: %w", err)
+		return Tenant{}, Membership{}, err
 	}
-
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit: %w", err)
+		return Tenant{}, Membership{}, fmt.Errorf("commit: %w", err)
 	}
-	return &OnboardResult{Tenant: tenant, User: user}, nil
+	return t, m, nil
 }
 
-// Me resolves the (unique) user for a tenant. The 1:1 tenant→user invariant
-// is enforced by a UNIQUE constraint on users.tenant_id.
-func (s *Service) Me(ctx context.Context, tenantID uuid.UUID) (*User, *Tenant, error) {
-	var user User
-	var tenant Tenant
-	err := s.pool.QueryRow(ctx, `
-		select u.id, u.tenant_id, u.email, u.display_name, u.created_at,
-		       t.id, t.name, t.base_currency, t.cycle_anchor_day, t.locale, t.timezone, t.created_at
-		from users u
-		join tenants t on t.id = u.tenant_id
-		where u.tenant_id = $1
-	`, tenantID).Scan(
-		&user.ID, &user.TenantID, &user.Email, &user.DisplayName, &user.CreatedAt,
-		&tenant.ID, &tenant.Name, &tenant.BaseCurrency, &tenant.CycleAnchorDay,
-		&tenant.Locale, &tenant.Timezone, &tenant.CreatedAt,
-	)
+// ListMembers returns every membership in tenantID. Plan 1 list-only;
+// plan 2 extends to include pending invites.
+func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) ([]Membership, error) {
+	rows, err := s.pool.Query(ctx, `
+		select tenant_id, user_id, role, created_at
+		from tenant_memberships
+		where tenant_id = $1
+		order by created_at
+	`, tenantID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil, httpx.NewNotFoundError("user for tenant")
-		}
-		return nil, nil, err
+		return nil, fmt.Errorf("list members: %w", err)
 	}
-	return &user, &tenant, nil
+	defer rows.Close()
+	var out []Membership
+	for rows.Next() {
+		var m Membership
+		if err := rows.Scan(&m.TenantID, &m.UserID, &m.Role, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// InsertTenantTx inserts a tenants row with a unique slug derived from the
+// input name; retries with numeric suffixes up to 100 times on slug collision.
+// Exported so auth.Service.Signup can reuse it inside its own transaction.
+func InsertTenantTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in CreateTenantInput) (Tenant, error) {
+	base := Slugify(in.Name)
+	if base == "" || len(base) < 2 {
+		base = "workspace"
+	}
+	slug := base
+	for i := 0; i < 100; i++ {
+		var t Tenant
+		err := tx.QueryRow(ctx, `
+			insert into tenants (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
+			values ($1,$2,$3,$4,$5,$6,$7)
+			returning id, name, slug, base_currency, cycle_anchor_day, locale, timezone, deleted_at, created_at
+		`, id, in.Name, slug, in.BaseCurrency, in.CycleAnchorDay, in.Locale, in.Timezone).
+			Scan(&t.ID, &t.Name, &t.Slug, &t.BaseCurrency, &t.CycleAnchorDay, &t.Locale, &t.Timezone, &t.DeletedAt, &t.CreatedAt)
+		if err == nil {
+			return t, nil
+		}
+		if !isUniqueViolation(err, "tenants_slug_key") {
+			return Tenant{}, fmt.Errorf("insert tenant: %w", err)
+		}
+		slug = fmt.Sprintf("%s-%d", base, i+2)
+	}
+	return Tenant{}, httpx.NewValidationError("could not generate unique slug")
+}
+
+// InsertMembershipTx inserts a tenant_memberships row. Exported for reuse.
+func InsertMembershipTx(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UUID, role Role) (Membership, error) {
+	var m Membership
+	err := tx.QueryRow(ctx, `
+		insert into tenant_memberships (tenant_id, user_id, role)
+		values ($1, $2, $3)
+		returning tenant_id, user_id, role, created_at
+	`, tenantID, userID, role).Scan(&m.TenantID, &m.UserID, &m.Role, &m.CreatedAt)
+	if err != nil {
+		return Membership{}, fmt.Errorf("insert membership: %w", err)
+	}
+	return m, nil
+}
+
+// isUniqueViolation reports whether err is a Postgres 23505 unique-violation
+// for the given constraint name. Accepts any constraint when name is "".
+func isUniqueViolation(err error, constraint string) bool {
+	type pgErr interface {
+		SQLState() string
+		ConstraintName() string
+	}
+	var pe pgErr
+	if !errors.As(err, &pe) {
+		return false
+	}
+	if pe.SQLState() != "23505" {
+		return false
+	}
+	if constraint == "" {
+		return true
+	}
+	return pe.ConstraintName() == constraint
 }
