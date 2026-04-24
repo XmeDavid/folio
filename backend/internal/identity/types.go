@@ -58,6 +58,23 @@ type MemberWithUser struct {
 	DisplayName string `json:"displayName"`
 }
 
+// PendingInvite is the pending-invite row embedded in the members response.
+// "Pending" = not accepted, not revoked, not expired.
+type PendingInvite struct {
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	Role      Role      `json:"role"`
+	InvitedBy uuid.UUID `json:"invitedByUserId"`
+	InvitedAt time.Time `json:"invitedAt"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+// MembersResponse is the payload for GET /t/{id}/members.
+type MembersResponse struct {
+	Members        []MemberWithUser `json:"members"`
+	PendingInvites []PendingInvite  `json:"pendingInvites"`
+}
+
 // TenantWithRole attaches the caller's role on a tenant for the /me response.
 type TenantWithRole struct {
 	Tenant

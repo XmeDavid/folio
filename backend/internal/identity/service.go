@@ -134,28 +134,61 @@ func (s *Service) CreateTenant(ctx context.Context, userID uuid.UUID, raw Create
 	return t, m, nil
 }
 
-// ListMembers returns every membership in tenantID. Plan 1 list-only;
-// plan 2 extends to include pending invites.
-func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) ([]Membership, error) {
+// ListMembers returns memberships (enriched with user display fields) plus
+// currently-pending invites for tenantID. "Pending" means accepted_at IS NULL
+// AND revoked_at IS NULL AND expires_at > now().
+func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) (*MembersResponse, error) {
+	out := &MembersResponse{Members: []MemberWithUser{}, PendingInvites: []PendingInvite{}}
+
 	rows, err := s.pool.Query(ctx, `
-		select tenant_id, user_id, role, created_at
-		from tenant_memberships
-		where tenant_id = $1
-		order by created_at
+		select m.tenant_id, m.user_id, m.role::text, m.created_at,
+		       u.email, u.display_name
+		from tenant_memberships m
+		join users u on u.id = m.user_id
+		where m.tenant_id = $1
+		order by m.created_at
 	`, tenantID)
 	if err != nil {
-		return nil, fmt.Errorf("list members: %w", err)
+		return nil, fmt.Errorf("list memberships: %w", err)
 	}
-	defer rows.Close()
-	var out []Membership
 	for rows.Next() {
-		var m Membership
-		if err := rows.Scan(&m.TenantID, &m.UserID, &m.Role, &m.CreatedAt); err != nil {
+		var m MemberWithUser
+		var role string
+		if err := rows.Scan(&m.TenantID, &m.UserID, &role, &m.CreatedAt, &m.Email, &m.DisplayName); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		out = append(out, m)
+		m.Role = Role(role)
+		out.Members = append(out.Members, m)
 	}
-	return out, rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	iRows, err := s.pool.Query(ctx, `
+		select id, email, role::text, invited_by_user_id, created_at, expires_at
+		from tenant_invites
+		where tenant_id = $1
+		  and accepted_at is null
+		  and revoked_at is null
+		  and expires_at > now()
+		order by created_at desc
+	`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list invites: %w", err)
+	}
+	defer iRows.Close()
+	for iRows.Next() {
+		var inv PendingInvite
+		var role string
+		if err := iRows.Scan(&inv.ID, &inv.Email, &role, &inv.InvitedBy, &inv.InvitedAt, &inv.ExpiresAt); err != nil {
+			return nil, err
+		}
+		inv.Role = Role(role)
+		out.PendingInvites = append(out.PendingInvites, inv)
+	}
+	return out, iRows.Err()
 }
 
 // UpdateTenantInput is the PATCH body for tenant settings. Pointer fields

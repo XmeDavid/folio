@@ -183,12 +183,12 @@ func (h *Handler) createTenant(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
 	tenant := MustTenant(r)
-	members, err := h.svc.identity.ListMembers(r.Context(), tenant.ID)
+	resp, err := h.svc.identity.ListMembers(r.Context(), tenant.ID)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"members": members})
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // parseIPForStorage parses a string IP to net.IP. Returns nil on parse failure.
