@@ -77,6 +77,7 @@ func NewRouter(d Deps) http.Handler {
 			r.Use(authSvc.RequireMembership)
 
 			authH.MountTenantScoped(r) // /members
+			authH.MountTenantAdmin(r)  // PATCH /, DELETE /, POST /restore — owner-gated
 
 			r.Route("/accounts", accountsH.Mount)
 			r.Route("/transactions", transactionsH.Mount)
