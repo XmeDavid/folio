@@ -1,0 +1,8 @@
+.next/
+node_modules/
+out/
+.turbo/
+.omc/
+public/sw.js
+public/workbox-*.js
+tsconfig.tsbuildinfo

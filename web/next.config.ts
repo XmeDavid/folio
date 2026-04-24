@@ -9,9 +9,7 @@ const withSerwist = withSerwistInit({
 
 const config: NextConfig = {
   reactStrictMode: true,
-  experimental: {
-    typedRoutes: true,
-  },
+  typedRoutes: true,
   async rewrites() {
     // Proxy API calls to the Go backend in dev.
     if (process.env.NODE_ENV === "production") return [];

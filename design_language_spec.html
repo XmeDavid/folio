@@ -1,0 +1,322 @@
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-sans); color: var(--color-text-primary); }
+  .section { margin-bottom: 2.5rem; }
+  .section-label { font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-tertiary); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 0.5px solid var(--color-border-tertiary); }
+  .card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 1rem 1.25rem; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .swatch { border-radius: 6px; }
+  .mono { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-secondary); }
+  .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+</style>
+
+<h2 class="sr-only">Design language specification: palette, typography, spacing, and component tokens</h2>
+
+<div style="padding: 0.5rem 0 2.5rem;">
+
+  <div class="section">
+    <p class="section-label">Philosophy</p>
+    <div class="card" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 1px; background: var(--color-border-tertiary); overflow: hidden;">
+      <div style="background: var(--color-background-primary); padding: 1rem 1.25rem;">
+        <p style="font-size: 13px; font-weight: 500; margin-bottom: 4px;">Warm restraint</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">Off-white surfaces, never pure white. The page breathes.</p>
+      </div>
+      <div style="background: var(--color-background-primary); padding: 1rem 1.25rem;">
+        <p style="font-size: 13px; font-weight: 500; margin-bottom: 4px;">Data-first clarity</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">Numbers lead. Decoration earns its place.</p>
+      </div>
+      <div style="background: var(--color-background-primary); padding: 1rem 1.25rem;">
+        <p style="font-size: 13px; font-weight: 500; margin-bottom: 4px;">Editorial weight</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">Type does the heavy lifting. Hierarchy through size and weight, not color.</p>
+      </div>
+      <div style="background: var(--color-background-primary); padding: 1rem 1.25rem;">
+        <p style="font-size: 13px; font-weight: 500; margin-bottom: 4px;">Purposeful color</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">Color signals state, not decoration. One accent. Amber for urgency only.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <p class="section-label">Color palette</p>
+    <div style="display: grid; gap: 8px;">
+
+      <div style="display: grid; grid-template-columns: 120px 1fr; gap: 12px; align-items: center;">
+        <p style="font-size: 12px; color: var(--color-text-secondary);">Background / page</p>
+        <div class="row">
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #FAF9F6; border: 0.5px solid var(--color-border-tertiary);"></div>
+            <p class="mono" style="margin-top: 4px;">page<br>#FAF9F6</p>
+          </div>
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #FFFFFF; border: 0.5px solid var(--color-border-tertiary);"></div>
+            <p class="mono" style="margin-top: 4px;">surface<br>#FFFFFF</p>
+          </div>
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #F3F1EC; border: 0.5px solid var(--color-border-tertiary);"></div>
+            <p class="mono" style="margin-top: 4px;">subtle<br>#F3F1EC</p>
+          </div>
+        </div>
+      </div>
+
+      <div style="height: 0.5px; background: var(--color-border-tertiary); margin: 4px 0;"></div>
+
+      <div style="display: grid; grid-template-columns: 120px 1fr; gap: 12px; align-items: center;">
+        <p style="font-size: 12px; color: var(--color-text-secondary);">Text</p>
+        <div class="row">
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #1A1916;"></div>
+            <p class="mono" style="margin-top: 4px;">primary<br>#1A1916</p>
+          </div>
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #6B6A65;"></div>
+            <p class="mono" style="margin-top: 4px;">secondary<br>#6B6A65</p>
+          </div>
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #A5A39D;"></div>
+            <p class="mono" style="margin-top: 4px;">tertiary<br>#A5A39D</p>
+          </div>
+        </div>
+      </div>
+
+      <div style="height: 0.5px; background: var(--color-border-tertiary); margin: 4px 0;"></div>
+
+      <div style="display: grid; grid-template-columns: 120px 1fr; gap: 12px; align-items: center;">
+        <p style="font-size: 12px; color: var(--color-text-secondary);">Accent / brand</p>
+        <div class="row">
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #C96A3A;"></div>
+            <p class="mono" style="margin-top: 4px;">coral-600<br>primary cta</p>
+          </div>
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #FAECE7; border: 0.5px solid var(--color-border-tertiary);"></div>
+            <p class="mono" style="margin-top: 4px;">coral-50<br>tint / bg</p>
+          </div>
+        </div>
+      </div>
+
+      <div style="height: 0.5px; background: var(--color-border-tertiary); margin: 4px 0;"></div>
+
+      <div style="display: grid; grid-template-columns: 120px 1fr; gap: 12px; align-items: center;">
+        <p style="font-size: 12px; color: var(--color-text-secondary);">Semantic</p>
+        <div class="row">
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #BA7517;"></div>
+            <p class="mono" style="margin-top: 4px;">amber-600<br>due / urgent</p>
+          </div>
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #3B6D11;"></div>
+            <p class="mono" style="margin-top: 4px;">green-600<br>success</p>
+          </div>
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #A32D2D;"></div>
+            <p class="mono" style="margin-top: 4px;">red-600<br>danger</p>
+          </div>
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #185FA5;"></div>
+            <p class="mono" style="margin-top: 4px;">blue-600<br>info / link</p>
+          </div>
+        </div>
+      </div>
+
+      <div style="height: 0.5px; background: var(--color-border-tertiary); margin: 4px 0;"></div>
+
+      <div style="display: grid; grid-template-columns: 120px 1fr; gap: 12px; align-items: center;">
+        <p style="font-size: 12px; color: var(--color-text-secondary);">Border</p>
+        <div class="row">
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #E2DFD8;"></div>
+            <p class="mono" style="margin-top: 4px;">default<br>0.5px</p>
+          </div>
+          <div>
+            <div class="swatch" style="width: 48px; height: 32px; background: #C8C5BE;"></div>
+            <p class="mono" style="margin-top: 4px;">strong<br>hover / focus</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <p class="section-label">Typography</p>
+    <div class="card" style="display: grid; gap: 16px;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 12px; border-bottom: 0.5px solid var(--color-border-tertiary);">
+        <span style="font-size: 28px; font-weight: 400; letter-spacing: -0.02em; color: var(--color-text-primary);">Display / Hero</span>
+        <span class="mono">28px / 400 / -0.02em</span>
+      </div>
+      <div style="display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 12px; border-bottom: 0.5px solid var(--color-border-tertiary);">
+        <span style="font-size: 20px; font-weight: 500; letter-spacing: -0.01em; color: var(--color-text-primary);">Section heading</span>
+        <span class="mono">20px / 500 / -0.01em</span>
+      </div>
+      <div style="display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 12px; border-bottom: 0.5px solid var(--color-border-tertiary);">
+        <span style="font-size: 15px; font-weight: 500; color: var(--color-text-primary);">Card title</span>
+        <span class="mono">15px / 500</span>
+      </div>
+      <div style="display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 12px; border-bottom: 0.5px solid var(--color-border-tertiary);">
+        <span style="font-size: 14px; font-weight: 400; line-height: 1.7; color: var(--color-text-secondary);">Body / descriptive text flows here at this size.</span>
+        <span class="mono">14px / 400 / lh 1.7</span>
+      </div>
+      <div style="display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 12px; border-bottom: 0.5px solid var(--color-border-tertiary);">
+        <span style="font-size: 12px; font-weight: 400; color: var(--color-text-tertiary);">Caption / label / meta</span>
+        <span class="mono">12px / 400 / tertiary</span>
+      </div>
+      <div style="display: flex; align-items: baseline; justify-content: space-between;">
+        <span style="font-size: 11px; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase; color: var(--color-text-tertiary);">Section label / eyebrow</span>
+        <span class="mono">11px / 500 / +0.07em / uppercase</span>
+      </div>
+    </div>
+    <p style="font-size: 12px; color: var(--color-text-tertiary); margin-top: 8px;">Font stack: "Söhne", "DM Sans", system-ui sans-serif. For prose / editorial blocks only: "Freight Text", Georgia, serif.</p>
+  </div>
+
+  <div class="section">
+    <p class="section-label">Numeric display (financial figures)</p>
+    <div class="row">
+      <div class="card" style="flex: 1; min-width: 140px;">
+        <p style="font-size: 11px; color: var(--color-text-tertiary); margin-bottom: 6px;">Large metric</p>
+        <p style="font-size: 36px; font-weight: 400; letter-spacing: -0.03em; line-height: 1;">58.3%</p>
+        <p style="font-size: 12px; color: var(--color-text-tertiary); margin-top: 4px;">Savings rate</p>
+      </div>
+      <div class="card" style="flex: 1; min-width: 140px;">
+        <p style="font-size: 11px; color: var(--color-text-tertiary); margin-bottom: 6px;">Summary metric</p>
+        <p style="font-size: 22px; font-weight: 500; letter-spacing: -0.02em; line-height: 1;">CHF 3,600</p>
+        <p style="font-size: 12px; color: var(--color-text-tertiary); margin-top: 4px;">Saved this month</p>
+      </div>
+      <div class="card" style="flex: 1; min-width: 140px;">
+        <p style="font-size: 11px; color: var(--color-text-tertiary); margin-bottom: 6px;">Inline figure</p>
+        <p style="font-size: 15px; font-weight: 500; line-height: 1;">CHF 46</p>
+        <p style="font-size: 12px; color: var(--color-text-tertiary); margin-top: 4px;">Internet bill</p>
+      </div>
+    </div>
+    <p style="font-size: 12px; color: var(--color-text-tertiary); margin-top: 8px;">Large metrics: thin weight (400), very tight tracking. Summaries: medium (500), moderate tracking. Always tabular-nums.</p>
+  </div>
+
+  <div class="section">
+    <p class="section-label">Spacing scale</p>
+    <div class="card">
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 1px; background: var(--color-border-tertiary); margin: -1rem -1.25rem; border-radius: var(--border-radius-lg); overflow: hidden;">
+        <div style="background: var(--color-background-primary); padding: 12px; text-align: center;">
+          <div style="height: 4px; background: var(--color-border-secondary); border-radius: 2px; margin-bottom: 8px;"></div>
+          <p class="mono">4px<br>xs</p>
+        </div>
+        <div style="background: var(--color-background-primary); padding: 12px; text-align: center;">
+          <div style="height: 8px; background: var(--color-border-secondary); border-radius: 2px; margin-bottom: 8px;"></div>
+          <p class="mono">8px<br>sm</p>
+        </div>
+        <div style="background: var(--color-background-primary); padding: 12px; text-align: center;">
+          <div style="height: 12px; background: var(--color-border-secondary); border-radius: 2px; margin-bottom: 8px;"></div>
+          <p class="mono">12px<br>md</p>
+        </div>
+        <div style="background: var(--color-background-primary); padding: 12px; text-align: center;">
+          <div style="height: 16px; background: var(--color-border-secondary); border-radius: 2px; margin-bottom: 8px;"></div>
+          <p class="mono">16px<br>lg</p>
+        </div>
+        <div style="background: var(--color-background-primary); padding: 12px; text-align: center;">
+          <div style="height: 24px; background: var(--color-border-secondary); border-radius: 2px; margin-bottom: 8px;"></div>
+          <p class="mono">24px<br>xl</p>
+        </div>
+        <div style="background: var(--color-background-primary); padding: 12px; text-align: center;">
+          <div style="height: 32px; background: var(--color-border-secondary); border-radius: 2px; margin-bottom: 8px;"></div>
+          <p class="mono">32px<br>2xl</p>
+        </div>
+        <div style="background: var(--color-background-primary); padding: 12px; text-align: center;">
+          <div style="height: 48px; background: var(--color-border-secondary); border-radius: 2px; margin-bottom: 8px;"></div>
+          <p class="mono">48px<br>3xl</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <p class="section-label">Border radius</p>
+    <div class="row">
+      <div style="text-align: center;">
+        <div style="width: 48px; height: 48px; background: var(--color-background-secondary); border: 0.5px solid var(--color-border-tertiary); border-radius: 4px; margin-bottom: 6px;"></div>
+        <p class="mono">4px<br>sm / inline</p>
+      </div>
+      <div style="text-align: center;">
+        <div style="width: 48px; height: 48px; background: var(--color-background-secondary); border: 0.5px solid var(--color-border-tertiary); border-radius: 8px; margin-bottom: 6px;"></div>
+        <p class="mono">8px<br>md / input</p>
+      </div>
+      <div style="text-align: center;">
+        <div style="width: 48px; height: 48px; background: var(--color-background-secondary); border: 0.5px solid var(--color-border-tertiary); border-radius: 12px; margin-bottom: 6px;"></div>
+        <p class="mono">12px<br>lg / card</p>
+      </div>
+      <div style="text-align: center;">
+        <div style="width: 48px; height: 48px; background: var(--color-background-secondary); border: 0.5px solid var(--color-border-tertiary); border-radius: 16px; margin-bottom: 6px;"></div>
+        <p class="mono">16px<br>xl / modal</p>
+      </div>
+      <div style="text-align: center;">
+        <div style="width: 48px; height: 48px; background: var(--color-background-secondary); border: 0.5px solid var(--color-border-tertiary); border-radius: 999px; margin-bottom: 6px;"></div>
+        <p class="mono">full<br>pill / badge</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <p class="section-label">Component tokens</p>
+    <div class="card" style="display: grid; gap: 0;">
+      <div style="display: grid; grid-template-columns: 160px 1fr; gap: 12px; padding: 10px 0; border-bottom: 0.5px solid var(--color-border-tertiary); align-items: start;">
+        <p style="font-size: 12px; font-weight: 500;">Card</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">bg white, border 0.5px default, radius 12px, padding 16px 20px. No shadows.</p>
+      </div>
+      <div style="display: grid; grid-template-columns: 160px 1fr; gap: 12px; padding: 10px 0; border-bottom: 0.5px solid var(--color-border-tertiary); align-items: start;">
+        <p style="font-size: 12px; font-weight: 500;">Page background</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">#FAF9F6. Cards sit on this. Never pure white for the canvas.</p>
+      </div>
+      <div style="display: grid; grid-template-columns: 160px 1fr; gap: 12px; padding: 10px 0; border-bottom: 0.5px solid var(--color-border-tertiary); align-items: start;">
+        <p style="font-size: 12px; font-weight: 500;">Input</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">bg white, border 0.5px default, radius 8px, height 36px, 14px text. Focus: border strong + 2px coral offset ring.</p>
+      </div>
+      <div style="display: grid; grid-template-columns: 160px 1fr; gap: 12px; padding: 10px 0; border-bottom: 0.5px solid var(--color-border-tertiary); align-items: start;">
+        <p style="font-size: 12px; font-weight: 500;">Primary button</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">bg coral-600, text white, radius 8px, height 36px, 13px/500. Hover: coral-700. No shadows.</p>
+      </div>
+      <div style="display: grid; grid-template-columns: 160px 1fr; gap: 12px; padding: 10px 0; border-bottom: 0.5px solid var(--color-border-tertiary); align-items: start;">
+        <p style="font-size: 12px; font-weight: 500;">Secondary button</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">bg transparent, border 0.5px strong, text primary, radius 8px. Hover: bg subtle.</p>
+      </div>
+      <div style="display: grid; grid-template-columns: 160px 1fr; gap: 12px; padding: 10px 0; border-bottom: 0.5px solid var(--color-border-tertiary); align-items: start;">
+        <p style="font-size: 12px; font-weight: 500;">Sidebar nav item</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">14px, text secondary. Active: bg subtle, text primary, left border 2px coral-600, radius 6px. No icon color changes.</p>
+      </div>
+      <div style="display: grid; grid-template-columns: 160px 1fr; gap: 12px; padding: 10px 0; border-bottom: 0.5px solid var(--color-border-tertiary); align-items: start;">
+        <p style="font-size: 12px; font-weight: 500;">Status badge</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">Pill shape, 11px/500. Urgent: amber-50 bg + amber-800 text. Overdue: red-50 + red-800. Paid: green-50 + green-800.</p>
+      </div>
+      <div style="display: grid; grid-template-columns: 160px 1fr; gap: 12px; padding: 10px 0; align-items: start;">
+        <p style="font-size: 12px; font-weight: 500;">List row</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">Left border 1.5px border-default (no radius), 15px title/500, 12px meta/tertiary, amount right-aligned 15px/500. Hover: bg subtle.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <p class="section-label">Interaction principles</p>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+      <div class="card">
+        <p style="font-size: 12px; font-weight: 500; margin-bottom: 4px;">Transitions</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">150ms ease for color/border changes. 200ms ease-out for layout shifts. No spring physics.</p>
+      </div>
+      <div class="card">
+        <p style="font-size: 12px; font-weight: 500; margin-bottom: 4px;">Focus</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">2px coral-600 offset ring. Never suppress :focus-visible. Keyboard-first.</p>
+      </div>
+      <div class="card">
+        <p style="font-size: 12px; font-weight: 500; margin-bottom: 4px;">Elevation</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">No drop shadows. Elevation is expressed through border weight and background contrast only.</p>
+      </div>
+      <div class="card">
+        <p style="font-size: 12px; font-weight: 500; margin-bottom: 4px;">Motion</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">Respect prefers-reduced-motion. Animations are optional polish, never load-bearing.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <p class="section-label">What this system is not</p>
+    <div class="card" style="display: grid; gap: 6px;">
+      <p style="font-size: 12px; color: var(--color-text-secondary); line-height: 1.6;">No gradients on surfaces or buttons. No drop shadows anywhere. No dark glass / frosted effects. No bright blue as primary accent. No colorful sidebar backgrounds. No decorative icons in headers. No more than two typefaces. No using color to create hierarchy between body text sizes.</p>
+    </div>
+  </div>
+
+</div>

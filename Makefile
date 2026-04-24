@@ -1,28 +1,33 @@
-.PHONY: help dev db-up db-down migrate sqlc openapi build test lint fmt clean
+.PHONY: help dev dev-up dev-down dev-logs db-up db-down migrate sqlc openapi build test lint fmt clean
 
 help:
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 # ─── Dev ──────────────────────────────────────────────────────
-dev: db-up ## Start db + hint to run backend & web
-	@echo ""
-	@echo "Run in two separate terminals:"
-	@echo "  cd backend && go run ./cmd/server"
-	@echo "  cd web && pnpm dev"
+dev: dev-up ## Start the full live-reload dev stack
+
+dev-up: ## Start db + backend + web with Docker Compose
+	docker compose -f docker-compose.dev.yml up --build
+
+dev-down: ## Stop the full dev stack
+	docker compose -f docker-compose.dev.yml down
+
+dev-logs: ## Tail full dev stack logs
+	docker compose -f docker-compose.dev.yml logs -f
 
 db-up: ## Start Postgres (dev)
-	docker compose -f docker-compose.dev.yml up -d
+	docker compose -f docker-compose.dev.yml up -d db
 
 db-down: ## Stop Postgres (dev)
-	docker compose -f docker-compose.dev.yml down
+	docker compose -f docker-compose.dev.yml stop db
 
 db-reset: ## Wipe and recreate Postgres volume
 	docker compose -f docker-compose.dev.yml down -v
-	docker compose -f docker-compose.dev.yml up -d
+	docker compose -f docker-compose.dev.yml up -d db
 
 # ─── Codegen ──────────────────────────────────────────────────
 migrate: ## Apply database migrations (local)
-	cd backend && atlas migrate apply --env local
+	cd backend && DATABASE_URL=$${DATABASE_URL:-postgres://folio:folio_dev_password@localhost:5432/folio?sslmode=disable} atlas migrate apply --env local
 
 migrate-new: ## Create a new migration: make migrate-new NAME=add_accounts
 	cd backend && atlas migrate new $(NAME)

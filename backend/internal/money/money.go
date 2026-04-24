@@ -14,15 +14,15 @@ import (
 // Amount is an alias for decimal.Decimal to keep our types explicit.
 type Amount = decimal.Decimal
 
-// Currency is an ISO-4217 code (uppercase). Crypto codes (BTC, ETH) are also valid
-// but must not collide with ISO-4217. The backend stores currency as TEXT.
+// Currency is an ISO-4217 code (uppercase). Crypto tickers are also valid.
+// The database money_currency domain allows 3-10 uppercase alphanumeric chars.
 type Currency string
 
 func (c Currency) String() string { return string(c) }
 
 func (c Currency) Valid() bool {
 	s := string(c)
-	if len(s) < 3 || len(s) > 8 {
+	if len(s) < 3 || len(s) > 10 {
 		return false
 	}
 	for _, r := range s {

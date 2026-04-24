@@ -10,7 +10,12 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xmedavid/folio/backend/internal/accounts"
+	"github.com/xmedavid/folio/backend/internal/classification"
 	"github.com/xmedavid/folio/backend/internal/config"
+	"github.com/xmedavid/folio/backend/internal/httpx"
+	"github.com/xmedavid/folio/backend/internal/identity"
+	"github.com/xmedavid/folio/backend/internal/transactions"
 )
 
 type Deps struct {
@@ -31,14 +36,37 @@ func NewRouter(d Deps) http.Handler {
 	r.Get("/healthz", health(d))
 	r.Get("/readyz", ready(d))
 
+	identitySvc := identity.NewService(d.DB)
+	identityH := identity.NewHandler(identitySvc)
+	accountsSvc := accounts.NewService(d.DB)
+	accountsH := accounts.NewHandler(accountsSvc)
+	transactionsSvc := transactions.NewService(d.DB)
+	transactionsH := transactions.NewHandler(transactionsSvc)
+	classificationSvc := classification.NewService(d.DB)
+	classificationH := classification.NewHandler(classificationSvc)
+
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/version", versionHandler)
 
-		// TODO: mount feature routers here as they're built.
-		// r.Mount("/auth", authRouter(d))
-		// r.Mount("/accounts", accountsRouter(d))
-		// r.Mount("/transactions", txRouter(d))
-		// r.Mount("/providers", providersRouter(d))
+		// Public: no tenant context yet. Onboarding bootstraps a tenant.
+		identityH.MountPublic(r)
+
+		// Tenant-scoped routes: the RequireTenant middleware is a temporary
+		// stand-in for real session auth and reads X-Tenant-ID from the
+		// request. It will be replaced by backend/internal/auth.
+		r.Group(func(r chi.Router) {
+			r.Use(httpx.RequireTenant)
+			identityH.MountTenantScoped(r)
+			r.Route("/accounts", accountsH.Mount)
+			r.Route("/transactions", transactionsH.Mount)
+			r.Route("/transactions/{transactionId}/tags", classificationH.MountTransactionTags)
+			r.Post("/transactions/{transactionId}/apply-categorization-rules",
+				classificationH.ApplyRulesToTransactionHandler)
+			r.Route("/categories", classificationH.MountCategories)
+			r.Route("/merchants", classificationH.MountMerchants)
+			r.Route("/tags", classificationH.MountTags)
+			r.Route("/categorization-rules", classificationH.MountCategorizationRules)
+		})
 	})
 
 	return r

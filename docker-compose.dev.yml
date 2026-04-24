@@ -1,5 +1,13 @@
-# Local development services. Backend + web run on the host.
-# For a full stack container run, see deploy/docker-compose.yml.
+# Local development stack with live-mounted backend + web.
+#
+# Defaults:
+#   web:     http://localhost:3000
+#   backend: http://localhost:${BACKEND_PORT:-8081}
+#   db:      localhost:5432
+#
+# The backend is exposed on 8081 by default so it does not collide with other
+# local projects that often bind 8080. The web container talks to it over the
+# compose network at http://backend:8080.
 
 services:
   db:
@@ -19,5 +27,75 @@ services:
       timeout: 5s
       retries: 5
 
+  backend:
+    image: golang:1.25-alpine
+    working_dir: /app/backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: development
+      APP_URL: http://localhost:${WEB_PORT:-3000}
+      HTTP_ADDR: ":8080"
+      LOG_LEVEL: debug
+      DATABASE_URL: postgres://${POSTGRES_USER:-folio}:${POSTGRES_PASSWORD:-folio_dev_password}@db:5432/${POSTGRES_DB:-folio}?sslmode=disable
+      # Dev-only secrets. Production uses deploy/docker-compose.yml + .env.
+      SESSION_SECRET: folio_dev_session_secret_change_me_please_32_chars
+      SECRET_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      WEBAUTHN_RP_ID: localhost
+      WEBAUTHN_RP_NAME: Folio
+      WEBAUTHN_RP_ORIGIN: http://localhost:${WEB_PORT:-3000}
+      GOCARDLESS_SECRET_ID: ${GOCARDLESS_SECRET_ID:-}
+      GOCARDLESS_SECRET_KEY: ${GOCARDLESS_SECRET_KEY:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    ports:
+      - "${BACKEND_PORT:-8081}:8080"
+    volumes:
+      - .:/app
+      - go-mod:/go/pkg/mod
+      - go-build:/root/.cache/go-build
+      - backend-tmp:/app/backend/tmp
+    command: >
+      sh -lc "apk add --no-cache git ca-certificates &&
+              go install github.com/air-verse/air@latest &&
+              air -c .air.toml"
+
+  migrate:
+    image: arigaio/atlas:latest
+    working_dir: /app/backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-folio}:${POSTGRES_PASSWORD:-folio_dev_password}@db:5432/${POSTGRES_DB:-folio}?sslmode=disable
+    volumes:
+      - .:/app
+    command: migrate apply --env local
+
+  web:
+    image: node:22-alpine
+    working_dir: /app/web
+    depends_on:
+      - backend
+    environment:
+      API_URL: http://backend:8080
+      NEXT_TELEMETRY_DISABLED: "1"
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    volumes:
+      - .:/app
+      - web-node-modules:/app/web/node_modules
+      - pnpm-store:/root/.local/share/pnpm/store
+    command: >
+      sh -lc "corepack enable &&
+              pnpm install &&
+              pnpm dev"
+
 volumes:
   pgdata:
+  go-mod:
+  go-build:
+  backend-tmp:
+  web-node-modules:
+  pnpm-store:

@@ -17,9 +17,14 @@ servers:
 
 tags:
   - name: meta
+  - name: onboarding
   - name: auth
   - name: accounts
   - name: transactions
+  - name: categories
+  - name: merchants
+  - name: tags
+  - name: categorization-rules
   - name: providers
 
 security:
@@ -52,6 +57,24 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Version" }
+
+  /api/v1/onboarding/bootstrap:
+    post:
+      tags: [onboarding]
+      summary: Bootstrap a tenant and its first user
+      description: Creates the first tenant/user pair. Password auth is intentionally not implemented yet.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BootstrapInput" }
+      responses:
+        "201":
+          description: Bootstrapped
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BootstrapResult" }
 
   /api/v1/auth/register:
     post:
@@ -97,18 +120,26 @@ paths:
   /api/v1/me:
     get:
       tags: [auth]
-      summary: Current user
+      summary: Current tenant user
+      security:
+        - tenantHeader: []
       responses:
         "200":
-          description: User
+          description: Current user and tenant
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/User" }
+              schema: { $ref: "#/components/schemas/MeResult" }
 
   /api/v1/accounts:
     get:
       tags: [accounts]
-      summary: List accounts for current user
+      summary: List accounts for current tenant
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: includeArchived
+          in: query
+          schema: { type: boolean, default: false }
       responses:
         "200":
           description: Accounts
@@ -119,7 +150,9 @@ paths:
                 items: { $ref: "#/components/schemas/Account" }
     post:
       tags: [accounts]
-      summary: Create a manual account
+      summary: Create an account and opening balance snapshot
+      security:
+        - tenantHeader: []
       requestBody:
         required: true
         content:
@@ -132,14 +165,57 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Account" }
 
-  /api/v1/accounts/{accountId}/transactions:
+  /api/v1/accounts/{accountId}:
     get:
-      tags: [transactions]
-      summary: List transactions for an account
+      tags: [accounts]
+      summary: Get an account
+      security:
+        - tenantHeader: []
       parameters:
         - name: accountId
           in: path
           required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Account
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+    patch:
+      tags: [accounts]
+      summary: Update mutable account fields
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountUpdateInput" }
+      responses:
+        "200":
+          description: Updated account
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+
+  /api/v1/transactions:
+    get:
+      tags: [transactions]
+      summary: List transactions for current tenant
+      description: |
+        Tenant is taken from the `X-Tenant-ID` context — never from the body.
+        Results are ordered by `bookedAt DESC, id DESC`.
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: accountId
+          in: query
           schema: { type: string, format: uuid }
         - name: from
           in: query
@@ -147,6 +223,17 @@ paths:
         - name: to
           in: query
           schema: { type: string, format: date }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/TransactionStatus" }
+        - name: uncategorized
+          in: query
+          description: |
+            When true, return only transactions with `category_id IS NULL`
+            AND no `transaction_lines` for the transaction. Split
+            transactions are considered categorized via their lines and are
+            excluded.
+          schema: { type: boolean, default: false }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
@@ -158,6 +245,507 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Transaction" }
+    post:
+      tags: [transactions]
+      summary: Create a manual transaction
+      description: |
+        Manual ledger entry. `tenantId` is resolved from `X-Tenant-ID`.
+        `currency` must match the account currency (also enforced by a
+        database trigger). Status defaults to `posted`.
+      security:
+        - tenantHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TransactionCreateInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transaction" }
+
+  /api/v1/transactions/{transactionId}:
+    get:
+      tags: [transactions]
+      summary: Get a transaction
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: transactionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Transaction
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transaction" }
+    patch:
+      tags: [transactions]
+      summary: Update mutable transaction fields
+      description: |
+        `accountId` is immutable in this slice. Nullable fields (categoryId,
+        merchantId, counterpartyRaw, description, notes, valueAt, postedAt)
+        accept an empty string to clear. `countAsExpense` accepts `true`,
+        `false`, or `null` to clear.
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: transactionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TransactionUpdateInput" }
+      responses:
+        "200":
+          description: Updated transaction
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transaction" }
+    delete:
+      tags: [transactions]
+      summary: Hard-delete a transaction (v1 — replace with soft-delete later)
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: transactionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: No content }
+
+  /api/v1/transactions/{transactionId}/tags/{tagId}:
+    put:
+      tags: [transactions, tags]
+      summary: Apply a tag to a transaction
+      description: |
+        Idempotent: applying an already-applied tag returns 204 without
+        creating a duplicate row.
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: transactionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: tagId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Applied }
+    delete:
+      tags: [transactions, tags]
+      summary: Remove a tag from a transaction
+      description: |
+        Idempotent: removing an unapplied tag returns 204.
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: transactionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: tagId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Removed }
+
+  /api/v1/categories:
+    get:
+      tags: [categories]
+      summary: List categories for current tenant
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: includeArchived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Categories
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Category" }
+    post:
+      tags: [categories]
+      summary: Create a category
+      security:
+        - tenantHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategoryCreateInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+
+  /api/v1/categories/{categoryId}:
+    get:
+      tags: [categories]
+      summary: Get a category
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: categoryId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Category
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+    patch:
+      tags: [categories]
+      summary: Update a category
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: categoryId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategoryUpdateInput" }
+      responses:
+        "200":
+          description: Updated category
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+    delete:
+      tags: [categories]
+      summary: Archive a category (soft delete)
+      description: |
+        Sets `archivedAt` to the current time. Idempotent: archiving an
+        already-archived category returns 204 without overwriting the
+        timestamp.
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: categoryId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Archived }
+
+  /api/v1/merchants:
+    get:
+      tags: [merchants]
+      summary: List merchants for current tenant
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: includeArchived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Merchants
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Merchant" }
+    post:
+      tags: [merchants]
+      summary: Create a merchant
+      security:
+        - tenantHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MerchantCreateInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Merchant" }
+
+  /api/v1/merchants/{merchantId}:
+    get:
+      tags: [merchants]
+      summary: Get a merchant
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: merchantId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Merchant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Merchant" }
+    patch:
+      tags: [merchants]
+      summary: Update a merchant
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: merchantId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MerchantUpdateInput" }
+      responses:
+        "200":
+          description: Updated merchant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Merchant" }
+    delete:
+      tags: [merchants]
+      summary: Archive a merchant (soft delete)
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: merchantId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Archived }
+
+  /api/v1/tags:
+    get:
+      tags: [tags]
+      summary: List tags for current tenant
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: includeArchived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Tags
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Tag" }
+    post:
+      tags: [tags]
+      summary: Create a tag
+      security:
+        - tenantHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TagCreateInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tag" }
+
+  /api/v1/tags/{tagId}:
+    get:
+      tags: [tags]
+      summary: Get a tag
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: tagId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Tag
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tag" }
+    patch:
+      tags: [tags]
+      summary: Update a tag
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: tagId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TagUpdateInput" }
+      responses:
+        "200":
+          description: Updated tag
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tag" }
+    delete:
+      tags: [tags]
+      summary: Archive a tag (soft delete)
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: tagId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Archived }
+
+  /api/v1/categorization-rules:
+    get:
+      tags: [categorization-rules]
+      summary: List categorization rules for current tenant
+      description: |
+        Rules are returned ordered by `priority` ascending, then `createdAt`
+        ascending. All rules (enabled and disabled) are listed by default.
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: enabled
+          in: query
+          description: |
+            Optional filter. When `true`, only enabled rules are returned;
+            when `false`, only disabled rules. Any other value is ignored.
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CategorizationRule" }
+    post:
+      tags: [categorization-rules]
+      summary: Create a categorization rule
+      security:
+        - tenantHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategorizationRuleCreateInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CategorizationRule" }
+
+  /api/v1/categorization-rules/{ruleId}:
+    get:
+      tags: [categorization-rules]
+      summary: Get a categorization rule
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: ruleId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CategorizationRule" }
+    patch:
+      tags: [categorization-rules]
+      summary: Update a categorization rule
+      description: |
+        `when` and `then` are replaced wholesale when present; partial DSL
+        merge is intentionally out of scope.
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: ruleId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategorizationRuleUpdateInput" }
+      responses:
+        "200":
+          description: Updated rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CategorizationRule" }
+    delete:
+      tags: [categorization-rules]
+      summary: Delete a categorization rule
+      description: |
+        Hard-deletes the rule row. Rules are configuration; the audit table
+        records the deletion.
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: ruleId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
+
+  /api/v1/transactions/{transactionId}/apply-categorization-rules:
+    post:
+      tags: [transactions, categorization-rules]
+      summary: Apply the first matching categorization rule to a transaction
+      description: |
+        Evaluates enabled rules in `priority` ASC, then `createdAt` ASC order
+        and applies the first match. Manual overrides win: `categoryId`,
+        `merchantId`, and `countAsExpense` on the transaction are written
+        only when they are currently null. Tags in `addTagIds` are always
+        added idempotently. On match, the rule's `lastMatchedAt` is stamped
+        with the current time. When no rule matches, the transaction is
+        returned unchanged with `matched: false`.
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: transactionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Apply result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuleApplyResult" }
 
   /api/v1/providers/gocardless/requisitions:
     post:
@@ -190,6 +778,11 @@ components:
       type: apiKey
       in: cookie
       name: folio_session
+    tenantHeader:
+      type: apiKey
+      in: header
+      name: X-Tenant-ID
+      description: Temporary development tenant resolver until session auth lands.
 
   schemas:
     Version:
@@ -201,12 +794,51 @@ components:
 
     User:
       type: object
-      required: [id, email, displayName, baseCurrency]
+      required: [id, tenantId, email, displayName, createdAt]
       properties:
-        id:           { type: string, format: uuid }
-        email:        { type: string, format: email }
-        displayName:  { type: string }
-        baseCurrency: { type: string, example: CHF }
+        id:          { type: string, format: uuid }
+        tenantId:    { type: string, format: uuid }
+        email:       { type: string, format: email }
+        displayName: { type: string }
+        createdAt:   { type: string, format: date-time }
+
+    Tenant:
+      type: object
+      required: [id, name, baseCurrency, cycleAnchorDay, locale, timezone, createdAt]
+      properties:
+        id:             { type: string, format: uuid }
+        name:           { type: string }
+        baseCurrency:   { type: string, example: CHF }
+        cycleAnchorDay: { type: integer, minimum: 1, maximum: 31 }
+        locale:         { type: string, example: en-CH }
+        timezone:       { type: string, example: Europe/Zurich }
+        createdAt:      { type: string, format: date-time }
+
+    BootstrapInput:
+      type: object
+      required: [tenantName, baseCurrency, locale, email, displayName]
+      properties:
+        tenantName:     { type: string, minLength: 1 }
+        baseCurrency:   { type: string, example: CHF }
+        cycleAnchorDay: { type: integer, minimum: 1, maximum: 31, default: 1 }
+        locale:         { type: string, example: en-CH }
+        timezone:       { type: string, example: Europe/Zurich, default: UTC }
+        email:          { type: string, format: email }
+        displayName:    { type: string, minLength: 1, maxLength: 80 }
+
+    BootstrapResult:
+      type: object
+      required: [tenant, user]
+      properties:
+        tenant: { $ref: "#/components/schemas/Tenant" }
+        user:   { $ref: "#/components/schemas/User" }
+
+    MeResult:
+      type: object
+      required: [tenant, user]
+      properties:
+        tenant: { $ref: "#/components/schemas/Tenant" }
+        user:   { $ref: "#/components/schemas/User" }
 
     RegisterInput:
       type: object
@@ -226,49 +858,305 @@ components:
 
     AccountKind:
       type: string
-      enum: [checking, savings, credit_card, brokerage, cash, loan, other]
-
-    AccountSource:
-      type: string
-      enum: [manual, gocardless, ibkr_flex, camt053_import, csv_import]
+      enum: [checking, savings, cash, credit_card, brokerage, crypto_wallet, loan, mortgage, asset, pillar_2, pillar_3a, other]
 
     Account:
       type: object
-      required: [id, name, kind, source, currency, balance]
+      required: [id, tenantId, name, kind, currency, openDate, openingBalance, openingBalanceDate, includeInNetworth, includeInSavingsRate, createdAt, updatedAt, balance]
       properties:
-        id:            { type: string, format: uuid }
-        name:          { type: string }
-        kind:          { $ref: "#/components/schemas/AccountKind" }
-        source:        { $ref: "#/components/schemas/AccountSource" }
-        currency:      { type: string }
-        institution:   { type: string, nullable: true }
-        balance:       { type: string, description: "Decimal as string" }
-        balanceAsOf:   { type: string, format: date-time, nullable: true }
-        archivedAt:    { type: string, format: date-time, nullable: true }
+        id:                   { type: string, format: uuid }
+        tenantId:             { type: string, format: uuid }
+        name:                 { type: string }
+        nickname:             { type: string, nullable: true }
+        kind:                 { $ref: "#/components/schemas/AccountKind" }
+        currency:             { type: string }
+        institution:          { type: string, nullable: true }
+        openDate:             { type: string, format: date-time }
+        closeDate:            { type: string, format: date-time, nullable: true }
+        openingBalance:       { type: string, description: "Decimal as string" }
+        openingBalanceDate:   { type: string, format: date-time }
+        includeInNetworth:    { type: boolean }
+        includeInSavingsRate: { type: boolean }
+        archivedAt:           { type: string, format: date-time, nullable: true }
+        createdAt:            { type: string, format: date-time }
+        updatedAt:            { type: string, format: date-time }
+        balance:              { type: string, description: "Derived balance as decimal string: latest snapshot + posted/reconciled transactions booked on or after the snapshot's UTC date." }
+        balanceAsOf:          { type: string, format: date-time, nullable: true, description: "as_of of the latest balance snapshot anchoring the derivation." }
 
     AccountCreateInput:
       type: object
-      required: [name, kind, currency]
+      required: [name, kind, currency, openDate]
       properties:
-        name:     { type: string }
-        kind:     { $ref: "#/components/schemas/AccountKind" }
-        currency: { type: string }
-        institution: { type: string }
+        name:                 { type: string }
+        nickname:             { type: string, nullable: true }
+        kind:                 { $ref: "#/components/schemas/AccountKind" }
+        currency:             { type: string }
+        institution:          { type: string, nullable: true }
+        openDate:             { type: string, format: date }
+        openingBalance:       { type: string, default: "0" }
+        openingBalanceDate:   { type: string, format: date }
+        includeInNetworth:    { type: boolean }
+        includeInSavingsRate: { type: boolean }
+
+    AccountUpdateInput:
+      type: object
+      properties:
+        name:                 { type: string }
+        nickname:             { type: string, nullable: true, description: "Send empty string to clear." }
+        institution:          { type: string, nullable: true, description: "Send empty string to clear." }
+        includeInNetworth:    { type: boolean }
+        includeInSavingsRate: { type: boolean }
+        closeDate:            { type: string, format: date, nullable: true, description: "Send empty string to clear." }
+        archived:             { type: boolean }
+
+    TransactionStatus:
+      type: string
+      enum: [draft, posted, reconciled, voided]
 
     Transaction:
       type: object
-      required: [id, accountId, bookedAt, amount, currency]
+      required: [id, tenantId, accountId, status, bookedAt, amount, currency, createdAt, updatedAt]
       properties:
         id:               { type: string, format: uuid }
+        tenantId:         { type: string, format: uuid }
         accountId:        { type: string, format: uuid }
-        categoryId:       { type: string, format: uuid, nullable: true }
-        externalId:       { type: string, nullable: true }
+        status:           { $ref: "#/components/schemas/TransactionStatus" }
         bookedAt:         { type: string, format: date }
         valueAt:          { type: string, format: date, nullable: true }
-        amount:           { type: string, description: "Signed decimal as string" }
-        currency:         { type: string }
-        originalAmount:   { type: string, nullable: true }
+        postedAt:         { type: string, format: date-time, nullable: true }
+        amount:           { type: string, description: "Signed decimal as string, always in the account currency." }
+        currency:         { type: string, description: "Must match the account currency." }
+        originalAmount:   { type: string, nullable: true, description: "Pre-FX amount when booked in a foreign currency." }
         originalCurrency: { type: string, nullable: true }
+        merchantId:       { type: string, format: uuid, nullable: true }
+        categoryId:       { type: string, format: uuid, nullable: true }
+        counterpartyRaw:  { type: string, nullable: true }
         description:      { type: string, nullable: true }
-        counterparty:     { type: string, nullable: true }
         notes:            { type: string, nullable: true }
+        countAsExpense:   { type: boolean, nullable: true, description: "User override. null defers to the derived rule." }
+        createdAt:        { type: string, format: date-time }
+        updatedAt:        { type: string, format: date-time }
+
+    TransactionCreateInput:
+      type: object
+      required: [accountId, bookedAt, amount, currency]
+      properties:
+        accountId:        { type: string, format: uuid }
+        status:           { $ref: "#/components/schemas/TransactionStatus", default: posted }
+        bookedAt:         { type: string, format: date }
+        valueAt:          { type: string, format: date, nullable: true }
+        postedAt:         { type: string, format: date-time, nullable: true }
+        amount:           { type: string, description: "Signed decimal as string." }
+        currency:         { type: string }
+        categoryId:       { type: string, format: uuid, nullable: true }
+        merchantId:       { type: string, format: uuid, nullable: true }
+        counterpartyRaw:  { type: string, nullable: true }
+        description:      { type: string, nullable: true }
+        notes:            { type: string, nullable: true }
+        countAsExpense:   { type: boolean, nullable: true }
+
+    TransactionUpdateInput:
+      type: object
+      description: |
+        All fields optional. Send empty string on nullable string/date/uuid
+        fields to clear them (valueAt, postedAt, categoryId, merchantId,
+        counterpartyRaw, description, notes). countAsExpense accepts true,
+        false, or null to clear. accountId is not patchable.
+      properties:
+        status:           { $ref: "#/components/schemas/TransactionStatus" }
+        bookedAt:         { type: string, format: date }
+        valueAt:          { type: string, format: date, nullable: true }
+        postedAt:         { type: string, format: date-time, nullable: true }
+        amount:           { type: string }
+        currency:         { type: string }
+        categoryId:       { type: string, format: uuid, nullable: true }
+        merchantId:       { type: string, format: uuid, nullable: true }
+        counterpartyRaw:  { type: string, nullable: true }
+        description:      { type: string, nullable: true }
+        notes:            { type: string, nullable: true }
+        countAsExpense:   { type: boolean, nullable: true }
+
+    Category:
+      type: object
+      required: [id, tenantId, name, sortOrder, createdAt, updatedAt]
+      properties:
+        id:         { type: string, format: uuid }
+        tenantId:   { type: string, format: uuid }
+        parentId:   { type: string, format: uuid, nullable: true }
+        name:       { type: string }
+        color:      { type: string, nullable: true }
+        sortOrder:  { type: integer }
+        archivedAt: { type: string, format: date-time, nullable: true }
+        createdAt:  { type: string, format: date-time }
+        updatedAt:  { type: string, format: date-time }
+
+    CategoryCreateInput:
+      type: object
+      required: [name]
+      properties:
+        parentId:  { type: string, format: uuid, nullable: true }
+        name:      { type: string, minLength: 1 }
+        color:     { type: string, nullable: true }
+        sortOrder: { type: integer, default: 0 }
+
+    CategoryUpdateInput:
+      type: object
+      description: |
+        All fields optional. `parentId` accepts an empty string to promote
+        the category to a root. `color` accepts an empty string to clear.
+        `archived: true` archives; `archived: false` unarchives.
+      properties:
+        parentId:  { type: string, format: uuid, nullable: true }
+        name:      { type: string, minLength: 1 }
+        color:     { type: string, nullable: true }
+        sortOrder: { type: integer }
+        archived:  { type: boolean }
+
+    Merchant:
+      type: object
+      required: [id, tenantId, canonicalName, createdAt, updatedAt]
+      properties:
+        id:                { type: string, format: uuid }
+        tenantId:          { type: string, format: uuid }
+        canonicalName:     { type: string }
+        logoUrl:           { type: string, nullable: true }
+        defaultCategoryId: { type: string, format: uuid, nullable: true }
+        industry:          { type: string, nullable: true }
+        website:           { type: string, nullable: true }
+        notes:             { type: string, nullable: true }
+        archivedAt:        { type: string, format: date-time, nullable: true }
+        createdAt:         { type: string, format: date-time }
+        updatedAt:         { type: string, format: date-time }
+
+    MerchantCreateInput:
+      type: object
+      required: [canonicalName]
+      properties:
+        canonicalName:     { type: string, minLength: 1 }
+        logoUrl:           { type: string, nullable: true }
+        defaultCategoryId: { type: string, format: uuid, nullable: true }
+        industry:          { type: string, nullable: true }
+        website:           { type: string, nullable: true }
+        notes:             { type: string, nullable: true }
+
+    MerchantUpdateInput:
+      type: object
+      description: |
+        All fields optional. Nullable string fields accept empty strings to
+        clear. `archived: true` archives; `archived: false` unarchives.
+      properties:
+        canonicalName:     { type: string, minLength: 1 }
+        logoUrl:           { type: string, nullable: true }
+        defaultCategoryId: { type: string, format: uuid, nullable: true }
+        industry:          { type: string, nullable: true }
+        website:           { type: string, nullable: true }
+        notes:             { type: string, nullable: true }
+        archived:          { type: boolean }
+
+    Tag:
+      type: object
+      required: [id, tenantId, name, createdAt, updatedAt]
+      properties:
+        id:         { type: string, format: uuid }
+        tenantId:   { type: string, format: uuid }
+        name:       { type: string }
+        color:      { type: string, nullable: true }
+        archivedAt: { type: string, format: date-time, nullable: true }
+        createdAt:  { type: string, format: date-time }
+        updatedAt:  { type: string, format: date-time }
+
+    TagCreateInput:
+      type: object
+      required: [name]
+      properties:
+        name:  { type: string, minLength: 1 }
+        color: { type: string, nullable: true }
+
+    TagUpdateInput:
+      type: object
+      description: |
+        All fields optional. `color` accepts empty string to clear.
+        `archived: true` archives; `archived: false` unarchives.
+      properties:
+        name:     { type: string, minLength: 1 }
+        color:    { type: string, nullable: true }
+        archived: { type: boolean }
+
+    CategorizationRuleWhen:
+      type: object
+      description: |
+        v1 match DSL. At least one field must be set. All provided fields are
+        ANDed. Amount bounds are inclusive. `counterpartyContains` and
+        `descriptionContains` are case-insensitive substring matches against
+        the transaction's `counterpartyRaw` / `description`. `amountSign` is
+        `"debit"` (amount < 0) or `"credit"` (amount > 0).
+      properties:
+        accountId:            { type: string, format: uuid }
+        merchantId:           { type: string, format: uuid }
+        counterpartyContains: { type: string, minLength: 1 }
+        descriptionContains:  { type: string, minLength: 1 }
+        amountMin:            { type: string, description: "Decimal as string (inclusive)." }
+        amountMax:            { type: string, description: "Decimal as string (inclusive)." }
+        amountSign:           { type: string, enum: [debit, credit] }
+      additionalProperties: false
+
+    CategorizationRuleThen:
+      type: object
+      description: |
+        v1 action DSL. At least one field must be set. `countAsExpense`
+        accepts `true`, `false`, or `null`. During apply, manual overrides
+        win: category, merchant, and count-as-expense are only written when
+        the transaction currently has no value; tags are added idempotently.
+      properties:
+        categoryId:     { type: string, format: uuid }
+        merchantId:     { type: string, format: uuid }
+        addTagIds:
+          type: array
+          items: { type: string, format: uuid }
+          minItems: 1
+        countAsExpense: { type: boolean, nullable: true }
+      additionalProperties: false
+
+    CategorizationRule:
+      type: object
+      required: [id, tenantId, priority, when, then, enabled, createdAt, updatedAt]
+      properties:
+        id:            { type: string, format: uuid }
+        tenantId:      { type: string, format: uuid }
+        priority:      { type: integer, description: "Lower numbers match first." }
+        when:          { $ref: "#/components/schemas/CategorizationRuleWhen" }
+        then:          { $ref: "#/components/schemas/CategorizationRuleThen" }
+        enabled:       { type: boolean }
+        lastMatchedAt: { type: string, format: date-time, nullable: true }
+        createdAt:     { type: string, format: date-time }
+        updatedAt:     { type: string, format: date-time }
+
+    CategorizationRuleCreateInput:
+      type: object
+      required: [when, then]
+      properties:
+        priority: { type: integer, default: 1000 }
+        enabled:  { type: boolean, default: true }
+        when:     { $ref: "#/components/schemas/CategorizationRuleWhen" }
+        then:     { $ref: "#/components/schemas/CategorizationRuleThen" }
+
+    CategorizationRuleUpdateInput:
+      type: object
+      description: |
+        All fields optional. `when` and `then`, when present, replace the
+        stored DSL wholesale; partial merge is out of scope for v1.
+      properties:
+        priority: { type: integer }
+        enabled:  { type: boolean }
+        when:     { $ref: "#/components/schemas/CategorizationRuleWhen" }
+        then:     { $ref: "#/components/schemas/CategorizationRuleThen" }
+
+    RuleApplyResult:
+      type: object
+      required: [matched]
+      properties:
+        matched: { type: boolean }
+        ruleId:  { type: string, format: uuid, nullable: true, description: "Set when matched is true." }
+        transaction:
+          description: Post-apply transaction snapshot.
+          $ref: "#/components/schemas/Transaction"

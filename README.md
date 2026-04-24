@@ -2,7 +2,7 @@
 
 Personal finance & planning app — self-hosted, multi-user.
 
-**Stack**: Go 1.25 + Postgres 17 + Next.js 15 (PWA) + Caddy on a single VPS.
+**Stack**: Go 1.25 + Postgres 17 + Next.js 16 (PWA) + Caddy on a single VPS.
 
 ## Integrations
 
@@ -17,7 +17,7 @@ Personal finance & planning app — self-hosted, multi-user.
 
 ```
 backend/    Go API server (chi, pgx, sqlc, River)
-web/        Next.js 15 App Router (PWA via Serwist)
+web/        Next.js 16 App Router (PWA via Serwist)
 openapi/    OpenAPI 3.1 spec — source of truth for contracts
 deploy/     Production docker-compose, Caddyfile, backup scripts
 docs/       Architecture, domain model, runbooks
@@ -27,37 +27,42 @@ legacy/     Pre-rewrite code — ignored by new codebase
 ## Prerequisites
 
 - Go 1.25+
-- Node 20+ and a package manager (pnpm recommended; npm works too)
+- Node 22+ and pnpm, if running the web app outside Docker
 - Docker + Docker Compose
 - [Atlas](https://atlasgo.io) (migrations)
 - [sqlc](https://sqlc.dev) (typed queries)
 
-Install pnpm if you don't have it: `npm install -g pnpm`
+Install pnpm if you don't have it: `corepack enable && corepack prepare pnpm@9.12.0 --activate`
 
 ## Quick start (local dev)
 
 ```bash
-# 1. Copy env
+# One-command full stack with live reload.
+make dev
+```
+
+Open http://localhost:3000.
+
+The dev backend is exposed on http://localhost:8081 by default to avoid
+colliding with other projects on port 8080. The web app talks to it over the
+Compose network.
+
+If you prefer running backend/web on the host:
+
+```bash
 cp .env.example .env
-# Edit .env — at minimum, generate SECRET_ENCRYPTION_KEY and SESSION_SECRET.
+docker compose -f docker-compose.dev.yml up -d db
 
-# 2. Start Postgres
-docker compose -f docker-compose.dev.yml up -d
-
-# 3. Backend
 cd backend
-go mod tidy
-atlas migrate apply --env local       # apply migrations
-sqlc generate                          # generate typed queries
 go run ./cmd/server
 
-# 4. Web (new terminal)
-cd web
+cd ../web
 pnpm install
 pnpm dev
 ```
 
-Open http://localhost:3000.
+For host backend development, make sure `.env` contains `DATABASE_URL`,
+`SESSION_SECRET`, and a valid base64 `SECRET_ENCRYPTION_KEY`.
 
 ## Make targets
 
