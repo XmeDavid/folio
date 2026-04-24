@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,8 +26,16 @@ func CreateTestTenant(t *testing.T, pool *pgxpool.Pool, name string) (id uuid.UU
 	if len(base) < 2 {
 		base = "workspace"
 	}
-	// Append a short random suffix so tests that reuse the pool don't collide.
-	slug = base + "-" + Base64URL(id[:6])
+	// Append a short hex suffix so tests that reuse the pool don't collide.
+	// Hex (not base64url) because the tenants_slug_check regex
+	// `^[a-z0-9][a-z0-9-]{1,62}$` doesn't accept `_` / `-` from base64url,
+	// and the slug is already lowercased by Slugify. Cap at 63 chars.
+	suffix := "-" + hex.EncodeToString(id[:6])
+	trimmed := base
+	if max := 63 - len(suffix); len(trimmed) > max {
+		trimmed = strings.TrimRight(trimmed[:max], "-")
+	}
+	slug = trimmed + suffix
 	_, err := pool.Exec(context.Background(), `
 		insert into tenants (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
 		values ($1, $2, $3, 'CHF', 1, 'en', 'UTC')
@@ -38,6 +48,8 @@ func CreateTestTenant(t *testing.T, pool *pgxpool.Pool, name string) (id uuid.UU
 
 // CreateTestUser inserts a user row with a stubbed password hash. The email
 // is unique-enforced by schema; callers should pass a per-test unique value.
+// display_name is passed separately from email so pgx doesn't have to deduce
+// a shared type for the citext (email) and text (display_name) columns.
 func CreateTestUser(t *testing.T, pool *pgxpool.Pool, email string, verified bool) uuid.UUID {
 	t.Helper()
 	id := uuidx.New()
@@ -47,8 +59,8 @@ func CreateTestUser(t *testing.T, pool *pgxpool.Pool, email string, verified boo
 	}
 	_, err := pool.Exec(context.Background(), `
 		insert into users (id, email, display_name, password_hash, email_verified_at)
-		values ($1, $2, $2, '$argon2id$stub', $3)
-	`, id, email, verifiedAt)
+		values ($1, $2, $3, '$argon2id$stub', $4)
+	`, id, email, email, verifiedAt)
 	if err != nil {
 		t.Fatalf("CreateTestUser: %v", err)
 	}

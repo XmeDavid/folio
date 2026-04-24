@@ -49,6 +49,15 @@ type Membership struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+// MemberWithUser is a Membership enriched with the user's display fields.
+// Returned by Service.ListMembers so the tenant members page in Plan 2
+// renders email + name in one round-trip.
+type MemberWithUser struct {
+	Membership
+	Email       string `json:"email"`
+	DisplayName string `json:"displayName"`
+}
+
 // TenantWithRole attaches the caller's role on a tenant for the /me response.
 type TenantWithRole struct {
 	Tenant

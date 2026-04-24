@@ -385,3 +385,160 @@ func isUniqueViolation(err error, constraint string) bool {
 	}
 	return pe.ConstraintName == constraint
 }
+
+// Sentinel errors surfaced by the member-management methods. Handlers map
+// these to typed 422 responses so the UI can show stable error codes.
+var (
+	ErrLastOwner  = errors.New("identity: operation would leave tenant without an owner")
+	ErrLastTenant = errors.New("identity: user cannot leave their last tenant")
+	ErrNotAMember = errors.New("identity: user is not a member of the tenant")
+)
+
+// ChangeRole updates (tenantID, userID)'s role. Blocks demotion that would
+// remove the last owner. Locks the membership row to serialise concurrent
+// role changes.
+func (s *Service) ChangeRole(ctx context.Context, tenantID, userID uuid.UUID, newRole Role) error {
+	if !newRole.Valid() {
+		return httpx.NewValidationError("role must be 'owner' or 'member'")
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var current Role
+	err = tx.QueryRow(ctx, `
+		select role from tenant_memberships
+		where tenant_id = $1 and user_id = $2 for update
+	`, tenantID, userID).Scan(&current)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotAMember
+		}
+		return fmt.Errorf("lock membership: %w", err)
+	}
+	if current == newRole {
+		return tx.Commit(ctx) // no-op
+	}
+
+	// Demoting the last owner is forbidden.
+	if current == RoleOwner && newRole == RoleMember {
+		var ownerCount int
+		if err := tx.QueryRow(ctx, `
+			select count(*) from tenant_memberships
+			where tenant_id = $1 and role = 'owner'
+		`, tenantID).Scan(&ownerCount); err != nil {
+			return fmt.Errorf("count owners: %w", err)
+		}
+		if ownerCount <= 1 {
+			return ErrLastOwner
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		update tenant_memberships set role = $3, updated_at = now()
+		where tenant_id = $1 and user_id = $2
+	`, tenantID, userID, newRole); err != nil {
+		return fmt.Errorf("update role: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// RemoveMember deletes the (tenantID, userID) membership. Blocks removing
+// the last owner. Does not revoke the user's sessions (spec §6.3).
+func (s *Service) RemoveMember(ctx context.Context, tenantID, userID uuid.UUID) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var role Role
+	err = tx.QueryRow(ctx, `
+		select role from tenant_memberships
+		where tenant_id = $1 and user_id = $2 for update
+	`, tenantID, userID).Scan(&role)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotAMember
+		}
+		return fmt.Errorf("lock membership: %w", err)
+	}
+
+	if role == RoleOwner {
+		var ownerCount int
+		if err := tx.QueryRow(ctx, `
+			select count(*) from tenant_memberships
+			where tenant_id = $1 and role = 'owner'
+		`, tenantID).Scan(&ownerCount); err != nil {
+			return fmt.Errorf("count owners: %w", err)
+		}
+		if ownerCount <= 1 {
+			return ErrLastOwner
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		delete from tenant_memberships where tenant_id = $1 and user_id = $2
+	`, tenantID, userID); err != nil {
+		return fmt.Errorf("delete membership: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// LeaveTenant is the self-serve variant of RemoveMember. Blocks if it would
+// leave the tenant without an owner OR if it would leave the user with zero
+// memberships (spec §3.4 invariants #1 and #2).
+func (s *Service) LeaveTenant(ctx context.Context, tenantID, userID uuid.UUID) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var role Role
+	err = tx.QueryRow(ctx, `
+		select role from tenant_memberships
+		where tenant_id = $1 and user_id = $2 for update
+	`, tenantID, userID).Scan(&role)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotAMember
+		}
+		return fmt.Errorf("lock membership: %w", err)
+	}
+
+	// Last-tenant guard.
+	var membershipCount int
+	if err := tx.QueryRow(ctx, `
+		select count(*) from tenant_memberships where user_id = $1
+	`, userID).Scan(&membershipCount); err != nil {
+		return fmt.Errorf("count memberships: %w", err)
+	}
+	if membershipCount <= 1 {
+		return ErrLastTenant
+	}
+
+	// Last-owner guard.
+	if role == RoleOwner {
+		var ownerCount int
+		if err := tx.QueryRow(ctx, `
+			select count(*) from tenant_memberships
+			where tenant_id = $1 and role = 'owner'
+		`, tenantID).Scan(&ownerCount); err != nil {
+			return fmt.Errorf("count owners: %w", err)
+		}
+		if ownerCount <= 1 {
+			return ErrLastOwner
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		delete from tenant_memberships where tenant_id = $1 and user_id = $2
+	`, tenantID, userID); err != nil {
+		return fmt.Errorf("delete membership: %w", err)
+	}
+	return tx.Commit(ctx)
+}

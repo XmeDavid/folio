@@ -2,7 +2,7 @@ package identity_test
 
 import (
 	"context"
-	"strings"
+	"encoding/hex"
 	"testing"
 
 	"github.com/xmedavid/folio/backend/internal/identity"
@@ -18,9 +18,9 @@ func TestService_UpdateTenant_RenamesAndChangesSlug(t *testing.T) {
 	})
 
 	newName := "Alice Home"
-	// Slug is lowercased by UpdateTenant.normalize(); match that here so the
-	// equality check passes regardless of Base64 case in the random suffix.
-	newSlug := strings.ToLower("alice-home-" + testdb.Base64URL(tenantID[:4]))
+	// Hex (not Base64URL) because the slug regex forbids `_`; hex is also
+	// lowercase so UpdateTenant.normalize() is a no-op.
+	newSlug := "alice-home-" + hex.EncodeToString(tenantID[:4])
 	updated, err := svc.UpdateTenant(context.Background(), tenantID, identity.UpdateTenantInput{
 		Name: &newName,
 		Slug: &newSlug,
