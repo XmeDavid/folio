@@ -55,7 +55,7 @@ func NewInviteService(pool *pgxpool.Pool) *InviteService {
 	return &InviteService{pool: pool, now: time.Now}
 }
 
-func hashInviteToken(plaintext string) []byte {
+func HashInviteToken(plaintext string) []byte {
 	h := sha256.Sum256([]byte(plaintext))
 	return h[:]
 }
@@ -112,7 +112,7 @@ func (s *InviteService) Create(
 		values ($1, $2, $3, $4::tenant_role, $5, $6, $7)
 		returning id, tenant_id, email, role::text, invited_by_user_id,
 		          created_at, expires_at
-	`, id, tenantID, email, role, hashInviteToken(plaintext), inviterID, expiresAt).Scan(
+	`, id, tenantID, email, role, HashInviteToken(plaintext), inviterID, expiresAt).Scan(
 		&inv.ID, &inv.TenantID, &inv.Email, &roleText, &inv.InvitedByUserID,
 		&inv.CreatedAt, &inv.ExpiresAt,
 	)
@@ -137,7 +137,7 @@ func (s *InviteService) Preview(ctx context.Context, plaintext string) (*InviteP
 		join tenants t on t.id = i.tenant_id
 		join users   u on u.id = i.invited_by_user_id
 		where i.token_hash = $1 and t.deleted_at is null
-	`, hashInviteToken(plaintext)).Scan(
+	`, HashInviteToken(plaintext)).Scan(
 		&p.TenantID, &p.TenantName, &p.TenantSlug, &p.InviterDisplayName,
 		&p.Email, &roleText, &p.ExpiresAt, &revokedAt, &acceptedAt,
 	)
@@ -186,7 +186,7 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
 		from tenant_invites
 		where token_hash = $1
 		for update
-	`, hashInviteToken(plaintext)).Scan(&inviteID, &tenantID, &inviteEmail, &roleText,
+	`, HashInviteToken(plaintext)).Scan(&inviteID, &tenantID, &inviteEmail, &roleText,
 		&expiresAt, &revokedAt, &acceptedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

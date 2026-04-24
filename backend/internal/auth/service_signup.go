@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
@@ -160,6 +163,59 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 	}
 	if err := writeAuditTx(ctx, tx, &tenant.ID, &userID, "tenant.created", "tenant", tenant.ID, nil, nil, in.IP, in.UserAgent); err != nil {
 		return nil, err
+	}
+
+	// Consume an invite if one was supplied. The invite must match the
+	// signup email (spec §4.2). Verification is bypassed on purpose: signing
+	// up with an invite token sent to this email proves the address.
+	if in.InviteToken != "" {
+		var (
+			inviteID     uuid.UUID
+			invTenantID  uuid.UUID
+			inviteEmail  string
+			inviteRole   string
+			inviteExpiry time.Time
+			revokedAt    *time.Time
+			acceptedAt   *time.Time
+		)
+		err := tx.QueryRow(ctx, `
+			select id, tenant_id, email, role::text, expires_at, revoked_at, accepted_at
+			from tenant_invites where token_hash = $1 for update
+		`, identity.HashInviteToken(in.InviteToken)).Scan(&inviteID, &invTenantID, &inviteEmail,
+			&inviteRole, &inviteExpiry, &revokedAt, &acceptedAt)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, identity.ErrInviteNotFound
+			}
+			return nil, fmt.Errorf("select invite: %w", err)
+		}
+		if revokedAt != nil {
+			return nil, identity.ErrInviteRevoked
+		}
+		if acceptedAt != nil {
+			return nil, identity.ErrInviteAlreadyUsed
+		}
+		if inviteExpiry.Before(s.now()) {
+			return nil, identity.ErrInviteExpired
+		}
+		if strings.ToLower(inviteEmail) != strings.ToLower(in.Email) {
+			return nil, identity.ErrInviteEmailMismatch
+		}
+		if _, err := tx.Exec(ctx, `
+			insert into tenant_memberships (tenant_id, user_id, role)
+			values ($1, $2, $3::tenant_role)
+		`, invTenantID, userID, inviteRole); err != nil {
+			return nil, fmt.Errorf("insert invited membership: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`update tenant_invites set accepted_at = now() where id = $1`, inviteID); err != nil {
+			return nil, fmt.Errorf("consume invite: %w", err)
+		}
+		if err := writeAuditTx(ctx, tx, &invTenantID, &userID, "member.invite_accepted",
+			"invite", inviteID, nil, map[string]any{"role": inviteRole, "email": inviteEmail},
+			in.IP, in.UserAgent); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
