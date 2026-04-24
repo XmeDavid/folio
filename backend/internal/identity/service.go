@@ -444,6 +444,26 @@ var (
 	ErrNotAMember = errors.New("identity: user is not a member of the tenant")
 )
 
+func lockTenantMembershipsTx(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
+	_, err := tx.Exec(ctx,
+		`select pg_advisory_xact_lock(hashtextextended($1::text, 0))`,
+		tenantID.String())
+	if err != nil {
+		return fmt.Errorf("lock tenant memberships: %w", err)
+	}
+	return nil
+}
+
+func lockUserMembershipsTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	_, err := tx.Exec(ctx,
+		`select pg_advisory_xact_lock(hashtextextended($1::text, 1))`,
+		userID.String())
+	if err != nil {
+		return fmt.Errorf("lock user memberships: %w", err)
+	}
+	return nil
+}
+
 // ChangeRole updates (tenantID, userID)'s role. Blocks demotion that would
 // remove the last owner. Locks the membership row to serialise concurrent
 // role changes.
@@ -457,6 +477,9 @@ func (s *Service) ChangeRole(ctx context.Context, tenantID, userID uuid.UUID, ne
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockTenantMembershipsTx(ctx, tx, tenantID); err != nil {
+		return err
+	}
 
 	var current Role
 	err = tx.QueryRow(ctx, `
@@ -504,6 +527,9 @@ func (s *Service) RemoveMember(ctx context.Context, tenantID, userID uuid.UUID) 
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockTenantMembershipsTx(ctx, tx, tenantID); err != nil {
+		return err
+	}
 
 	var role Role
 	err = tx.QueryRow(ctx, `
@@ -547,6 +573,12 @@ func (s *Service) LeaveTenant(ctx context.Context, tenantID, userID uuid.UUID) e
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockTenantMembershipsTx(ctx, tx, tenantID); err != nil {
+		return err
+	}
+	if err := lockUserMembershipsTx(ctx, tx, userID); err != nil {
+		return err
+	}
 
 	var role Role
 	err = tx.QueryRow(ctx, `

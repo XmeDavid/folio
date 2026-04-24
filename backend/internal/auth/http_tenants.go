@@ -12,9 +12,10 @@ import (
 	"github.com/xmedavid/folio/backend/internal/identity"
 )
 
-// MountTenantAdmin mounts owner-gated tenant-admin routes under
-// `/t/{tenantId}`: PATCH /, DELETE /, POST /restore. Caller wires
-// RequireSession + RequireMembership upstream.
+// MountTenantAdmin mounts owner-gated active-tenant admin routes under
+// `/t/{tenantId}`: PATCH / and DELETE /. Caller wires RequireSession +
+// RequireMembership upstream. Restore is mounted separately because it must
+// be able to load soft-deleted tenants.
 //
 // RequireFreshReauth is deliberately NOT mounted here — Plan 4 adds the
 // /auth/reauth endpoint and re-mounts the step-up middleware across these
@@ -24,7 +25,6 @@ func (h *Handler) MountTenantAdmin(r chi.Router) {
 	owner := RequireRole(identity.RoleOwner)
 	r.With(owner).Patch("/", h.patchTenant)
 	r.With(owner).Delete("/", h.softDeleteTenant)
-	r.With(owner).Post("/restore", h.restoreTenant)
 
 	// Role change: owner-only. Remove/leave dispatches inside the handler
 	// because the "any member can self-leave, only owners can remove
@@ -87,7 +87,7 @@ func (h *Handler) softDeleteTenant(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handler) restoreTenant(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) RestoreTenant(w http.ResponseWriter, r *http.Request) {
 	tenant := MustTenant(r)
 	user := MustUser(r)
 

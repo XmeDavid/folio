@@ -246,21 +246,21 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
 }
 
 // Revoke marks an invite revoked. Authorised for the original inviter or any
-// owner of the tenant. Idempotent — revoking an already-revoked or accepted
-// invite is a no-op (no error).
-func (s *InviteService) Revoke(ctx context.Context, inviteID, requesterUserID uuid.UUID) error {
+// owner of the route tenant. Idempotent — revoking an already-revoked or
+// accepted invite is a no-op (no error).
+func (s *InviteService) Revoke(ctx context.Context, tenantID, inviteID, requesterUserID uuid.UUID) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var tenantID, invitedBy uuid.UUID
+	var invitedBy uuid.UUID
 	var revokedAt, acceptedAt *time.Time
 	err = tx.QueryRow(ctx, `
-		select tenant_id, invited_by_user_id, revoked_at, accepted_at
-		from tenant_invites where id = $1 for update
-	`, inviteID).Scan(&tenantID, &invitedBy, &revokedAt, &acceptedAt)
+		select invited_by_user_id, revoked_at, accepted_at
+		from tenant_invites where id = $1 and tenant_id = $2 for update
+	`, inviteID, tenantID).Scan(&invitedBy, &revokedAt, &acceptedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInviteNotFound

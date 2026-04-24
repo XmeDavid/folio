@@ -120,7 +120,7 @@ func (h *InviteHandler) revokeInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.invites.Revoke(r.Context(), inviteID, requester.ID)
+	err = h.invites.Revoke(r.Context(), tenant.ID, inviteID, requester.ID)
 	switch {
 	case errors.Is(err, identity.ErrInviteNotFound):
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "invite not found")

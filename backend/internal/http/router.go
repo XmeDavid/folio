@@ -76,13 +76,18 @@ func NewRouter(d Deps) http.Handler {
 			authH.MountAuthed(r)
 		})
 
-		// Tenant-scoped: /api/v1/t/{tenantId}/...
+		// Restore is tenant-scoped but must see soft-deleted tenants, so it
+		// cannot sit behind RequireMembership (which hides deleted rows).
+		r.With(authSvc.RequireSession, authSvc.RequireTenantOwnerIncludingDeleted).
+			Post("/t/{tenantId}/restore", authH.RestoreTenant)
+
+		// Tenant-scoped active-tenant routes: /api/v1/t/{tenantId}/...
 		r.Route("/t/{tenantId}", func(r chi.Router) {
 			r.Use(authSvc.RequireSession)
 			r.Use(authSvc.RequireMembership)
 
 			authH.MountTenantScoped(r) // /members
-			authH.MountTenantAdmin(r)  // PATCH /, DELETE /, POST /restore — owner-gated
+			authH.MountTenantAdmin(r)  // PATCH /, DELETE / — owner-gated
 			r.Route("/invites", inviteH.MountTenantInvites)
 
 			r.Route("/accounts", accountsH.Mount)

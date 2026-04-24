@@ -236,7 +236,7 @@ func TestInviteService_Revoke_BlockedForUnrelatedRequester(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := svc.Revoke(context.Background(), inv.ID, stranger); !errors.Is(err, identity.ErrNotAuthorized) {
+	if err := svc.Revoke(context.Background(), tenantID, inv.ID, stranger); !errors.Is(err, identity.ErrNotAuthorized) {
 		t.Fatalf("want ErrNotAuthorized, got %v", err)
 	}
 }
@@ -257,12 +257,37 @@ func TestInviteService_Revoke_AllowedForInviter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := svc.Revoke(context.Background(), inv.ID, inviter); err != nil {
+	if err := svc.Revoke(context.Background(), tenantID, inv.ID, inviter); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
 	// Idempotent second call.
-	if err := svc.Revoke(context.Background(), inv.ID, inviter); err != nil {
+	if err := svc.Revoke(context.Background(), tenantID, inv.ID, inviter); err != nil {
 		t.Fatalf("Revoke (second): %v", err)
+	}
+}
+
+func TestInviteService_Revoke_NotFoundForWrongRouteTenant(t *testing.T) {
+	pool := testdb.Open(t)
+	svc := identity.NewInviteService(pool)
+	tenantID, _ := testdb.CreateTestTenant(t, pool, "Rev3 "+t.Name())
+	otherTenantID, _ := testdb.CreateTestTenant(t, pool, "Rev4 "+t.Name())
+	inviter := testdb.CreateTestUser(t, pool, uniqueEmail(t, "alice"), true)
+	testdb.CreateTestMembership(t, pool, tenantID, inviter, "owner")
+	testdb.CreateTestMembership(t, pool, otherTenantID, inviter, "owner")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `delete from tenant_invites where tenant_id in ($1, $2)`, tenantID, otherTenantID)
+		_, _ = pool.Exec(context.Background(), `delete from tenant_memberships where user_id = $1`, inviter)
+		_, _ = pool.Exec(context.Background(), `delete from tenants where id in ($1, $2)`, tenantID, otherTenantID)
+		_, _ = pool.Exec(context.Background(), `delete from users where id = $1`, inviter)
+	})
+
+	inv, _, err := svc.Create(context.Background(), tenantID, inviter, uniqueEmail(t, "bob"), identity.RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.Revoke(context.Background(), otherTenantID, inv.ID, inviter); !errors.Is(err, identity.ErrInviteNotFound) {
+		t.Fatalf("want ErrInviteNotFound, got %v", err)
 	}
 }
 
