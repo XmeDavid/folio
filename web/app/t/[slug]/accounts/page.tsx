@@ -1,9 +1,9 @@
 "use client";
 
 import * as React from "react";
+import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
-import { TenantGate } from "@/components/app/gate";
 import { PageHeader } from "@/components/app/page-header";
 import { EmptyState, ErrorBanner } from "@/components/app/empty";
 import { Button } from "@/components/ui/button";
@@ -11,22 +11,17 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CreateAccountForm } from "@/components/accounts/create-account-form";
 import { fetchAccounts, type Account } from "@/lib/api/client";
-import { useIdentity } from "@/lib/hooks/use-identity";
+import { useCurrentTenant } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
 import { accountKindLabel } from "@/lib/accounts";
 
-export default function AccountsPage() {
-  return (
-    <TenantGate>
-      <AccountsInner />
-    </TenantGate>
-  );
-}
-
-function AccountsInner() {
-  const identity = useIdentity();
-  const tenant =
-    identity.status === "authenticated" ? identity.data.tenants[0] : null;
+export default function AccountsPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = use(params);
+  const tenant = useCurrentTenant(slug);
   const tenantId = tenant?.id ?? null;
   const [creating, setCreating] = React.useState(false);
 
@@ -36,8 +31,10 @@ function AccountsInner() {
     enabled: !!tenantId,
   });
 
-  const locale = tenant?.locale;
-  const baseCurrency = tenant?.baseCurrency ?? "CHF";
+  if (!tenant) return null;
+
+  const locale = tenant.locale;
+  const baseCurrency = tenant.baseCurrency ?? "CHF";
 
   return (
     <div className="flex flex-col gap-8">

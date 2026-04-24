@@ -1,9 +1,9 @@
 "use client";
 
 import * as React from "react";
+import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
-import { TenantGate } from "@/components/app/gate";
 import { PageHeader } from "@/components/app/page-header";
 import { EmptyState, ErrorBanner } from "@/components/app/empty";
 import { Button } from "@/components/ui/button";
@@ -17,21 +17,16 @@ import {
   type Transaction,
   type TransactionStatus,
 } from "@/lib/api/client";
-import { useIdentity } from "@/lib/hooks/use-identity";
+import { useCurrentTenant } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
 
-export default function TransactionsPage() {
-  return (
-    <TenantGate>
-      <TransactionsInner />
-    </TenantGate>
-  );
-}
-
-function TransactionsInner() {
-  const identity = useIdentity();
-  const tenant =
-    identity.status === "authenticated" ? identity.data.tenants[0] : null;
+export default function TransactionsPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = use(params);
+  const tenant = useCurrentTenant(slug);
   const tenantId = tenant?.id ?? null;
   const [creating, setCreating] = React.useState(false);
 
@@ -46,7 +41,9 @@ function TransactionsInner() {
     enabled: !!tenantId,
   });
 
-  const locale = tenant?.locale;
+  if (!tenant) return null;
+
+  const locale = tenant.locale;
   const accounts = accountsQuery.data ?? [];
   const hasAccounts = accounts.length > 0;
 
