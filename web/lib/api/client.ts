@@ -126,6 +126,64 @@ export async function toApiError(res: Response): Promise<ApiError> {
 }
 
 // ---------------------------------------------------------------------------
+// Members & invites
+// ---------------------------------------------------------------------------
+
+export type MemberRole = "owner" | "member";
+
+export type MemberWithUser = {
+  tenantId: string;
+  userId: string;
+  role: MemberRole;
+  createdAt: string;
+  email: string;
+  displayName: string;
+};
+
+export type PendingInvite = {
+  id: string;
+  email: string;
+  role: MemberRole;
+  invitedByUserId: string;
+  invitedAt: string;
+  expiresAt: string;
+};
+
+export type MembersResponse = {
+  members: MemberWithUser[];
+  pendingInvites: PendingInvite[];
+};
+
+export async function getMembers(tenantId: string): Promise<MembersResponse> {
+  return request<MembersResponse>(`/api/v1/t/${tenantId}/members`, {
+    method: "GET",
+  });
+}
+
+export async function patchMember(
+  tenantId: string,
+  userId: string,
+  role: MemberRole,
+): Promise<MemberWithUser> {
+  return request<MemberWithUser>(
+    `/api/v1/t/${tenantId}/members/${userId}`,
+    {
+      method: "PATCH",
+      json: { role },
+    },
+  );
+}
+
+export async function removeMember(
+  tenantId: string,
+  userId: string,
+): Promise<void> {
+  return request<void>(`/api/v1/t/${tenantId}/members/${userId}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Accounts
 // ---------------------------------------------------------------------------
 
