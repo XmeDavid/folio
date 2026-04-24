@@ -14,6 +14,7 @@ import (
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/identity"
+	"github.com/xmedavid/folio/backend/internal/jobs"
 	"github.com/xmedavid/folio/backend/internal/money"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
@@ -164,6 +165,25 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 	if err := writeAuditTx(ctx, tx, &tenant.ID, &userID, "tenant.created", "tenant", tenant.ID, nil, nil, in.IP, in.UserAgent); err != nil {
 		return nil, err
 	}
+	verifyPlaintext, verifyHash := GenerateSessionToken()
+	verifyTokenID := uuidx.New()
+	if _, err := tx.Exec(ctx, `
+		insert into auth_tokens (id, user_id, purpose, token_hash, email, expires_at)
+		values ($1, $2, $3, $4, $5, $6)
+	`, verifyTokenID, userID, purposeEmailVerify, verifyHash, user.Email, now.Add(verifyEmailTTL)); err != nil {
+		return nil, fmt.Errorf("insert verify token: %w", err)
+	}
+	if err := s.enqueueEmailTx(ctx, tx, jobs.SendEmailArgs{
+		TemplateName:   "verify_email",
+		ToAddress:      user.Email,
+		IdempotencyKey: fmt.Sprintf("verify_email:%s", verifyTokenID),
+		Data: map[string]any{
+			"DisplayName": user.DisplayName,
+			"VerifyURL":   s.cfg.AppURL + "/auth/verify/" + verifyPlaintext,
+		},
+	}); err != nil {
+		return nil, err
+	}
 
 	// Consume an invite if one was supplied. The invite must match the
 	// signup email (spec §4.2). Verification is bypassed on purpose: signing
@@ -218,6 +238,16 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 		}
 	}
 
+	if s.cfg.AdminBootstrapHook != nil {
+		if err := s.cfg.AdminBootstrapHook(ctx, tx, user.ID, user.Email); err != nil {
+			return nil, fmt.Errorf("admin bootstrap: %w", err)
+		}
+		// Keep the returned user in sync with the in-tx grant so the first
+		// signup response reflects is_admin=true without a refetch.
+		if err := tx.QueryRow(ctx, `select is_admin from users where id = $1`, user.ID).Scan(&user.IsAdmin); err != nil {
+			return nil, fmt.Errorf("refresh is_admin: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
@@ -265,4 +295,3 @@ func ipString(ip net.IP) any {
 	}
 	return ip.String()
 }
-

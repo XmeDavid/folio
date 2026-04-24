@@ -1,4 +1,4 @@
-.PHONY: help dev dev-up dev-down dev-logs db-up db-down migrate sqlc openapi build test lint fmt clean
+.PHONY: help dev dev-up dev-down dev-logs db-up db-down migrate sqlc openapi build admin-cli test lint fmt clean
 
 help:
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -26,8 +26,12 @@ db-reset: ## Wipe and recreate Postgres volume
 	docker compose -f docker-compose.dev.yml up -d db
 
 # ─── Codegen ──────────────────────────────────────────────────
-migrate: ## Apply database migrations (local)
+migrate: ## Apply app + River database migrations (local)
 	cd backend && DATABASE_URL=$${DATABASE_URL:-postgres://folio:folio_dev_password@localhost:5432/folio?sslmode=disable} atlas migrate apply --env local
+	cd backend && DATABASE_URL=$${DATABASE_URL:-postgres://folio:folio_dev_password@localhost:5432/folio?sslmode=disable} go run ./cmd/folio-river-migrate -direction up
+
+river-migrate: ## Apply River queue migrations only (local)
+	cd backend && DATABASE_URL=$${DATABASE_URL:-postgres://folio:folio_dev_password@localhost:5432/folio?sslmode=disable} go run ./cmd/folio-river-migrate -direction up
 
 migrate-new: ## Create a new migration: make migrate-new NAME=add_accounts
 	cd backend && atlas migrate new $(NAME)
@@ -46,6 +50,10 @@ gen: sqlc openapi ## All codegen
 build: ## Build backend binary and web production bundle
 	cd backend && go build -o bin/server ./cmd/server
 	cd web && pnpm build
+
+admin-cli: ## Build folio-admin CLI binary
+	cd backend && go build -o bin/folio-admin ./cmd/folio-admin
+	@echo "built: backend/bin/folio-admin"
 
 # ─── Quality ──────────────────────────────────────────────────
 test: ## Run all tests

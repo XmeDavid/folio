@@ -1,0 +1,7 @@
+{{ define "content" -}}
+{{ with .Data -}}
+<p>Hi {{ .DisplayName }},</p>
+<p>The email on your Folio account was changed from <strong>{{ .OldEmail }}</strong> to <strong>{{ .NewEmail }}</strong>.</p>
+<p>If this wasn't you, reply to this email immediately.</p>
+{{- end }}
+{{- end }}

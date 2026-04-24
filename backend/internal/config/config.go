@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -18,10 +19,14 @@ type Config struct {
 	EncryptionKey       []byte // 32 bytes, decoded from base64
 	WebAuthnRPID        string
 	WebAuthnRPName      string
-	WebAuthnRPOrigin    string
+	WebAuthnRPOrigins   []string
+	MFAChallengeTTL     time.Duration
+	ReauthWindow        time.Duration
 	GoCardlessSecretID  string
 	GoCardlessSecretKey string
 	SentryDSN           string
+	ResendAPIKey        string
+	EmailFrom           string
 }
 
 func Load() (*Config, error) {
@@ -33,10 +38,14 @@ func Load() (*Config, error) {
 		DatabaseURL:         os.Getenv("DATABASE_URL"),
 		WebAuthnRPID:        env("WEBAUTHN_RP_ID", "localhost"),
 		WebAuthnRPName:      env("WEBAUTHN_RP_NAME", "Folio"),
-		WebAuthnRPOrigin:    env("WEBAUTHN_RP_ORIGIN", "http://localhost:3000"),
+		WebAuthnRPOrigins:   splitCSV(env("WEBAUTHN_RP_ORIGINS", env("WEBAUTHN_RP_ORIGIN", "http://localhost:3000"))),
+		MFAChallengeTTL:     envDuration("MFA_CHALLENGE_TTL", 5*time.Minute),
+		ReauthWindow:        envDuration("REAUTH_WINDOW", 5*time.Minute),
 		GoCardlessSecretID:  os.Getenv("GOCARDLESS_SECRET_ID"),
 		GoCardlessSecretKey: os.Getenv("GOCARDLESS_SECRET_KEY"),
 		SentryDSN:           os.Getenv("SENTRY_DSN"),
+		ResendAPIKey:        os.Getenv("RESEND_API_KEY"),
+		EmailFrom:           env("EMAIL_FROM", "Folio <onboarding@localhost>"),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -77,4 +86,28 @@ func env(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func splitCSV(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return def
+	}
+	return d
 }

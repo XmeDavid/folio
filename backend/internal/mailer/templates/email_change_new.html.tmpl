@@ -1,0 +1,8 @@
+{{ define "content" -}}
+{{ with .Data -}}
+<p>Hi {{ .DisplayName }},</p>
+<p>Your Folio email is about to change from <strong>{{ .OldEmail }}</strong> to <strong>{{ .NewEmail }}</strong>. Confirm to complete the change:</p>
+<p><a href="{{ .ConfirmURL }}">Confirm new email</a></p>
+<p>This link expires in 24 hours.</p>
+{{- end }}
+{{- end }}

@@ -18,6 +18,15 @@ type LogMailer struct {
 func NewLogMailer(l *slog.Logger) *LogMailer { return &LogMailer{Logger: l} }
 
 func (m *LogMailer) Send(_ context.Context, msg Message) error {
+	if msg.Template != "" && msg.HTML == "" && msg.Text == "" {
+		if tmpl, err := LoadTemplate(msg.Template); err == nil {
+			if rendered, err := tmpl.Render(msg.Data); err == nil {
+				msg.Subject = rendered.Subject
+				msg.HTML = rendered.HTML
+				msg.Text = rendered.Text
+			}
+		}
+	}
 	m.mu.Lock()
 	m.sent = append(m.sent, msg)
 	m.mu.Unlock()

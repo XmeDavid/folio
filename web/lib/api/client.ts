@@ -74,6 +74,63 @@ export async function fetchMe(): Promise<Me> {
   return request<Me>("/api/v1/me", { method: "GET" });
 }
 
+export type MFAStatus = {
+  totpEnrolled: boolean;
+  passkeyCount: number;
+  remainingRecoveryCodes: number;
+};
+
+export type TOTPSetup = {
+  secret: string;
+  uri: string;
+  qrCodeBase64: string;
+};
+
+export async function fetchMFAStatus(): Promise<MFAStatus> {
+  return request<MFAStatus>("/api/v1/me/mfa", { method: "GET" });
+}
+
+export async function enrollTOTP(): Promise<TOTPSetup> {
+  return request<TOTPSetup>("/api/v1/me/mfa/totp/enroll", { method: "POST" });
+}
+
+export async function confirmTOTP(code: string): Promise<{ recoveryCodes: string[] }> {
+  return request<{ recoveryCodes: string[] }>("/api/v1/me/mfa/totp/confirm", {
+    method: "POST",
+    json: { code },
+  });
+}
+
+export async function beginPasskeyEnrollment(): Promise<{ options: unknown; session: string }> {
+  return request<{ options: unknown; session: string }>("/api/v1/me/mfa/passkeys/begin", {
+    method: "POST",
+  });
+}
+
+export async function completePasskeyEnrollment(
+  session: string,
+  credential: unknown,
+  label = "Passkey",
+): Promise<void> {
+  return request<void>("/api/v1/me/mfa/passkeys/complete", {
+    method: "POST",
+    json: { session, label, credential },
+  });
+}
+
+export async function regenerateRecoveryCodes(): Promise<{ recoveryCodes: string[] }> {
+  return request<{ recoveryCodes: string[] }>("/api/v1/me/mfa/recovery-codes", {
+    method: "POST",
+  });
+}
+
+export async function reauth(password: string, code?: string): Promise<void> {
+  return request<void>("/api/v1/auth/reauth", {
+    method: "POST",
+    json: { password, code },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Tenant
 // ---------------------------------------------------------------------------

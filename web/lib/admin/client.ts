@@ -1,0 +1,112 @@
+"use client";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(path, {
+    ...init,
+    credentials: "include",
+    headers: { "X-Folio-Request": "1", ...(init.headers ?? {}) },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw Object.assign(new Error(body.error ?? `request failed: ${res.status}`), {
+      status: res.status,
+      code: body.code,
+    });
+  }
+  return (await res.json()) as T;
+}
+
+export type Pagination = { limit: number; nextCursor?: string };
+export type Envelope<T> = { data: T; pagination?: Pagination };
+export type Tenant = {
+  id: string;
+  name: string;
+  slug: string;
+  baseCurrency: string;
+  cycleAnchorDay: number;
+  locale: string;
+  timezone: string;
+  deletedAt?: string;
+  createdAt: string;
+};
+export type User = {
+  id: string;
+  email: string;
+  displayName: string;
+  emailVerifiedAt?: string;
+  isAdmin: boolean;
+  createdAt: string;
+};
+export type TenantDetail = {
+  tenant: Tenant;
+  memberCount: number;
+  deletedAt?: string;
+  lastActivityAt?: string;
+};
+export type UserDetail = {
+  user: User;
+  memberships: { tenantId: string; tenantName: string; tenantSlug: string; role: string; joinedAt: string }[];
+  activeSessions: { id: string; createdAt: string; lastSeenAt: string; userAgent: string; ip?: string }[];
+  mfa: { passkeys: { id: string; label: string; createdAt: string }[]; totpEnabled: boolean; recoveryCodesRemaining: number };
+  lastLoginAt?: string;
+};
+export type AuditEvent = {
+  id: string;
+  tenantId?: string;
+  actorUserId?: string;
+  entityType: string;
+  entityId: string;
+  action: string;
+  occurredAt: string;
+};
+export type Job = {
+  id: number;
+  kind: string;
+  queue: string;
+  state: string;
+  scheduledAt: string;
+  attemptedAt?: string;
+};
+
+const qs = (params: Record<string, string | number | boolean | undefined>) => {
+  const s = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== "") s.set(k, String(v));
+  });
+  const out = s.toString();
+  return out ? `?${out}` : "";
+};
+
+export function useAdminTenants(params: { search?: string; includeDeleted?: boolean; cursor?: string }) {
+  return useQuery({ queryKey: ["admin", "tenants", params], queryFn: () => api<Envelope<Tenant[]>>(`/api/v1/admin/tenants${qs(params)}`) });
+}
+
+export function useAdminTenantDetail(tenantId: string) {
+  return useQuery({ queryKey: ["admin", "tenant", tenantId], queryFn: () => api<Envelope<TenantDetail>>(`/api/v1/admin/tenants/${tenantId}`), enabled: !!tenantId });
+}
+
+export function useAdminUsers(params: { search?: string; isAdminOnly?: boolean; cursor?: string }) {
+  return useQuery({ queryKey: ["admin", "users", params], queryFn: () => api<Envelope<User[]>>(`/api/v1/admin/users${qs(params)}`) });
+}
+
+export function useAdminUserDetail(userId: string) {
+  return useQuery({ queryKey: ["admin", "user", userId], queryFn: () => api<Envelope<UserDetail>>(`/api/v1/admin/users/${userId}`), enabled: !!userId });
+}
+
+export function useAdminAudit(params: { action?: string; cursor?: string }) {
+  return useQuery({ queryKey: ["admin", "audit", params], queryFn: () => api<Envelope<AuditEvent[]>>(`/api/v1/admin/audit${qs(params)}`) });
+}
+
+export function useAdminJobs(params: { state?: string; kind?: string; cursor?: string }) {
+  return useQuery({ queryKey: ["admin", "jobs", params], queryFn: () => api<Envelope<Job[]>>(`/api/v1/admin/jobs${qs(params)}`) });
+}
+
+export function useAdminMutation(pathFor: (id: string) => string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<{ ok: true }>(pathFor(id), { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin"] }),
+  });
+}

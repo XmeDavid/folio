@@ -23,13 +23,14 @@ import (
 // authorisation gate in Plan 2.
 func (h *Handler) MountTenantAdmin(r chi.Router) {
 	owner := RequireRole(identity.RoleOwner)
-	r.With(owner).Patch("/", h.patchTenant)
-	r.With(owner).Delete("/", h.softDeleteTenant)
+	fresh := RequireFreshReauth(h.svc.cfg.ReauthWindow)
+	r.With(owner, fresh).Patch("/", h.patchTenant)
+	r.With(owner, fresh).Delete("/", h.softDeleteTenant)
 
 	// Role change: owner-only. Remove/leave dispatches inside the handler
 	// because the "any member can self-leave, only owners can remove
 	// others" rule is context-dependent on actor vs. target.
-	r.With(owner).Patch("/members/{userId}", h.changeMemberRole)
+	r.With(owner, fresh).Patch("/members/{userId}", h.changeMemberRole)
 	r.Delete("/members/{userId}", h.removeOrLeaveMember)
 }
 

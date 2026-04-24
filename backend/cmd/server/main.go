@@ -12,9 +12,11 @@ import (
 
 	"github.com/joho/godotenv"
 
+	"github.com/riverqueue/river"
 	"github.com/xmedavid/folio/backend/internal/config"
 	"github.com/xmedavid/folio/backend/internal/db"
 	folioHTTP "github.com/xmedavid/folio/backend/internal/http"
+	"github.com/xmedavid/folio/backend/internal/jobs"
 	"github.com/xmedavid/folio/backend/internal/mailer"
 )
 
@@ -40,15 +42,34 @@ func main() {
 	}
 	defer pool.Close()
 
-	// Plan 2 wires a LogMailer stub. Plan 3 swaps in a Resend-backed
-	// implementation driven by River jobs; handler signatures don't change.
-	mailClient := mailer.NewLogMailer(logger)
+	var mailClient mailer.Mailer
+	if cfg.ResendAPIKey != "" {
+		mailClient = mailer.NewResendMailer(cfg.ResendAPIKey, cfg.EmailFrom)
+	} else {
+		mailClient = mailer.NewLogMailer(logger)
+	}
+
+	workers := river.NewWorkers()
+	river.AddWorker(workers, jobs.NewSendEmailWorker(mailClient))
+	river.AddWorker(workers, jobs.NewSweepSoftDeletedTenantsWorker(pool, 30*24*time.Hour))
+	jobClient, err := jobs.NewClient(pool, workers, jobs.Config{
+		Queues: map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 5}},
+	})
+	if err != nil {
+		logger.Error("jobs client failed", "err", err)
+		os.Exit(1)
+	}
+	if err := jobClient.Start(ctx); err != nil {
+		logger.Error("jobs start failed", "err", err)
+		os.Exit(1)
+	}
 
 	handler := folioHTTP.NewRouter(folioHTTP.Deps{
 		Logger: logger,
 		DB:     pool,
 		Cfg:    cfg,
 		Mailer: mailClient,
+		Jobs:   jobClient,
 	})
 
 	srv := &http.Server{
@@ -73,6 +94,9 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	if err := jobClient.Stop(shutdownCtx); err != nil {
+		logger.Error("jobs shutdown failed", "err", err)
+	}
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("server shutdown failed", "err", err)
 	}

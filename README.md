@@ -64,6 +64,30 @@ pnpm dev
 For host backend development, make sure `.env` contains `DATABASE_URL`,
 `SESSION_SECRET`, and a valid base64 `SECRET_ENCRYPTION_KEY`.
 
+### Database migrations
+
+Folio's application schema is managed by Atlas:
+
+```bash
+cd backend
+atlas migrate apply --env local
+```
+
+River's queue tables are managed by River's own migrator:
+
+```bash
+cd backend
+go run ./cmd/folio-river-migrate -direction up
+```
+
+Run Atlas first, then the River migrator. A full local reset is:
+
+```bash
+psql "$DATABASE_URL" -c 'drop schema public cascade; create schema public;'
+atlas migrate apply --env local
+go run ./cmd/folio-river-migrate -direction up
+```
+
 ## Make targets
 
 ```bash

@@ -45,6 +45,14 @@ func SessionFromCtx(ctx context.Context) (Session, bool) {
 	return s, ok
 }
 
+func MustSession(r *http.Request) Session {
+	s, ok := SessionFromCtx(r.Context())
+	if !ok {
+		panic("MustSession called without RequireSession upstream")
+	}
+	return s
+}
+
 // WithTenant / TenantFromCtx attach the tenant under inspection.
 func WithTenant(ctx context.Context, t identity.Tenant) context.Context {
 	return context.WithValue(ctx, ctxKeyTenant, t)

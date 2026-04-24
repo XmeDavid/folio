@@ -13,10 +13,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xmedavid/folio/backend/internal/accounts"
+	"github.com/xmedavid/folio/backend/internal/admin"
 	"github.com/xmedavid/folio/backend/internal/auth"
 	"github.com/xmedavid/folio/backend/internal/classification"
 	"github.com/xmedavid/folio/backend/internal/config"
 	"github.com/xmedavid/folio/backend/internal/identity"
+	"github.com/xmedavid/folio/backend/internal/jobs"
 	"github.com/xmedavid/folio/backend/internal/mailer"
 	"github.com/xmedavid/folio/backend/internal/transactions"
 )
@@ -26,6 +28,7 @@ type Deps struct {
 	DB     *pgxpool.Pool
 	Cfg    *config.Config
 	Mailer mailer.Mailer
+	Jobs   *jobs.Client
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -47,12 +50,23 @@ func NewRouter(d Deps) http.Handler {
 
 	identitySvc := identity.NewService(d.DB)
 	inviteSvc := identity.NewInviteService(d.DB)
+	adminSvc := admin.NewService(d.DB).WithJobs(d.Jobs).WithMailer(d.Mailer)
 	authSvc := auth.NewService(d.DB, identitySvc, auth.Config{
-		Registration:  auth.RegistrationMode(os.Getenv("REGISTRATION_MODE")),
-		SecureCookies: os.Getenv("APP_ENV") != "development",
+		Registration:       auth.RegistrationMode(os.Getenv("REGISTRATION_MODE")),
+		AppURL:             d.Cfg.AppURL,
+		SecretKey:          d.Cfg.EncryptionKey,
+		MFAChallengeTTL:    d.Cfg.MFAChallengeTTL,
+		ReauthWindow:       d.Cfg.ReauthWindow,
+		WebAuthnRPID:       d.Cfg.WebAuthnRPID,
+		WebAuthnRPName:     d.Cfg.WebAuthnRPName,
+		WebAuthnOrigins:    d.Cfg.WebAuthnRPOrigins,
+		Jobs:               d.Jobs,
+		AdminBootstrapHook: adminSvc.EnsureBootstrapAdminTx,
+		SecureCookies:      os.Getenv("APP_ENV") != "development",
 	})
 	authH := auth.NewHandler(authSvc)
 	inviteH := auth.NewInviteHandler(authSvc, inviteSvc, d.Mailer)
+	adminH := admin.NewHandler(adminSvc)
 
 	accountsSvc := accounts.NewService(d.DB)
 	accountsH := accounts.NewHandler(accountsSvc)
@@ -66,6 +80,7 @@ func NewRouter(d Deps) http.Handler {
 
 		// Public auth surface: /auth/signup, /auth/login, /auth/logout
 		authH.MountPublic(r)
+		authH.MountEmailFlows(r)
 		// Public invite surface: GET /auth/invites/{token} (no auth),
 		// POST /auth/invites/{token}/accept (RequireSession).
 		inviteH.MountPublicInvites(r)
@@ -76,9 +91,15 @@ func NewRouter(d Deps) http.Handler {
 			authH.MountAuthed(r)
 		})
 
+		r.Route("/admin", func(r chi.Router) {
+			r.Use(authSvc.RequireSession)
+			r.Use(authSvc.RequireAdmin)
+			adminH.Mount(r, auth.RequireFreshReauth(authSvc.Config().ReauthWindow))
+		})
+
 		// Restore is tenant-scoped but must see soft-deleted tenants, so it
 		// cannot sit behind RequireMembership (which hides deleted rows).
-		r.With(authSvc.RequireSession, authSvc.RequireTenantOwnerIncludingDeleted).
+		r.With(authSvc.RequireSession, auth.RequireFreshReauth(authSvc.Config().ReauthWindow), authSvc.RequireTenantOwnerIncludingDeleted).
 			Post("/t/{tenantId}/restore", authH.RestoreTenant)
 
 		// Tenant-scoped active-tenant routes: /api/v1/t/{tenantId}/...
@@ -88,7 +109,7 @@ func NewRouter(d Deps) http.Handler {
 
 			authH.MountTenantScoped(r) // /members
 			authH.MountTenantAdmin(r)  // PATCH /, DELETE / — owner-gated
-			r.Route("/invites", inviteH.MountTenantInvites)
+			r.With(authSvc.RequireEmailVerified).Route("/invites", inviteH.MountTenantInvites)
 
 			r.Route("/accounts", accountsH.Mount)
 			r.Route("/transactions", transactionsH.Mount)

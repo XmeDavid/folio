@@ -1,12 +1,16 @@
 package auth
 
 import (
+	"context"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xmedavid/folio/backend/internal/identity"
+	"github.com/xmedavid/folio/backend/internal/jobs"
 )
 
 // RegistrationMode gates the Signup endpoint per spec §9.
@@ -20,10 +24,22 @@ const (
 
 // Config is the Service's knobs.
 type Config struct {
-	SessionIdle     time.Duration // default 14*24h
-	SessionAbsolute time.Duration // default 90*24h
-	Registration    RegistrationMode
-	BootstrapEmail  string // ADMIN_BOOTSTRAP_EMAIL; plan 5 consumes this
+	SessionIdle        time.Duration // default 14*24h
+	SessionAbsolute    time.Duration // default 90*24h
+	Registration       RegistrationMode
+	BootstrapEmail     string // ADMIN_BOOTSTRAP_EMAIL; plan 5 consumes this
+	AppURL             string
+	SecretKey          []byte
+	MFAChallengeTTL    time.Duration
+	ReauthWindow       time.Duration
+	WebAuthnRPID       string
+	WebAuthnRPName     string
+	WebAuthnOrigins    []string
+	Jobs               *jobs.Client
+	// AdminBootstrapHook, when set, runs inside the Signup transaction so a
+	// grant failure rolls the whole signup back. Use a pgx.Tx-scoped writer
+	// (see admin.EnsureBootstrapAdminTx).
+	AdminBootstrapHook func(ctx context.Context, tx pgx.Tx, userID uuid.UUID, email string) error
 	// SecureCookies controls the Secure flag on the session cookie.
 	// Callers must set this explicitly: true in prod, false in dev over
 	// http://localhost (Firefox refuses to store Secure cookies over http).
@@ -37,6 +53,7 @@ type Service struct {
 	identity *identity.Service
 	cfg      Config
 	now      func() time.Time
+	webauthn *webauthn.WebAuthn
 }
 
 // NewService constructs a Service with sensible defaults filled in.
@@ -50,9 +67,36 @@ func NewService(pool *pgxpool.Pool, identitySvc *identity.Service, cfg Config) *
 	if cfg.Registration == "" {
 		cfg.Registration = RegistrationOpen
 	}
+	if cfg.AppURL == "" {
+		cfg.AppURL = "http://localhost:3000"
+	}
+	if cfg.MFAChallengeTTL == 0 {
+		cfg.MFAChallengeTTL = 5 * time.Minute
+	}
+	if cfg.ReauthWindow == 0 {
+		cfg.ReauthWindow = 5 * time.Minute
+	}
+	if cfg.WebAuthnRPID == "" {
+		cfg.WebAuthnRPID = "localhost"
+	}
+	if cfg.WebAuthnRPName == "" {
+		cfg.WebAuthnRPName = "Folio"
+	}
+	if len(cfg.WebAuthnOrigins) == 0 {
+		cfg.WebAuthnOrigins = []string{"http://localhost:3000"}
+	}
+	wa, _ := webauthn.New(&webauthn.Config{
+		RPID:          cfg.WebAuthnRPID,
+		RPDisplayName: cfg.WebAuthnRPName,
+		RPOrigins:     cfg.WebAuthnOrigins,
+	})
 	// SecureCookies is a required knob: zero-value (false) is only acceptable
 	// when the caller explicitly passes it (e.g. APP_ENV=development).
-	return &Service{pool: pool, identity: identitySvc, cfg: cfg, now: time.Now}
+	return &Service{pool: pool, identity: identitySvc, cfg: cfg, now: time.Now, webauthn: wa}
+}
+
+func (s *Service) Config() Config {
+	return s.cfg
 }
 
 // Session is the in-memory shape of a sessions row. Middleware attaches

@@ -44,7 +44,11 @@ services:
       SECRET_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
       WEBAUTHN_RP_ID: localhost
       WEBAUTHN_RP_NAME: Folio
-      WEBAUTHN_RP_ORIGIN: http://localhost:${WEB_PORT:-3000}
+      WEBAUTHN_RP_ORIGINS: http://localhost:${WEB_PORT:-3000}
+      MFA_CHALLENGE_TTL: 5m
+      REAUTH_WINDOW: 5m
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Folio <onboarding@localhost>}
       GOCARDLESS_SECRET_ID: ${GOCARDLESS_SECRET_ID:-}
       GOCARDLESS_SECRET_KEY: ${GOCARDLESS_SECRET_KEY:-}
       SENTRY_DSN: ${SENTRY_DSN:-}
@@ -58,6 +62,7 @@ services:
     command: >
       sh -c "apk add --no-cache git ca-certificates &&
              go install github.com/air-verse/air@latest &&
+             go run ./cmd/folio-river-migrate -direction up &&
              air -c .air.toml"
 
   migrate:

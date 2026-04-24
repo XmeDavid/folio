@@ -49,7 +49,7 @@ func (h *InviteHandler) MountTenantInvites(r chi.Router) {
 func (h *InviteHandler) MountPublicInvites(r chi.Router) {
 	r.Route("/auth/invites/{token}", func(r chi.Router) {
 		r.Get("/", h.previewInvite)
-		r.With(h.auth.RequireSession).Post("/accept", h.acceptInvite)
+		r.With(h.auth.RequireSession, h.auth.RequireEmailVerified).Post("/accept", h.acceptInvite)
 	})
 }
 
@@ -94,9 +94,10 @@ func (h *InviteHandler) createInvite(w http.ResponseWriter, r *http.Request) {
 			Subject:  "You're invited to Folio",
 			Template: "invite",
 			Data: map[string]any{
-				"inviteURL": inviteURL(plaintext),
-				"tenantId":  tenant.ID.String(),
-				"role":      string(inv.Role),
+				"InviterName": inviter.DisplayName,
+				"TenantName":  tenant.Name,
+				"Role":        string(inv.Role),
+				"AcceptURL":   inviteURL(plaintext),
 			},
 			TenantID: tenant.ID.String(),
 		}); err != nil {

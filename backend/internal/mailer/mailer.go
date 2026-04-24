@@ -9,8 +9,11 @@ import "context"
 
 // Message is the wire shape for a transactional email.
 type Message struct {
-	To       string         // primary recipient (lowercase, normalized)
+	To       string // primary recipient (lowercase, normalized)
 	Subject  string
+	HTML     string
+	Text     string
+	ReplyTo  string
 	Template string         // template name; mailer looks it up
 	Data     map[string]any // template data
 	TenantID string         // optional — for audit / inbound routing

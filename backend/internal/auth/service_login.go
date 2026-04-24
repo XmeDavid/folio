@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -82,20 +83,48 @@ func (s *Service) Login(ctx context.Context, raw LoginInput) (*LoginResult, erro
 		return nil, ErrInvalidCredentials
 	}
 
-	plaintext, _ := GenerateSessionToken()
-	sid := SessionIDFromToken(plaintext)
 	now := s.now().UTC()
-	_, err = s.pool.Exec(ctx, `
-		insert into sessions (id, user_id, created_at, expires_at, last_seen_at, user_agent, ip)
-		values ($1,$2,$3,$4,$3,$5,$6)
-	`, sid, user.ID, now, now.Add(s.cfg.SessionAbsolute), in.UserAgent, ipString(in.IP))
+	var hasMFA bool
+	err = s.pool.QueryRow(ctx, `
+		select exists(select 1 from totp_credentials where user_id = $1 and verified_at is not null)
+		    or exists(select 1 from webauthn_credentials where user_id = $1)
+	`, user.ID).Scan(&hasMFA)
 	if err != nil {
-		return nil, fmt.Errorf("insert session: %w", err)
+		return nil, err
+	}
+	if hasMFA {
+		challengeID := uuidx.New()
+		if err := InsertMFAChallenge(ctx, s.pool, MFAChallenge{
+			ID: challengeID, UserID: user.ID, IP: in.IP, UserAgent: in.UserAgent,
+			CreatedAt: now, ExpiresAt: now.Add(s.cfg.MFAChallengeTTL),
+		}); err != nil {
+			return nil, fmt.Errorf("insert mfa challenge: %w", err)
+		}
+		s.logAuditDirect(ctx, user.LastTenantID, &user.ID, "user.login_mfa_challenged", "user", user.ID, in.IP, in.UserAgent)
+		return &LoginResult{User: user, MFARequired: true, ChallengeID: challengeID.String()}, nil
+	}
+
+	plaintext, err := s.createSession(ctx, user.ID, in.IP, in.UserAgent, now)
+	if err != nil {
+		return nil, err
 	}
 	_, _ = s.pool.Exec(ctx, `update users set last_login_at = $1 where id = $2`, now, user.ID)
 	s.logAuditDirect(ctx, user.LastTenantID, &user.ID, "user.login_succeeded", "user", user.ID, in.IP, in.UserAgent)
 
 	return &LoginResult{User: user, SessionToken: plaintext, MFARequired: false}, nil
+}
+
+func (s *Service) createSession(ctx context.Context, userID uuid.UUID, ip net.IP, ua string, now time.Time) (string, error) {
+	plaintext, _ := GenerateSessionToken()
+	sid := SessionIDFromToken(plaintext)
+	_, err := s.pool.Exec(ctx, `
+		insert into sessions (id, user_id, created_at, expires_at, last_seen_at, user_agent, ip)
+		values ($1,$2,$3,$4,$3,$5,$6)
+	`, sid, userID, now, now.Add(s.cfg.SessionAbsolute), ua, ipString(ip))
+	if err != nil {
+		return "", fmt.Errorf("insert session: %w", err)
+	}
+	return plaintext, nil
 }
 
 func (s *Service) logLoginFailed(ctx context.Context, email string, ip net.IP, ua string) {

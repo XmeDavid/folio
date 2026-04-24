@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/xmedavid/folio/backend/internal/uuidx"
 	"github.com/xmedavid/folio/backend/internal/testdb"
+	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
 // TestWriteAuditTx_nilIPStoresNull is a regression test: a nil net.IP must
