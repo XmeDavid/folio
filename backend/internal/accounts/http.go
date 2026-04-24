@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/auth"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 )
 
@@ -54,11 +55,7 @@ type patchReq struct {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := httpx.TenantIDFrom(r.Context())
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "tenant_required", "missing tenant context")
-		return
-	}
+	tenantID := auth.MustTenant(r).ID
 	includeArchived := strings.EqualFold(r.URL.Query().Get("includeArchived"), "true")
 	res, err := h.svc.List(r.Context(), tenantID, includeArchived)
 	if err != nil {
@@ -69,11 +66,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := httpx.TenantIDFrom(r.Context())
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "tenant_required", "missing tenant context")
-		return
-	}
+	tenantID := auth.MustTenant(r).ID
 	var req createReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
@@ -123,11 +116,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := httpx.TenantIDFrom(r.Context())
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "tenant_required", "missing tenant context")
-		return
-	}
+	tenantID := auth.MustTenant(r).ID
 	id, err := uuid.Parse(chi.URLParam(r, "accountId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "accountId must be a UUID")
@@ -142,11 +131,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := httpx.TenantIDFrom(r.Context())
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "tenant_required", "missing tenant context")
-		return
-	}
+	tenantID := auth.MustTenant(r).ID
 	id, err := uuid.Parse(chi.URLParam(r, "accountId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "accountId must be a UUID")

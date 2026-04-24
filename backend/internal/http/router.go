@@ -1,9 +1,11 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -11,9 +13,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xmedavid/folio/backend/internal/accounts"
+	"github.com/xmedavid/folio/backend/internal/auth"
 	"github.com/xmedavid/folio/backend/internal/classification"
 	"github.com/xmedavid/folio/backend/internal/config"
-	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/identity"
 	"github.com/xmedavid/folio/backend/internal/transactions"
 )
@@ -26,18 +28,27 @@ type Deps struct {
 
 func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
-
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.Timeout(60 * time.Second))
 	r.Use(requestLogger(d.Logger))
 
+	appURL := os.Getenv("APP_URL")
+	if appURL == "" {
+		appURL = "http://localhost:3000"
+	}
+	r.Use(auth.CSRF([]string{appURL}))
+
 	r.Get("/healthz", health(d))
 	r.Get("/readyz", ready(d))
 
 	identitySvc := identity.NewService(d.DB)
-	identityH := identity.NewHandler(identitySvc)
+	authSvc := auth.NewService(d.DB, identitySvc, auth.Config{
+		Registration: auth.RegistrationMode(os.Getenv("REGISTRATION_MODE")),
+	})
+	authH := auth.NewHandler(authSvc)
+
 	accountsSvc := accounts.NewService(d.DB)
 	accountsH := accounts.NewHandler(accountsSvc)
 	transactionsSvc := transactions.NewService(d.DB)
@@ -48,15 +59,22 @@ func NewRouter(d Deps) http.Handler {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/version", versionHandler)
 
-		// Public: no tenant context yet. Onboarding bootstraps a tenant.
-		identityH.MountPublic(r)
+		// Public auth surface: /auth/signup, /auth/login, /auth/logout
+		authH.MountPublic(r)
 
-		// Tenant-scoped routes: the RequireTenant middleware is a temporary
-		// stand-in for real session auth and reads X-Tenant-ID from the
-		// request. It will be replaced by backend/internal/auth.
+		// Authenticated, non-tenant-scoped: /me, POST /tenants
 		r.Group(func(r chi.Router) {
-			r.Use(httpx.RequireTenant)
-			identityH.MountTenantScoped(r)
+			r.Use(authSvc.RequireSession)
+			authH.MountAuthed(r)
+		})
+
+		// Tenant-scoped: /api/v1/t/{tenantId}/...
+		r.Route("/t/{tenantId}", func(r chi.Router) {
+			r.Use(authSvc.RequireSession)
+			r.Use(authSvc.RequireMembership)
+
+			authH.MountTenantScoped(r) // /members
+
 			r.Route("/accounts", accountsH.Mount)
 			r.Route("/transactions", transactionsH.Mount)
 			r.Route("/transactions/{transactionId}/tags", classificationH.MountTransactionTags)
@@ -68,7 +86,6 @@ func NewRouter(d Deps) http.Handler {
 			r.Route("/categorization-rules", classificationH.MountCategorizationRules)
 		})
 	})
-
 	return r
 }
 
@@ -91,14 +108,15 @@ func ready(d Deps) http.HandlerFunc {
 }
 
 func versionHandler(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{
-		"name":    "folio",
-		"version": "0.0.0-dev",
-	})
+	writeJSON(w, http.StatusOK, map[string]string{"name": "folio", "version": "0.0.0-dev"})
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+func ctxWithTimeout(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, d)
 }

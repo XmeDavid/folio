@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -31,8 +30,4 @@ func requestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 			)
 		})
 	}
-}
-
-func ctxWithTimeout(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, d)
 }

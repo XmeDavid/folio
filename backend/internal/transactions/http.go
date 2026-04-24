@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/auth"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 )
 
@@ -63,13 +64,8 @@ type patchReq struct {
 	CountAsExpense  json.RawMessage `json:"countAsExpense"`
 }
 
-func requireTenant(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	tenantID, ok := httpx.TenantIDFrom(r.Context())
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "tenant_required", "missing tenant context")
-		return uuid.Nil, false
-	}
-	return tenantID, true
+func requireTenant(_ http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	return auth.MustTenant(r).ID, true
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {

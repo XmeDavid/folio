@@ -1,18 +1,12 @@
 // Package httpx contains small HTTP helpers shared across feature packages:
-// typed errors, JSON response writers, and temporary dev-only middleware that
-// extracts a tenant/user identity from request headers.
-//
-// The middleware here is a stand-in for real authentication. It will be
-// replaced by session-cookie auth (see backend/internal/auth) once that lands.
+// typed errors and JSON response writers. Authentication and tenant context
+// live in backend/internal/auth.
 package httpx
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
-
-	"github.com/google/uuid"
 )
 
 // WriteJSON writes status + body as application/json. Encoding errors are
@@ -67,64 +61,4 @@ func WriteServiceError(w http.ResponseWriter, err error) {
 	default:
 		WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 	}
-}
-
-// --- Context helpers for the temporary identity stand-in. ---
-
-type ctxKey string
-
-const (
-	tenantIDKey ctxKey = "folio.tenant_id"
-	userIDKey   ctxKey = "folio.user_id"
-)
-
-// TenantIDFrom returns the tenant UUID from request context, if set.
-func TenantIDFrom(ctx context.Context) (uuid.UUID, bool) {
-	v, ok := ctx.Value(tenantIDKey).(uuid.UUID)
-	return v, ok
-}
-
-// UserIDFrom returns the user UUID from request context, if set.
-func UserIDFrom(ctx context.Context) (uuid.UUID, bool) {
-	v, ok := ctx.Value(userIDKey).(uuid.UUID)
-	return v, ok
-}
-
-// WithTenantID returns a context carrying the tenant id. Exported for tests.
-func WithTenantID(ctx context.Context, id uuid.UUID) context.Context {
-	return context.WithValue(ctx, tenantIDKey, id)
-}
-
-// WithUserID returns a context carrying the user id. Exported for tests.
-func WithUserID(ctx context.Context, id uuid.UUID) context.Context {
-	return context.WithValue(ctx, userIDKey, id)
-}
-
-// RequireTenant is a TEMPORARY dev-only middleware that reads the tenant id
-// from the X-Tenant-ID header. It will be replaced by real session-based
-// auth; do not ship to production as-is.
-func RequireTenant(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw := r.Header.Get("X-Tenant-ID")
-		if raw == "" {
-			WriteError(w, http.StatusUnauthorized, "tenant_required",
-				"X-Tenant-ID header required (temporary stand-in for auth)")
-			return
-		}
-		id, err := uuid.Parse(raw)
-		if err != nil {
-			WriteError(w, http.StatusBadRequest, "tenant_invalid",
-				"X-Tenant-ID must be a UUID")
-			return
-		}
-		ctx := WithTenantID(r.Context(), id)
-
-		// Optional X-User-ID; ignored if not parseable.
-		if raw := r.Header.Get("X-User-ID"); raw != "" {
-			if uid, err := uuid.Parse(raw); err == nil {
-				ctx = WithUserID(ctx, uid)
-			}
-		}
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
 }

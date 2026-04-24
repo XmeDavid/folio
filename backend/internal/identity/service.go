@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
@@ -200,20 +201,19 @@ func InsertMembershipTx(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UU
 
 // isUniqueViolation reports whether err is a Postgres 23505 unique-violation
 // for the given constraint name. Accepts any constraint when name is "".
+//
+// *pgconn.PgError exposes Code and ConstraintName as fields (not methods), so
+// an interface-based errors.As would never match. Unwrap to the concrete type.
 func isUniqueViolation(err error, constraint string) bool {
-	type pgErr interface {
-		SQLState() string
-		ConstraintName() string
-	}
-	var pe pgErr
+	var pe *pgconn.PgError
 	if !errors.As(err, &pe) {
 		return false
 	}
-	if pe.SQLState() != "23505" {
+	if pe.Code != "23505" {
 		return false
 	}
 	if constraint == "" {
 		return true
 	}
-	return pe.ConstraintName() == constraint
+	return pe.ConstraintName == constraint
 }

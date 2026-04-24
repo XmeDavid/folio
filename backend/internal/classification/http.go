@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/xmedavid/folio/backend/internal/auth"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 )
 
@@ -87,13 +88,8 @@ func (h *Handler) ApplyRulesToTransactionHandler(w http.ResponseWriter, r *http.
 
 // ---- shared helpers --------------------------------------------------------
 
-func requireTenant(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	tenantID, ok := httpx.TenantIDFrom(r.Context())
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "tenant_required", "missing tenant context")
-		return uuid.Nil, false
-	}
-	return tenantID, true
+func requireTenant(_ http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	return auth.MustTenant(r).ID, true
 }
 
 func parseUUIDParam(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, bool) {
