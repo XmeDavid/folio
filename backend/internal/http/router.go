@@ -46,11 +46,13 @@ func NewRouter(d Deps) http.Handler {
 	r.Get("/readyz", ready(d))
 
 	identitySvc := identity.NewService(d.DB)
+	inviteSvc := identity.NewInviteService(d.DB)
 	authSvc := auth.NewService(d.DB, identitySvc, auth.Config{
 		Registration:  auth.RegistrationMode(os.Getenv("REGISTRATION_MODE")),
 		SecureCookies: os.Getenv("APP_ENV") != "development",
 	})
 	authH := auth.NewHandler(authSvc)
+	inviteH := auth.NewInviteHandler(authSvc, inviteSvc, d.Mailer)
 
 	accountsSvc := accounts.NewService(d.DB)
 	accountsH := accounts.NewHandler(accountsSvc)
@@ -78,6 +80,7 @@ func NewRouter(d Deps) http.Handler {
 
 			authH.MountTenantScoped(r) // /members
 			authH.MountTenantAdmin(r)  // PATCH /, DELETE /, POST /restore — owner-gated
+			r.Route("/invites", inviteH.MountTenantInvites)
 
 			r.Route("/accounts", accountsH.Mount)
 			r.Route("/transactions", transactionsH.Mount)
