@@ -223,7 +223,7 @@ Enums: `account_kind` (`checking, savings, cash, credit_card, brokerage, crypto_
 
 - **`accounts`**: id, tenant_id, name, nickname, kind, currency, institution, open_date, close_date nullable, opening_balance numeric(28,8) not null default 0, opening_balance_date date, include_in_networth bool default true, include_in_savings_rate bool not null, archived_at, created_at, updated_at.
 - **`account_balance_snapshots`**: id, tenant_id, account_id FK cascade, as_of timestamptz, balance, currency, source enum, note. Unique (account_id, as_of, source).
-- **`reconciliation_checkpoints`**: id, tenant_id, account_id, statement_date, asserted_balance, status, drift_amount numeric(28,8) nullable, drift_currency varchar(10) nullable, resolved_at timestamptz nullable, notes.
+- **`reconciliation_checkpoints`**: id, tenant_id, account_id, statement_date, asserted_balance, asserted_currency varchar(10), status, drift_amount numeric(28,8) nullable, drift_currency varchar(10) nullable, resolved_at timestamptz nullable, notes. (`asserted_currency` stored with the asserted balance so the pair remains self-describing if the account's currency is ever re-interpreted.)
 
 Invariants:
 - Balance is derived, not stored on `accounts`. Service reads: latest snapshot + sum(transactions since snapshot).
