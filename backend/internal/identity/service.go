@@ -359,8 +359,14 @@ func (s *Service) RestoreTenant(ctx context.Context, tenantID uuid.UUID) error {
 }
 
 // InsertTenantTx inserts a tenants row with a unique slug derived from the
-// input name; retries with numeric suffixes up to 100 times on slug collision.
-// Exported so auth.Service.Signup can reuse it inside its own transaction.
+// input name; retries with numeric suffixes up to 100 times on slug
+// collision. Exported so auth.Service.Signup can reuse it inside its own
+// transaction.
+//
+// Each attempt is wrapped in a SAVEPOINT so a collision aborts only that
+// attempt — not the whole outer transaction. Without this, a single
+// collision would poison later statements in the same tx with
+// SQLSTATE 25P02 (transaction aborted).
 func InsertTenantTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in CreateTenantInput) (Tenant, error) {
 	base := Slugify(in.Name)
 	if base == "" || len(base) < 2 {
@@ -368,6 +374,10 @@ func InsertTenantTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in CreateTenan
 	}
 	slug := base
 	for i := 0; i < 100; i++ {
+		if _, err := tx.Exec(ctx, `savepoint insert_tenant`); err != nil {
+			return Tenant{}, fmt.Errorf("savepoint: %w", err)
+		}
+
 		var t Tenant
 		err := tx.QueryRow(ctx, `
 			insert into tenants (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
@@ -376,7 +386,14 @@ func InsertTenantTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in CreateTenan
 		`, id, in.Name, slug, in.BaseCurrency, in.CycleAnchorDay, in.Locale, in.Timezone).
 			Scan(&t.ID, &t.Name, &t.Slug, &t.BaseCurrency, &t.CycleAnchorDay, &t.Locale, &t.Timezone, &t.DeletedAt, &t.CreatedAt)
 		if err == nil {
+			if _, relErr := tx.Exec(ctx, `release savepoint insert_tenant`); relErr != nil {
+				return Tenant{}, fmt.Errorf("release savepoint: %w", relErr)
+			}
 			return t, nil
+		}
+		// Rollback to the savepoint so the outer tx stays alive.
+		if _, rbErr := tx.Exec(ctx, `rollback to savepoint insert_tenant`); rbErr != nil {
+			return Tenant{}, fmt.Errorf("rollback to savepoint: %w (orig: %v)", rbErr, err)
 		}
 		if !isUniqueViolation(err, "tenants_slug_key") {
 			return Tenant{}, fmt.Errorf("insert tenant: %w", err)

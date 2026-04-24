@@ -6,6 +6,7 @@ package httpx
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 )
 
@@ -59,6 +60,8 @@ func WriteServiceError(w http.ResponseWriter, err error) {
 	case errors.As(err, &nferr):
 		WriteError(w, http.StatusNotFound, "not_found", nferr.Error())
 	default:
+		// Unmapped error — log the details so debugging isn't a black hole.
+		slog.Default().Warn("httpx.unmapped_service_error", "err", err)
 		WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 	}
 }
