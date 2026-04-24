@@ -1,0 +1,23 @@
+# Local development services. Backend + web run on the host.
+# For a full stack container run, see deploy/docker-compose.yml.
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-folio}
+      POSTGRES_USER: ${POSTGRES_USER:-folio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-folio_dev_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-folio} -d ${POSTGRES_DB:-folio}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

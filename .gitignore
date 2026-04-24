@@ -1,0 +1,54 @@
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Secrets
+*.pem
+*.key
+*.crt
+secrets/
+
+# Go
+backend/bin/
+backend/dist/
+backend/tmp/
+backend/*.out
+backend/coverage.*
+
+# Node / Next.js
+web/node_modules/
+web/.next/
+web/out/
+web/.turbo/
+web/next-env.d.ts
+web/public/sw.js
+web/public/workbox-*.js
+
+# Generated code
+openapi/gen/
+web/lib/api/generated/
+backend/internal/openapi/gen/
+
+# DB
+*.sqlite
+*.db
+backend/data/
+pgdata/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+logs/
+
+# Deploy
+deploy/local/
+
+# Legacy (ignored per user instruction)
+# Intentionally NOT listed — kept in repo, just not touched by code.

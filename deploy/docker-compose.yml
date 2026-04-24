@@ -1,0 +1,78 @@
+# Production compose file.
+# Expects .env at the repo root with production secrets.
+#
+# Caddy terminates TLS and reverse-proxies:
+#   folio.example.com          → web (Next.js)
+#   api.folio.example.com      → backend (Go)
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+
+  backend:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      APP_ENV:                  production
+      APP_URL:                  ${APP_URL}
+      HTTP_ADDR:                ":8080"
+      LOG_LEVEL:                info
+      DATABASE_URL:             postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
+      SESSION_SECRET:           ${SESSION_SECRET}
+      SECRET_ENCRYPTION_KEY:    ${SECRET_ENCRYPTION_KEY}
+      WEBAUTHN_RP_ID:           ${WEBAUTHN_RP_ID}
+      WEBAUTHN_RP_NAME:         ${WEBAUTHN_RP_NAME}
+      WEBAUTHN_RP_ORIGIN:       ${WEBAUTHN_RP_ORIGIN}
+      GOCARDLESS_SECRET_ID:     ${GOCARDLESS_SECRET_ID}
+      GOCARDLESS_SECRET_KEY:    ${GOCARDLESS_SECRET_KEY}
+      SENTRY_DSN:               ${SENTRY_DSN}
+    networks: [internal]
+
+  web:
+    build:
+      context: ../web
+    restart: unless-stopped
+    depends_on: [backend]
+    environment:
+      NODE_ENV: production
+      API_URL:  http://backend:8080
+    networks: [internal]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [backend, web]
+    networks: [internal]
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:

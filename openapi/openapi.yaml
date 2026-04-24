@@ -1,0 +1,274 @@
+openapi: 3.1.0
+info:
+  title: Folio API
+  version: 0.0.0
+  description: |
+    Folio – personal finance backend.
+
+    This file is the single source of truth for API contracts. Both the Go
+    server (via oapi-codegen) and the TypeScript client (via openapi-typescript)
+    are generated from it.
+
+servers:
+  - url: http://localhost:8080
+    description: Local dev
+  - url: https://api.folio.example.com
+    description: Production
+
+tags:
+  - name: meta
+  - name: auth
+  - name: accounts
+  - name: transactions
+  - name: providers
+
+security:
+  - sessionCookie: []
+
+paths:
+  /healthz:
+    get:
+      tags: [meta]
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+
+  /api/v1/version:
+    get:
+      tags: [meta]
+      summary: Build info
+      security: []
+      responses:
+        "200":
+          description: Version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Version" }
+
+  /api/v1/auth/register:
+    post:
+      tags: [auth]
+      summary: Create a new user account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterInput" }
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Password login → sets session cookie
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginInput" }
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Clear session
+      responses:
+        "204": { description: No content }
+
+  /api/v1/me:
+    get:
+      tags: [auth]
+      summary: Current user
+      responses:
+        "200":
+          description: User
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+
+  /api/v1/accounts:
+    get:
+      tags: [accounts]
+      summary: List accounts for current user
+      responses:
+        "200":
+          description: Accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Account" }
+    post:
+      tags: [accounts]
+      summary: Create a manual account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountCreateInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+
+  /api/v1/accounts/{accountId}/transactions:
+    get:
+      tags: [transactions]
+      summary: List transactions for an account
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        "200":
+          description: Transactions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Transaction" }
+
+  /api/v1/providers/gocardless/requisitions:
+    post:
+      tags: [providers]
+      summary: Start a GoCardless bank connection (returns a consent URL)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [institutionId]
+              properties:
+                institutionId: { type: string }
+                label: { type: string }
+      responses:
+        "200":
+          description: Consent link
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requisitionId: { type: string }
+                  consentUrl:    { type: string, format: uri }
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: folio_session
+
+  schemas:
+    Version:
+      type: object
+      required: [name, version]
+      properties:
+        name:    { type: string }
+        version: { type: string }
+
+    User:
+      type: object
+      required: [id, email, displayName, baseCurrency]
+      properties:
+        id:           { type: string, format: uuid }
+        email:        { type: string, format: email }
+        displayName:  { type: string }
+        baseCurrency: { type: string, example: CHF }
+
+    RegisterInput:
+      type: object
+      required: [email, password, displayName]
+      properties:
+        email:        { type: string, format: email }
+        password:     { type: string, minLength: 10 }
+        displayName:  { type: string, minLength: 1, maxLength: 80 }
+        baseCurrency: { type: string, default: CHF }
+
+    LoginInput:
+      type: object
+      required: [email, password]
+      properties:
+        email:    { type: string, format: email }
+        password: { type: string }
+
+    AccountKind:
+      type: string
+      enum: [checking, savings, credit_card, brokerage, cash, loan, other]
+
+    AccountSource:
+      type: string
+      enum: [manual, gocardless, ibkr_flex, camt053_import, csv_import]
+
+    Account:
+      type: object
+      required: [id, name, kind, source, currency, balance]
+      properties:
+        id:            { type: string, format: uuid }
+        name:          { type: string }
+        kind:          { $ref: "#/components/schemas/AccountKind" }
+        source:        { $ref: "#/components/schemas/AccountSource" }
+        currency:      { type: string }
+        institution:   { type: string, nullable: true }
+        balance:       { type: string, description: "Decimal as string" }
+        balanceAsOf:   { type: string, format: date-time, nullable: true }
+        archivedAt:    { type: string, format: date-time, nullable: true }
+
+    AccountCreateInput:
+      type: object
+      required: [name, kind, currency]
+      properties:
+        name:     { type: string }
+        kind:     { $ref: "#/components/schemas/AccountKind" }
+        currency: { type: string }
+        institution: { type: string }
+
+    Transaction:
+      type: object
+      required: [id, accountId, bookedAt, amount, currency]
+      properties:
+        id:               { type: string, format: uuid }
+        accountId:        { type: string, format: uuid }
+        categoryId:       { type: string, format: uuid, nullable: true }
+        externalId:       { type: string, nullable: true }
+        bookedAt:         { type: string, format: date }
+        valueAt:          { type: string, format: date, nullable: true }
+        amount:           { type: string, description: "Signed decimal as string" }
+        currency:         { type: string }
+        originalAmount:   { type: string, nullable: true }
+        originalCurrency: { type: string, nullable: true }
+        description:      { type: string, nullable: true }
+        counterparty:     { type: string, nullable: true }
+        notes:            { type: string, nullable: true }
