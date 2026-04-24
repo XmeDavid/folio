@@ -16,7 +16,7 @@ func CheckPasswordPolicy(password, email, displayName string) error {
 		return httpx.NewValidationError("password must be at least 12 characters")
 	}
 	lower := strings.ToLower(password)
-	if local, _, ok := splitEmailLocal(email); ok && strings.Contains(lower, strings.ToLower(local)) {
+	if local, _, ok := splitEmailLocal(email); ok && len(local) >= 4 && strings.Contains(lower, strings.ToLower(local)) {
 		return httpx.NewValidationError("password cannot contain your email address")
 	}
 	for _, tok := range strings.Fields(displayName) {

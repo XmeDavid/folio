@@ -15,6 +15,7 @@ func TestCheckPasswordPolicy(t *testing.T) {
 		{"ok", "correct horse battery staple", "alice@example.com", "Alice", false},
 		{"too short", "abc12345", "alice@example.com", "Alice", true},
 		{"contains email local part", "alicelovescats99", "alice@example.com", "Alice", true},
+		{"short email local ignored", "correct horse battery staple", "a@b.com", "Alice", false},
 		{"contains display name token", "Hello Alice Smith long", "x@y.com", "Alice Smith", true},
 		{"common", "password1234567", "x@y.com", "Xyzabc", true},
 		{"empty", "", "x@y.com", "Xyzabc", true},
