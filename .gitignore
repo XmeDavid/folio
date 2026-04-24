@@ -50,5 +50,5 @@ logs/
 # Deploy
 deploy/local/
 
-# Legacy (ignored per user instruction)
-# Intentionally NOT listed — kept in repo, just not touched by code.
+# Legacy (ignored per user instruction — kept on disk, outside git)
+legacy/
