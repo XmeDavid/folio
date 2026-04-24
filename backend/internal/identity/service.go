@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -155,6 +156,173 @@ func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) ([]Member
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// UpdateTenantInput is the PATCH body for tenant settings. Pointer fields
+// mean "absent"; a non-nil pointer to the zero value means "clear".
+type UpdateTenantInput struct {
+	Name           *string
+	Slug           *string
+	BaseCurrency   *string
+	CycleAnchorDay *int
+	Locale         *string
+	Timezone       *string
+}
+
+var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
+
+// normalize validates provided fields and canonicalises strings.
+func (in UpdateTenantInput) normalize() (UpdateTenantInput, error) {
+	if in.Name != nil {
+		n := strings.TrimSpace(*in.Name)
+		if n == "" {
+			return in, httpx.NewValidationError("name cannot be empty")
+		}
+		in.Name = &n
+	}
+	if in.Slug != nil {
+		s := strings.ToLower(strings.TrimSpace(*in.Slug))
+		if !slugPattern.MatchString(s) {
+			return in, httpx.NewValidationError("slug must match ^[a-z0-9][a-z0-9-]{1,62}$")
+		}
+		in.Slug = &s
+	}
+	if in.BaseCurrency != nil {
+		cur, err := money.ParseCurrency(*in.BaseCurrency)
+		if err != nil {
+			return in, httpx.NewValidationError(err.Error())
+		}
+		s := string(cur)
+		in.BaseCurrency = &s
+	}
+	if in.CycleAnchorDay != nil {
+		d := *in.CycleAnchorDay
+		if d < 1 || d > 31 {
+			return in, httpx.NewValidationError("cycleAnchorDay must be between 1 and 31")
+		}
+		in.CycleAnchorDay = &d
+	}
+	if in.Locale != nil {
+		l := strings.TrimSpace(*in.Locale)
+		if l == "" {
+			return in, httpx.NewValidationError("locale cannot be empty")
+		}
+		in.Locale = &l
+	}
+	if in.Timezone != nil {
+		tz := strings.TrimSpace(*in.Timezone)
+		if tz == "" {
+			return in, httpx.NewValidationError("timezone cannot be empty")
+		}
+		in.Timezone = &tz
+	}
+	return in, nil
+}
+
+// GetTenant returns a tenant by id, skipping soft-deleted rows.
+func (s *Service) GetTenant(ctx context.Context, tenantID uuid.UUID) (*Tenant, error) {
+	var t Tenant
+	err := s.pool.QueryRow(ctx, `
+		select id, name, slug, base_currency, cycle_anchor_day, locale, timezone,
+		       deleted_at, created_at
+		from tenants where id = $1 and deleted_at is null
+	`, tenantID).Scan(
+		&t.ID, &t.Name, &t.Slug, &t.BaseCurrency, &t.CycleAnchorDay,
+		&t.Locale, &t.Timezone, &t.DeletedAt, &t.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, httpx.NewNotFoundError("tenant")
+		}
+		return nil, err
+	}
+	return &t, nil
+}
+
+// UpdateTenant applies the PATCH and returns the updated tenant. Soft-deleted
+// tenants are not updatable — restore first.
+func (s *Service) UpdateTenant(ctx context.Context, tenantID uuid.UUID, raw UpdateTenantInput) (*Tenant, error) {
+	in, err := raw.normalize()
+	if err != nil {
+		return nil, err
+	}
+
+	sets := make([]string, 0, 6)
+	args := make([]any, 0, 8)
+	args = append(args, tenantID) // $1 in WHERE
+
+	next := func(val any) string {
+		args = append(args, val)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	if in.Name != nil {
+		sets = append(sets, "name = "+next(*in.Name))
+	}
+	if in.Slug != nil {
+		sets = append(sets, "slug = "+next(*in.Slug))
+	}
+	if in.BaseCurrency != nil {
+		sets = append(sets, "base_currency = "+next(*in.BaseCurrency))
+	}
+	if in.CycleAnchorDay != nil {
+		sets = append(sets, "cycle_anchor_day = "+next(*in.CycleAnchorDay))
+	}
+	if in.Locale != nil {
+		sets = append(sets, "locale = "+next(*in.Locale))
+	}
+	if in.Timezone != nil {
+		sets = append(sets, "timezone = "+next(*in.Timezone))
+	}
+
+	if len(sets) == 0 {
+		return s.GetTenant(ctx, tenantID)
+	}
+
+	q := fmt.Sprintf(
+		`update tenants set %s where id = $1 and deleted_at is null returning id`,
+		strings.Join(sets, ", "),
+	)
+	var gotID uuid.UUID
+	err = s.pool.QueryRow(ctx, q, args...).Scan(&gotID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, httpx.NewNotFoundError("tenant")
+		}
+		if isUniqueViolation(err, "tenants_slug_key") {
+			return nil, httpx.NewValidationError("slug is already in use")
+		}
+		return nil, fmt.Errorf("update tenant: %w", err)
+	}
+	return s.GetTenant(ctx, tenantID)
+}
+
+// SoftDeleteTenant sets deleted_at = now(). Idempotent (coalesce keeps the
+// first deletion timestamp). NotFound if the tenant id doesn't exist at all.
+func (s *Service) SoftDeleteTenant(ctx context.Context, tenantID uuid.UUID) error {
+	ct, err := s.pool.Exec(ctx,
+		`update tenants set deleted_at = coalesce(deleted_at, now()) where id = $1`, tenantID)
+	if err != nil {
+		return fmt.Errorf("soft-delete tenant: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return httpx.NewNotFoundError("tenant")
+	}
+	return nil
+}
+
+// RestoreTenant clears deleted_at. Idempotent (restoring a non-deleted tenant
+// is a no-op, not an error). NotFound if the tenant id doesn't exist at all.
+func (s *Service) RestoreTenant(ctx context.Context, tenantID uuid.UUID) error {
+	ct, err := s.pool.Exec(ctx,
+		`update tenants set deleted_at = null where id = $1`, tenantID)
+	if err != nil {
+		return fmt.Errorf("restore tenant: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return httpx.NewNotFoundError("tenant")
+	}
+	return nil
 }
 
 // InsertTenantTx inserts a tenants row with a unique slug derived from the
