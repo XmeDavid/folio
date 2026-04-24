@@ -4,70 +4,71 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/google/uuid"
+	"github.com/xmedavid/folio/backend/internal/identity"
 )
 
-// ctxKey is a private key type for request-scoped values injected by auth
-// middleware. The full middleware surface (RequireSession, RequireMembership,
-// RequireRole, RequireFreshReauth) lands in plan §7.
-type ctxKey int
+type ctxKey string
 
 const (
-	ctxKeyTenant ctxKey = iota + 1
-	ctxKeyUser
-	ctxKeySession
+	ctxKeyUser    ctxKey = "folio.auth.user"
+	ctxKeySession ctxKey = "folio.auth.session"
+	ctxKeyTenant  ctxKey = "folio.auth.tenant"
+	ctxKeyRole    ctxKey = "folio.auth.role"
 )
 
-// TenantContext is the minimal tenant identity attached to a request after
-// RequireMembership resolves the path-param tenantId against the caller's
-// memberships. Plan §7 will populate Role and related fields; plan §1 carries
-// just the ID so identity.Handler can compile against the eventual middleware
-// contract.
-type TenantContext struct {
-	ID uuid.UUID
+// WithUser / UserFromCtx attach the authenticated user.
+func WithUser(ctx context.Context, u identity.User) context.Context {
+	return context.WithValue(ctx, ctxKeyUser, u)
 }
 
-// MustTenant returns the tenant attached to r by RequireMembership. Panics
-// when called on a request that didn't traverse the middleware — that's a
-// programming error, not a user error.
-func MustTenant(r *http.Request) *TenantContext {
-	t, ok := r.Context().Value(ctxKeyTenant).(*TenantContext)
+func UserFromCtx(ctx context.Context) (identity.User, bool) {
+	u, ok := ctx.Value(ctxKeyUser).(identity.User)
+	return u, ok
+}
+
+// MustUser panics if no user — use only in authed routes mounted under RequireSession.
+func MustUser(r *http.Request) identity.User {
+	u, ok := UserFromCtx(r.Context())
 	if !ok {
-		panic("auth: MustTenant called without RequireMembership middleware")
+		panic("MustUser called without RequireSession upstream")
+	}
+	return u
+}
+
+// WithSession / SessionFromCtx attach the session row.
+func WithSession(ctx context.Context, s Session) context.Context {
+	return context.WithValue(ctx, ctxKeySession, s)
+}
+
+func SessionFromCtx(ctx context.Context) (Session, bool) {
+	s, ok := ctx.Value(ctxKeySession).(Session)
+	return s, ok
+}
+
+// WithTenant / TenantFromCtx attach the tenant under inspection.
+func WithTenant(ctx context.Context, t identity.Tenant) context.Context {
+	return context.WithValue(ctx, ctxKeyTenant, t)
+}
+
+func TenantFromCtx(ctx context.Context) (identity.Tenant, bool) {
+	t, ok := ctx.Value(ctxKeyTenant).(identity.Tenant)
+	return t, ok
+}
+
+func MustTenant(r *http.Request) identity.Tenant {
+	t, ok := TenantFromCtx(r.Context())
+	if !ok {
+		panic("MustTenant called without RequireMembership upstream")
 	}
 	return t
 }
 
-// WithTenant returns a derived context carrying tenant. Exported for tests
-// and for middleware in plan §7 to populate the request.
-func WithTenant(ctx context.Context, t *TenantContext) context.Context {
-	return context.WithValue(ctx, ctxKeyTenant, t)
+// WithRole / RoleFromCtx attach the caller's role in the current tenant.
+func WithRole(ctx context.Context, r identity.Role) context.Context {
+	return context.WithValue(ctx, ctxKeyRole, r)
 }
 
-// MustUserID returns the authenticated user id attached to r by RequireSession.
-// Panics when the middleware hasn't run. Plan §7 wires the middleware.
-func MustUserID(r *http.Request) uuid.UUID {
-	id, ok := r.Context().Value(ctxKeyUser).(uuid.UUID)
-	if !ok {
-		panic("auth: MustUserID called without RequireSession middleware")
-	}
-	return id
-}
-
-// WithUserID returns a derived context carrying the authenticated user id.
-func WithUserID(ctx context.Context, id uuid.UUID) context.Context {
-	return context.WithValue(ctx, ctxKeyUser, id)
-}
-
-// SessionFromContext returns the Session attached to ctx by RequireSession,
-// if any. Returns (nil, false) when unset.
-func SessionFromContext(ctx context.Context) (*Session, bool) {
-	s, ok := ctx.Value(ctxKeySession).(*Session)
-	return s, ok
-}
-
-// WithSession returns a derived context carrying the session. Exported for
-// tests and for middleware in plan §7 to populate the request.
-func WithSession(ctx context.Context, s *Session) context.Context {
-	return context.WithValue(ctx, ctxKeySession, s)
+func RoleFromCtx(ctx context.Context) (identity.Role, bool) {
+	r, ok := ctx.Value(ctxKeyRole).(identity.Role)
+	return r, ok
 }
