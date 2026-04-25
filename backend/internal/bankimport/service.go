@@ -503,7 +503,7 @@ func (s *Service) currencyGroups(ctx context.Context, tenantID uuid.UUID, parsed
 			ImportableCount:    len(sub.Transactions),
 			SampleTransactions: samples,
 		}
-		candidates := importCandidatesForGroup(accounts, parsed.Institution, k, group.SuggestedName)
+		candidates := importCandidates(accounts, parsed.Institution, k.currency)
 		for i := range candidates {
 			existing, err := s.loadExisting(ctx, tenantID, candidates[i].ID, sub)
 			if err != nil {
@@ -515,9 +515,17 @@ func (s *Service) currencyGroups(ctx context.Context, tenantID uuid.UUID, parsed
 			candidates[i].ConflictCount = len(classified.conflicts)
 			candidates[i].ConflictTransactions = classified.conflicts
 		}
+		// Rank by transaction overlap so the wizard suggests whichever
+		// existing account has the most matching fingerprints first. Falls
+		// back to alphabetical order on ties for stability.
+		sort.SliceStable(candidates, func(i, j int) bool {
+			if candidates[i].DuplicateCount != candidates[j].DuplicateCount {
+				return candidates[i].DuplicateCount > candidates[j].DuplicateCount
+			}
+			return candidates[i].Name < candidates[j].Name
+		})
 		group.CandidateAccounts = candidates
-		if len(candidates) == 1 {
-			match := candidates[0]
+		if match, ok := bestImportCandidate(candidates, len(sub.Transactions)); ok {
 			group.ExistingAccountID = &match.ID
 			group.ExistingAccountName = match.Name
 			group.Action = "import_to_account"
@@ -551,26 +559,35 @@ func suggestedNameForGroup(institution string, k groupKey) string {
 	return strings.Join(parts, " ")
 }
 
-// importCandidatesForGroup returns existing accounts matching the institution
-// and currency. When the group represents a specific section (sourceKey set),
-// candidates are further narrowed to ones whose name contains the section
-// name — that lets a re-import of the consolidated file find the previously
-// imported pocket account, without false-matching the main current account.
-func importCandidatesForGroup(accounts []importAccountMatch, institution string, k groupKey, suggestedName string) []AccountCandidate {
-	base := importCandidates(accounts, institution, k.currency)
-	if k.sourceKey == "" {
-		return base
+// bestImportCandidate picks the candidate the wizard should auto-suggest as
+// the import target. We rely on transaction-fingerprint overlap as the
+// primary signal — whichever existing account already contains the most
+// of the parsed transactions is the most likely target. When the user has
+// only one same-currency account it's an easy auto-pick; with several we
+// pick whichever shares the most history.
+//
+// The threshold prevents false-matches when the user really does want a
+// brand-new account (e.g. a fresh Revolut PHP account they just opened
+// has no prior fingerprints). Either ≥10 absolute overlapping rows OR
+// ≥40% of the incoming rows is enough to consider it a match.
+func bestImportCandidate(candidates []AccountCandidate, incoming int) (AccountCandidate, bool) {
+	if len(candidates) == 0 {
+		return AccountCandidate{}, false
 	}
-	var filtered []AccountCandidate
-	hint := strings.ToLower(strings.TrimSpace(k.sourceKey))
-	suggested := strings.ToLower(strings.TrimSpace(suggestedName))
-	for _, c := range base {
-		name := strings.ToLower(c.Name)
-		if strings.Contains(name, hint) || (suggested != "" && name == suggested) {
-			filtered = append(filtered, c)
-		}
+	if len(candidates) == 1 {
+		return candidates[0], true
 	}
-	return filtered
+	top := candidates[0]
+	if top.DuplicateCount == 0 {
+		return AccountCandidate{}, false
+	}
+	if top.DuplicateCount >= 10 {
+		return top, true
+	}
+	if incoming > 0 && top.DuplicateCount*100 >= incoming*40 {
+		return top, true
+	}
+	return AccountCandidate{}, false
 }
 
 func (s *Service) loadImportAccountMatches(ctx context.Context, tenantID uuid.UUID) ([]importAccountMatch, error) {

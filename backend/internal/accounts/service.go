@@ -426,3 +426,19 @@ func (s *Service) Update(ctx context.Context, tenantID, accountID uuid.UUID, raw
 	}
 	return s.Get(ctx, tenantID, accountID)
 }
+
+// Delete hard-deletes an account. Cascades drop all transactions, source
+// refs, balance snapshots, reconciliation checkpoints, allocations, etc.
+// via the FK chain. Use Update(Archived=true) for soft removal that keeps
+// historical data; this is the path for genuine "remove this entirely"
+// (e.g. cleaning up a buggy import).
+func (s *Service) Delete(ctx context.Context, tenantID, accountID uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx, `delete from accounts where tenant_id = $1 and id = $2`, tenantID, accountID)
+	if err != nil {
+		return fmt.Errorf("delete account: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return httpx.NewNotFoundError("account")
+	}
+	return nil
+}

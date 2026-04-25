@@ -29,6 +29,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/", h.create)
 	r.Get("/{accountId}", h.get)
 	r.Patch("/{accountId}", h.update)
+	r.Delete("/{accountId}", h.delete)
 }
 
 type createReq struct {
@@ -162,4 +163,18 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, acc)
+}
+
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
+	tenantID := auth.MustTenant(r).ID
+	id, err := uuid.Parse(chi.URLParam(r, "accountId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "accountId must be a UUID")
+		return
+	}
+	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

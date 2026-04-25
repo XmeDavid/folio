@@ -295,6 +295,36 @@ func TestParsedForGroupFiltersByAccountHint(t *testing.T) {
 	}
 }
 
+func TestBestImportCandidate(t *testing.T) {
+	mk := func(name string, dup int) AccountCandidate {
+		return AccountCandidate{Name: name, DuplicateCount: dup}
+	}
+	cases := []struct {
+		name      string
+		cands     []AccountCandidate
+		incoming  int
+		wantMatch bool
+		wantName  string
+	}{
+		{"none", nil, 100, false, ""},
+		{"single candidate, always pick", []AccountCandidate{mk("Solo", 0)}, 100, true, "Solo"},
+		{"two with zero overlap, no auto-pick", []AccountCandidate{mk("A", 0), mk("B", 0)}, 100, false, ""},
+		{"clear winner via absolute threshold", []AccountCandidate{mk("Bigger", 50), mk("Smaller", 5)}, 100, true, "Bigger"},
+		{"40% threshold, picks even with low absolute", []AccountCandidate{mk("Best", 4), mk("None", 0)}, 5, true, "Best"},
+		{"below both thresholds, no auto-pick", []AccountCandidate{mk("Maybe", 3), mk("Other", 0)}, 1000, false, ""},
+	}
+	for _, c := range cases {
+		// candidates input is expected to already be sorted; do it here for clarity.
+		got, ok := bestImportCandidate(c.cands, c.incoming)
+		if ok != c.wantMatch {
+			t.Errorf("%s: ok = %v, want %v", c.name, ok, c.wantMatch)
+		}
+		if c.wantMatch && got.Name != c.wantName {
+			t.Errorf("%s: name = %q, want %q", c.name, got.Name, c.wantName)
+		}
+	}
+}
+
 func TestSuggestedNameForGroup(t *testing.T) {
 	cases := []struct {
 		institution string

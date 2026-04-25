@@ -2,8 +2,8 @@
 
 import * as React from "react";
 import { use } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { FileUp, Plus } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, FileUp, Pencil, Plus, Trash2, X } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
 import { EmptyState, ErrorBanner, LoadingText } from "@/components/app/empty";
 import { Button } from "@/components/ui/button";
@@ -14,8 +14,10 @@ import { CreateAccountForm } from "@/components/accounts/create-account-form";
 import {
   ApiError,
   applyAccountImportPlan,
+  deleteAccount,
   fetchAccounts,
   previewAccountImport,
+  updateAccount,
   type Account,
   type AccountKind,
   type ImportCurrencyGroup,
@@ -111,7 +113,11 @@ export default function AccountsPage({
       {accountsQuery.isLoading ? (
         <LoadingText />
       ) : accountsQuery.data && accountsQuery.data.length > 0 ? (
-        <AccountList accounts={accountsQuery.data} locale={locale} />
+        <AccountList
+          accounts={accountsQuery.data}
+          locale={locale}
+          tenantId={tenant.id}
+        />
       ) : (
         <EmptyState
           title="No accounts yet"
@@ -479,50 +485,240 @@ function isImportPlanReady(group: ImportCurrencyGroup, plan?: ImportPlanGroup) {
 function AccountList({
   accounts,
   locale,
+  tenantId,
 }: {
   accounts: Account[];
   locale?: string;
+  tenantId: string;
 }) {
   return (
     <Card className="overflow-hidden">
       <ul className="divide-y divide-border">
         {accounts.map((a) => (
-          <li
+          <AccountRow
             key={a.id}
-            className="flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-surface-subtle sm:flex-row sm:items-center sm:justify-between"
-          >
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[15px] font-medium text-fg">
-                  {a.name}
-                </span>
-                {a.nickname ? (
-                  <span className="text-[12px] text-fg-faint">
-                    ({a.nickname})
-                  </span>
-                ) : null}
-                <Badge variant="neutral">{accountKindLabel(a.kind)}</Badge>
-                {a.archivedAt ? <Badge variant="amber">Archived</Badge> : null}
-              </div>
-              <div className="text-[12px] text-fg-muted">
-                {a.currency}
-                {a.institution ? `  -  ${a.institution}` : ""} - opened{" "}
-                {formatDate(a.openDate, locale)}
-              </div>
-            </div>
-            <div className="flex flex-col items-end">
-              <span className="tabular text-[15px] font-medium text-fg">
-                {formatAmount(a.balance, a.currency, locale)}
-              </span>
-              <span className="text-[11px] text-fg-faint">
-                {a.balanceAsOf
-                  ? `as of ${formatDate(a.balanceAsOf, locale)}`
-                  : "no snapshot yet"}
-              </span>
-            </div>
-          </li>
+            account={a}
+            locale={locale}
+            tenantId={tenantId}
+          />
         ))}
       </ul>
     </Card>
+  );
+}
+
+function AccountRow({
+  account,
+  locale,
+  tenantId,
+}: {
+  account: Account;
+  locale?: string;
+  tenantId: string;
+}) {
+  const queryClient = useQueryClient();
+  const [mode, setMode] = React.useState<"view" | "edit" | "confirm-delete">("view");
+  const [draftName, setDraftName] = React.useState(account.name);
+
+  const renameMutation = useMutation({
+    mutationFn: (name: string) =>
+      updateAccount(tenantId, account.id, { name }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["accounts", tenantId] });
+      setMode("view");
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteAccount(tenantId, account.id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["accounts", tenantId] });
+    },
+  });
+
+  const busy = renameMutation.isPending || deleteMutation.isPending;
+
+  return (
+    <li className="flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-surface-subtle sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <div className="flex flex-wrap items-center gap-2">
+          {mode === "edit" ? (
+            <Input
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && draftName.trim()) {
+                  renameMutation.mutate(draftName.trim());
+                } else if (e.key === "Escape") {
+                  setDraftName(account.name);
+                  setMode("view");
+                }
+              }}
+              autoFocus
+              className="h-8 max-w-[280px]"
+            />
+          ) : (
+            <span className="text-[15px] font-medium text-fg">
+              {account.name}
+            </span>
+          )}
+          {account.nickname && mode === "view" ? (
+            <span className="text-[12px] text-fg-faint">
+              ({account.nickname})
+            </span>
+          ) : null}
+          <Badge variant="neutral">{accountKindLabel(account.kind)}</Badge>
+          {account.archivedAt ? <Badge variant="amber">Archived</Badge> : null}
+        </div>
+        <div className="text-[12px] text-fg-muted">
+          {account.currency}
+          {account.institution ? `  -  ${account.institution}` : ""} - opened{" "}
+          {formatDate(account.openDate, locale)}
+        </div>
+        {renameMutation.error instanceof ApiError ? (
+          <p className="text-[11px] text-danger">
+            {renameMutation.error.body?.error || renameMutation.error.message}
+          </p>
+        ) : null}
+        {deleteMutation.error instanceof ApiError ? (
+          <p className="text-[11px] text-danger">
+            {deleteMutation.error.body?.error || deleteMutation.error.message}
+          </p>
+        ) : null}
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="flex flex-col items-end">
+          <span className="tabular text-[15px] font-medium text-fg">
+            {formatAmount(account.balance, account.currency, locale)}
+          </span>
+          <span className="text-[11px] text-fg-faint">
+            {account.balanceAsOf
+              ? `as of ${formatDate(account.balanceAsOf, locale)}`
+              : "no snapshot yet"}
+          </span>
+        </div>
+        <AccountRowActions
+          mode={mode}
+          busy={busy}
+          onEdit={() => {
+            setDraftName(account.name);
+            setMode("edit");
+          }}
+          onSaveEdit={() => {
+            const trimmed = draftName.trim();
+            if (trimmed && trimmed !== account.name) {
+              renameMutation.mutate(trimmed);
+            } else {
+              setMode("view");
+            }
+          }}
+          onCancelEdit={() => {
+            setDraftName(account.name);
+            setMode("view");
+          }}
+          onAskDelete={() => setMode("confirm-delete")}
+          onConfirmDelete={() => deleteMutation.mutate()}
+          onCancelDelete={() => setMode("view")}
+        />
+      </div>
+    </li>
+  );
+}
+
+function AccountRowActions({
+  mode,
+  busy,
+  onEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onAskDelete,
+  onConfirmDelete,
+  onCancelDelete,
+}: {
+  mode: "view" | "edit" | "confirm-delete";
+  busy: boolean;
+  onEdit: () => void;
+  onSaveEdit: () => void;
+  onCancelEdit: () => void;
+  onAskDelete: () => void;
+  onConfirmDelete: () => void;
+  onCancelDelete: () => void;
+}) {
+  if (mode === "edit") {
+    return (
+      <div className="flex items-center gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onSaveEdit}
+          disabled={busy}
+          aria-label="Save name"
+        >
+          <Check className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onCancelEdit}
+          disabled={busy}
+          aria-label="Cancel rename"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+    );
+  }
+  if (mode === "confirm-delete") {
+    return (
+      <div className="flex flex-col items-end gap-1">
+        <p className="text-[11px] text-danger">
+          Delete account and all its transactions?
+        </p>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="danger"
+            size="sm"
+            onClick={onConfirmDelete}
+            disabled={busy}
+          >
+            {busy ? "Deleting..." : "Delete"}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onCancelDelete}
+            disabled={busy}
+          >
+            Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={onEdit}
+        aria-label="Rename account"
+      >
+        <Pencil className="h-4 w-4" />
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={onAskDelete}
+        aria-label="Delete account"
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </div>
   );
 }

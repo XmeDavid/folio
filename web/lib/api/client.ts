@@ -334,6 +334,36 @@ export async function createAccount(
   });
 }
 
+export type AccountPatchInput = {
+  name?: string;
+  nickname?: string | null;
+  institution?: string | null;
+  includeInNetworth?: boolean;
+  includeInSavingsRate?: boolean;
+  closeDate?: string | null;
+  archived?: boolean;
+};
+
+export async function updateAccount(
+  tenantId: string,
+  accountId: string,
+  body: AccountPatchInput,
+): Promise<Account> {
+  return request<Account>(`/api/v1/t/${tenantId}/accounts/${accountId}`, {
+    method: "PATCH",
+    json: body,
+  });
+}
+
+export async function deleteAccount(
+  tenantId: string,
+  accountId: string,
+): Promise<void> {
+  return request<void>(`/api/v1/t/${tenantId}/accounts/${accountId}`, {
+    method: "DELETE",
+  });
+}
+
 export type ImportPreviewRow = {
   bookedAt: string;
   amount: string;
