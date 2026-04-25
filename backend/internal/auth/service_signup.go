@@ -262,19 +262,17 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 // enforceRegistrationModeTx runs inside the signup transaction so the
 // first-run "is this the first user?" check sees a consistent snapshot,
 // guarded by an advisory lock that serialises concurrent first-run signups.
-// invite_only requires a non-empty token; the token's *validity* is verified
-// later in the same transaction.
+// invite_only allows the first-ever user to bootstrap the instance; after
+// that it requires a non-empty token. Token validity is verified later in the
+// same transaction.
 func (s *Service) enforceRegistrationModeTx(ctx context.Context, tx pgx.Tx, inviteToken string) error {
 	switch s.cfg.Registration {
 	case RegistrationOpen:
 		return nil
 	case RegistrationFirstRunOnly:
-		if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock($1)`, firstRunSignupLockKey); err != nil {
-			return fmt.Errorf("first-run lock: %w", err)
-		}
-		var exists bool
-		if err := tx.QueryRow(ctx, `select exists(select 1 from users)`).Scan(&exists); err != nil {
-			return fmt.Errorf("first-run check: %w", err)
+		exists, err := s.userExistsForRegistrationTx(ctx, tx)
+		if err != nil {
+			return err
 		}
 		if exists {
 			return httpx.NewValidationError("registration is closed on this instance")
@@ -282,12 +280,29 @@ func (s *Service) enforceRegistrationModeTx(ctx context.Context, tx pgx.Tx, invi
 		return nil
 	case RegistrationInviteOnly:
 		if strings.TrimSpace(inviteToken) == "" {
-			return httpx.NewValidationError("invite-only mode: signup requires an invite token")
+			exists, err := s.userExistsForRegistrationTx(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if exists {
+				return httpx.NewValidationError("invite-only mode: signup requires an invite token")
+			}
 		}
 		return nil
 	default:
 		return errors.New("unknown registration mode")
 	}
+}
+
+func (s *Service) userExistsForRegistrationTx(ctx context.Context, tx pgx.Tx) (bool, error) {
+	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock($1)`, firstRunSignupLockKey); err != nil {
+		return false, fmt.Errorf("first-run lock: %w", err)
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `select exists(select 1 from users)`).Scan(&exists); err != nil {
+		return false, fmt.Errorf("first-run check: %w", err)
+	}
+	return exists, nil
 }
 
 func isUsersEmailKey(err error) bool {

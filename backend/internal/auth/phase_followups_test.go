@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/identity"
 	"github.com/xmedavid/folio/backend/internal/testdb"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
@@ -213,5 +214,62 @@ func TestSignup_AdminBootstrapGranted_FirstResponseHasIsAdmin(t *testing.T) {
 	}
 	if !res.User.IsAdmin {
 		t.Fatalf("result.User.IsAdmin = false, want true (first response should reflect in-tx grant)")
+	}
+}
+
+func TestSignup_InviteOnlyAllowsFirstUserWithoutInvite(t *testing.T) {
+	pool := testdb.Open(t)
+	email := "first-invite-only+" + uuid.New().String() + "@example.com"
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = pool.Exec(ctx, `delete from tenant_memberships where user_id in (select id from users where email = $1)`, email)
+		_, _ = pool.Exec(ctx,
+			`delete from tenants where id in (select last_tenant_id from users where email = $1)`, email)
+		_, _ = pool.Exec(ctx, `delete from users where email = $1`, email)
+	})
+	svc := NewService(pool, identity.NewService(pool), Config{
+		Registration:  RegistrationInviteOnly,
+		SecureCookies: false,
+	})
+
+	res, err := svc.Signup(context.Background(), SignupInput{
+		Email: email, Password: "correct horse battery staple", DisplayName: "First",
+		BaseCurrency: "USD", Locale: "en-US",
+	})
+	if err != nil {
+		t.Fatalf("Signup err = %v", err)
+	}
+	if res.User.Email != email {
+		t.Fatalf("res.User.Email = %q, want %q", res.User.Email, email)
+	}
+}
+
+func TestSignup_InviteOnlyRequiresInviteAfterFirstUser(t *testing.T) {
+	pool := testdb.Open(t)
+	email := "blocked-invite-only+" + uuid.New().String() + "@example.com"
+	existingEmail := "existing-invite-only+" + uuid.New().String() + "@example.com"
+	testdb.CreateTestUser(t, pool, existingEmail, true)
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = pool.Exec(ctx, `delete from users where email in ($1, $2)`, email, existingEmail)
+	})
+	svc := NewService(pool, identity.NewService(pool), Config{
+		Registration:  RegistrationInviteOnly,
+		SecureCookies: false,
+	})
+
+	_, err := svc.Signup(context.Background(), SignupInput{
+		Email: email, Password: "correct horse battery staple", DisplayName: "Blocked",
+		BaseCurrency: "USD", Locale: "en-US",
+	})
+	if err == nil {
+		t.Fatalf("Signup err = nil, want invite-only validation error")
+	}
+	var verr *httpx.ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("Signup err = %T %v, want ValidationError", err, err)
+	}
+	if verr.Msg != "invite-only mode: signup requires an invite token" {
+		t.Fatalf("validation message = %q", verr.Msg)
 	}
 }

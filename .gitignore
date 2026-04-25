@@ -51,9 +51,9 @@ logs/
 # Deploy
 deploy/local/
 
-# Legacy (ignored per user instruction — kept on disk, outside git)
 legacy/
 
+.pnpm-store
 **.claude
 **.codex
 **.omc
