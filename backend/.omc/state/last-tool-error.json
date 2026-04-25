@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"(go build ./... && go vet ./...) && git add backend/internal/identity/service.go backend/internal/identity/types.go backend/internal/identity/members_test.go backend/internal/identity/tena...",
-  "error": "Exit code 128\nwarning: could not open directory 'backend/backend/internal/': No such file or directory\nfatal: pathspec 'backend/internal/identity/service.go' did not match any files",
-  "timestamp": "2026-04-24T20:16:00.944Z",
-  "retry_count": 1
-}

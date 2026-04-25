@@ -28,6 +28,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Validate Atlas migration checksums
+        uses: ariga/setup-atlas@v0
+
+      - name: Check migration directory integrity
+        working-directory: backend
+        run: atlas migrate validate --env local
+
       - name: Set image owner
         id: image-owner
         run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"

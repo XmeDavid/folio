@@ -53,3 +53,9 @@ deploy/local/
 
 # Legacy (ignored per user instruction — kept on disk, outside git)
 legacy/
+
+**.claude
+**.codex
+**.omc
+CLAUDE.md
+.tmux
