@@ -19,6 +19,10 @@ import (
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
+// firstRunSignupLockKey serialises concurrent first-run signups. Picked once
+// from /dev/urandom; the only contract is "stable across processes".
+const firstRunSignupLockKey int64 = 0x46_4F_4C_49_4F_5F_46_52 // "FOLIO_FR"
+
 // SignupInput is the validated input to Signup.
 type SignupInput struct {
 	Email          string
@@ -96,10 +100,7 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 	if err != nil {
 		return nil, err
 	}
-	if err := s.enforceRegistrationMode(ctx); err != nil {
-		return nil, err
-	}
-	hash, err := HashPassword(in.Password)
+	hash, err := HashPassword(in.Password, s.cfg.SecretKey)
 	if err != nil {
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
@@ -109,6 +110,10 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 		return nil, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := s.enforceRegistrationModeTx(ctx, tx, in.InviteToken); err != nil {
+		return nil, err
+	}
 
 	userID := uuidx.New()
 	var user identity.User
@@ -254,13 +259,21 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 	return &SignupResult{User: user, Tenant: tenant, Membership: membership, SessionToken: plaintext}, nil
 }
 
-func (s *Service) enforceRegistrationMode(ctx context.Context) error {
+// enforceRegistrationModeTx runs inside the signup transaction so the
+// first-run "is this the first user?" check sees a consistent snapshot,
+// guarded by an advisory lock that serialises concurrent first-run signups.
+// invite_only requires a non-empty token; the token's *validity* is verified
+// later in the same transaction.
+func (s *Service) enforceRegistrationModeTx(ctx context.Context, tx pgx.Tx, inviteToken string) error {
 	switch s.cfg.Registration {
 	case RegistrationOpen:
 		return nil
 	case RegistrationFirstRunOnly:
+		if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock($1)`, firstRunSignupLockKey); err != nil {
+			return fmt.Errorf("first-run lock: %w", err)
+		}
 		var exists bool
-		if err := s.pool.QueryRow(ctx, `select exists(select 1 from users)`).Scan(&exists); err != nil {
+		if err := tx.QueryRow(ctx, `select exists(select 1 from users)`).Scan(&exists); err != nil {
 			return fmt.Errorf("first-run check: %w", err)
 		}
 		if exists {
@@ -268,8 +281,10 @@ func (s *Service) enforceRegistrationMode(ctx context.Context) error {
 		}
 		return nil
 	case RegistrationInviteOnly:
-		// Plan 2 wires inviteToken consumption; for plan 1, reject.
-		return httpx.NewValidationError("invite-only mode: signup requires an invite token")
+		if strings.TrimSpace(inviteToken) == "" {
+			return httpx.NewValidationError("invite-only mode: signup requires an invite token")
+		}
+		return nil
 	default:
 		return errors.New("unknown registration mode")
 	}

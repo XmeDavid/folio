@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -16,6 +17,11 @@ import (
 
 	"github.com/xmedavid/folio/backend/internal/identity"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
+)
+
+const (
+	totpPeriodSeconds int64 = 30
+	totpSkewSteps     int64 = 1
 )
 
 type TOTPSetup struct {
@@ -35,6 +41,7 @@ var (
 	ErrTOTPAlreadyEnrolled = errors.New("totp already enrolled")
 	ErrTOTPNotEnrolled     = errors.New("totp not enrolled")
 	ErrTOTPInvalidCode     = errors.New("invalid totp code")
+	ErrTOTPReplay          = errors.New("totp code already used")
 	ErrMFARequired         = errors.New("mfa required")
 )
 
@@ -156,19 +163,55 @@ func (s *Service) verifyTOTPCodeWithEnrollment(ctx context.Context, userID uuid.
 	if err != nil {
 		return err
 	}
-	ok, err := totp.ValidateCustom(strings.TrimSpace(code), secret, s.now().UTC(), totp.ValidateOpts{
-		Period:    30,
-		Skew:      1,
-		Digits:    otp.DigitsSix,
-		Algorithm: otp.AlgorithmSHA1,
-	})
+	step, ok, err := matchTOTPStep(secret, code, s.now().UTC())
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return ErrTOTPInvalidCode
 	}
+	// Replay guard: only accept this code if its time-step is strictly
+	// greater than the last consumed step. The conditional UPDATE makes the
+	// check + commit atomic — concurrent callers cannot both win.
+	ct, err := s.pool.Exec(ctx, `
+		update totp_credentials
+		set last_used_step = $2
+		where user_id = $1 and (last_used_step is null or last_used_step < $2)
+	`, userID, step)
+	if err != nil {
+		return fmt.Errorf("totp step bump: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrTOTPReplay
+	}
 	return nil
+}
+
+// matchTOTPStep validates code against secret and returns the matching
+// time-step (Unix-seconds / period). Tries every step in [-skew, +skew] so
+// callers know exactly which window matched and can record it.
+func matchTOTPStep(secret, code string, now time.Time) (int64, bool, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return 0, false, nil
+	}
+	opts := totp.ValidateOpts{
+		Period:    uint(totpPeriodSeconds),
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
+	}
+	nowStep := now.Unix() / totpPeriodSeconds
+	for offset := -totpSkewSteps; offset <= totpSkewSteps; offset++ {
+		step := nowStep + offset
+		expected, err := totp.GenerateCodeCustom(secret, time.Unix(step*totpPeriodSeconds, 0), opts)
+		if err != nil {
+			return 0, false, err
+		}
+		if subtle.ConstantTimeCompare([]byte(expected), []byte(code)) == 1 {
+			return step, true, nil
+		}
+	}
+	return 0, false, nil
 }
 
 func (s *Service) loadTOTPSecret(ctx context.Context, userID uuid.UUID, requireVerified bool) (string, error) {

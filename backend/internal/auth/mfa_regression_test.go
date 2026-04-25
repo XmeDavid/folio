@@ -41,7 +41,7 @@ func testMFAService(t *testing.T) (*Service, context.Context) {
 
 func insertMFAUser(t *testing.T, svc *Service, ctx context.Context, password string) uuid.UUID {
 	t.Helper()
-	hash, err := HashPassword(password)
+	hash, err := HashPassword(password, svc.cfg.SecretKey)
 	if err != nil {
 		t.Fatalf("hash password: %v", err)
 	}

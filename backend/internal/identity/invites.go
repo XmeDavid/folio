@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
@@ -82,21 +83,6 @@ func (s *InviteService) Create(
 		return nil, "", httpx.NewValidationError("role must be 'owner' or 'member'")
 	}
 
-	var pendingExists bool
-	if err := s.pool.QueryRow(ctx, `
-		select exists(
-			select 1 from tenant_invites
-			where tenant_id = $1 and email = $2
-			  and accepted_at is null and revoked_at is null
-			  and expires_at > now()
-		)
-	`, tenantID, email).Scan(&pendingExists); err != nil {
-		return nil, "", fmt.Errorf("check pending: %w", err)
-	}
-	if pendingExists {
-		return nil, "", httpx.NewValidationError("a pending invite already exists for this email")
-	}
-
 	plaintext, err := generateInviteToken()
 	if err != nil {
 		return nil, "", fmt.Errorf("rand: %w", err)
@@ -104,6 +90,9 @@ func (s *InviteService) Create(
 	id := uuidx.New()
 	expiresAt := s.now().Add(InviteLifetime)
 
+	// The partial unique index `tenant_invites_pending_email_unique` makes
+	// the duplicate-check authoritative: two concurrent Create calls for the
+	// same (tenant_id, email) pair can no longer both succeed.
 	var inv Invite
 	var roleText string
 	err = s.pool.QueryRow(ctx, `
@@ -117,10 +106,24 @@ func (s *InviteService) Create(
 		&inv.CreatedAt, &inv.ExpiresAt,
 	)
 	if err != nil {
+		if isPendingInviteUnique(err) {
+			return nil, "", httpx.NewValidationError("a pending invite already exists for this email")
+		}
 		return nil, "", fmt.Errorf("insert invite: %w", err)
 	}
 	inv.Role = Role(roleText)
 	return &inv, plaintext, nil
+}
+
+// isPendingInviteUnique reports whether err is a 23505 unique violation on
+// the `tenant_invites_pending_email_unique` partial index added in
+// 20260424000016_auth_hardening.sql.
+func isPendingInviteUnique(err error) bool {
+	var pe *pgconn.PgError
+	if !errors.As(err, &pe) {
+		return false
+	}
+	return pe.Code == "23505" && pe.ConstraintName == "tenant_invites_pending_email_unique"
 }
 
 // Preview is a no-auth endpoint. Returns tenant name, inviter display name,

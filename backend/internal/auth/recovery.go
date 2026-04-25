@@ -2,8 +2,12 @@ package auth
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base32"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"time"
@@ -16,7 +20,13 @@ import (
 
 var ErrRecoveryCodeInvalid = errors.New("recovery code invalid")
 
-const recoveryCodeCount = 10
+const (
+	recoveryCodeCount = 10
+	// hmacRecoveryPrefix marks rows hashed via HMAC-SHA256(pepper, code).
+	// Older rows lacked the prefix and were Argon2id-hashed; consumeRecoveryCode
+	// falls back to VerifyPassword for that legacy format.
+	hmacRecoveryPrefix = "hmac:"
+)
 
 func generateRecoveryCode() (string, error) {
 	buf := make([]byte, 10)
@@ -32,6 +42,16 @@ func normalizeRecoveryCode(s string) string {
 	return strings.ToUpper(strings.NewReplacer("-", "", " ", "").Replace(s))
 }
 
+// hashRecoveryCode hashes a recovery code with the configured pepper. We use
+// a plain HMAC instead of Argon2id because recovery codes are 50 bits of
+// random entropy — there's nothing to "stretch", and Argon2id was burning
+// hundreds of milliseconds of CPU per check.
+func hashRecoveryCode(code string, pepper []byte) string {
+	mac := hmac.New(sha256.New, pepper)
+	mac.Write([]byte(normalizeRecoveryCode(code)))
+	return hmacRecoveryPrefix + base64.RawStdEncoding.EncodeToString(mac.Sum(nil))
+}
+
 func (s *Service) generateAndStoreRecoveryCodes(ctx context.Context, tx pgx.Tx, userID uuid.UUID, now time.Time) ([]string, error) {
 	if _, err := tx.Exec(ctx, `delete from auth_recovery_codes where user_id = $1`, userID); err != nil {
 		return nil, err
@@ -42,10 +62,7 @@ func (s *Service) generateAndStoreRecoveryCodes(ctx context.Context, tx pgx.Tx, 
 		if err != nil {
 			return nil, err
 		}
-		hash, err := HashPassword(normalizeRecoveryCode(code))
-		if err != nil {
-			return nil, err
-		}
+		hash := hashRecoveryCode(code, s.cfg.SecretKey)
 		if _, err := tx.Exec(ctx, `
 			insert into auth_recovery_codes (id, user_id, code_hash, created_at)
 			values ($1, $2, $3, $4)
@@ -69,6 +86,7 @@ func (s *Service) consumeRecoveryCode(ctx context.Context, tx pgx.Tx, userID uui
 	defer rows.Close()
 
 	normalized := normalizeRecoveryCode(code)
+	hmacCandidate := hashRecoveryCode(code, s.cfg.SecretKey)
 	var matchID *uuid.UUID
 	for rows.Next() {
 		var id uuid.UUID
@@ -76,7 +94,16 @@ func (s *Service) consumeRecoveryCode(ctx context.Context, tx pgx.Tx, userID uui
 		if err := rows.Scan(&id, &hash); err != nil {
 			return err
 		}
-		ok, _ := VerifyPassword(normalized, hash)
+		if strings.HasPrefix(hash, hmacRecoveryPrefix) {
+			if subtle.ConstantTimeCompare([]byte(hash), []byte(hmacCandidate)) == 1 {
+				matchID = &id
+				break
+			}
+			continue
+		}
+		// Legacy Argon2id-hashed row — keep verifying so codes stored before
+		// the HMAC switch still work until the user regenerates.
+		ok, _ := VerifyPassword(normalized, hash, s.cfg.SecretKey)
 		if ok {
 			matchID = &id
 			break

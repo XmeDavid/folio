@@ -149,7 +149,7 @@ func (s *Service) ResetPassword(ctx context.Context, plaintext, newPassword stri
 	if err := CheckPasswordPolicy(newPassword, email, displayName); err != nil {
 		return err
 	}
-	hash, err := HashPassword(newPassword)
+	hash, err := HashPassword(newPassword, s.cfg.SecretKey)
 	if err != nil {
 		return err
 	}
@@ -158,6 +158,11 @@ func (s *Service) ResetPassword(ctx context.Context, plaintext, newPassword stri
 			return err
 		}
 		if _, err := tx.Exec(ctx, `delete from sessions where user_id = $1`, userID); err != nil {
+			return err
+		}
+		// Kill pending MFA challenges too — otherwise an attacker who phished
+		// the reset link could complete a challenge created before the reset.
+		if _, err := tx.Exec(ctx, `update auth_mfa_challenges set consumed_at = now() where user_id = $1 and consumed_at is null`, userID); err != nil {
 			return err
 		}
 		return writeAuditTx(ctx, tx, nil, &userID, "user.password_reset_completed", "user", userID, nil, nil, nil, "")

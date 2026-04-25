@@ -25,7 +25,7 @@ type tokenReq struct {
 
 func (h *Handler) verifyEmail(w http.ResponseWriter, r *http.Request) {
 	var body tokenReq
-	if err := decodeJSON(r, &body); err != nil {
+	if err := decodeJSON(w, r, &body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
 		return
 	}
@@ -42,7 +42,7 @@ type resetRequestReq struct {
 
 func (h *Handler) requestPasswordReset(w http.ResponseWriter, r *http.Request) {
 	var body resetRequestReq
-	if err := decodeJSON(r, &body); err != nil {
+	if err := decodeJSON(w, r, &body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
 		return
 	}
@@ -65,7 +65,7 @@ type confirmResetReq struct {
 
 func (h *Handler) confirmPasswordReset(w http.ResponseWriter, r *http.Request) {
 	var body confirmResetReq
-	if err := decodeJSON(r, &body); err != nil {
+	if err := decodeJSON(w, r, &body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
 		return
 	}
@@ -96,7 +96,7 @@ type emailChangeReq struct {
 func (h *Handler) requestEmailChange(w http.ResponseWriter, r *http.Request) {
 	user := MustUser(r)
 	var body emailChangeReq
-	if err := decodeJSON(r, &body); err != nil {
+	if err := decodeJSON(w, r, &body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
 		return
 	}
@@ -113,7 +113,7 @@ func (h *Handler) requestEmailChange(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) confirmEmailChange(w http.ResponseWriter, r *http.Request) {
 	var body tokenReq
-	if err := decodeJSON(r, &body); err != nil {
+	if err := decodeJSON(w, r, &body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
 		return
 	}
@@ -124,7 +124,8 @@ func (h *Handler) confirmEmailChange(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func decodeJSON(r *http.Request, dst any) error {
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	return json.NewDecoder(r.Body).Decode(dst)
 }
 

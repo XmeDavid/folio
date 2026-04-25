@@ -71,23 +71,32 @@ func (h *Handler) regenerateRecoveryCodes(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) beginPasskeyEnrollment(w http.ResponseWriter, r *http.Request) {
 	user := MustUser(r)
-	options, session, err := h.svc.BeginPasskeyEnrollment(r.Context(), user.ID)
+	options, challengeID, err := h.svc.BeginPasskeyEnrollment(r.Context(), user.ID,
+		parseIPForStorage(ipFromRequest(r)), r.UserAgent())
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"options": options, "session": session})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"options":     options,
+		"challengeId": challengeID.String(),
+	})
 }
 
 func (h *Handler) completePasskeyEnrollment(w http.ResponseWriter, r *http.Request) {
 	user := MustUser(r)
 	var body struct {
-		Session    string          `json:"session"`
-		Label      string          `json:"label"`
-		Credential json.RawMessage `json:"credential"`
+		ChallengeID string          `json:"challengeId"`
+		Label       string          `json:"label"`
+		Credential  json.RawMessage `json:"credential"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
+		return
+	}
+	challengeID, err := uuid.Parse(body.ChallengeID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_challenge", "invalid challenge")
 		return
 	}
 	if len(body.Credential) == 0 {
@@ -97,7 +106,8 @@ func (h *Handler) completePasskeyEnrollment(w http.ResponseWriter, r *http.Reque
 	r.Body = io.NopCloser(bytes.NewReader(body.Credential))
 	r.ContentLength = int64(len(body.Credential))
 	r.Header.Set("Content-Type", "application/json")
-	if err := h.svc.FinishPasskeyEnrollment(r.Context(), user.ID, body.Session, body.Label, r); err != nil {
+	if err := h.svc.FinishPasskeyEnrollment(r.Context(), user.ID, challengeID,
+		parseIPForStorage(ipFromRequest(r)), r.UserAgent(), body.Label, r); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}

@@ -1,7 +1,7 @@
 # Folio — Feature Specification
 
 **Status:** Living reference document
-**Last updated:** 2026-04-24
+**Last updated:** 2026-04-25
 **Audience:** Future-you, contributors, planning sessions
 
 This document captures **everything Folio intends to be**. It is domain-organised and **does not prioritise**. Implementation sequencing happens in a separate plan. If a feature is listed here, it is in scope for Folio — the only question is when.
@@ -10,16 +10,31 @@ This document captures **everything Folio intends to be**. It is domain-organise
 
 ## 1. Overview & principles
 
-Folio is a self-hosted personal finance & planning app. Single-user per tenant (multi-tenant at the platform level — each user is isolated, no shared data).
+Folio is a self-hosted personal finance & planning app. **Workspace-based multi-tenancy:** each tenant is a shared financial workspace (its own accounts, categories, base currency, cycle anchor) with one or more members. Users are platform-level identities that can belong to and switch between multiple workspaces. Data is isolated per workspace; sharing happens only via explicit invites.
 
 **Core principles:**
 
 - **Bank is the source of truth for what happened**; Folio is the source of truth for what you plan to happen and what things mean.
-- **Every amount carries a currency.** Base currency per user (user chooses default, eg. CHF) for reporting rollups; original currency always preserved.
+- **Every amount carries a currency.** Base currency per workspace (chosen on workspace creation, eg. CHF) for reporting rollups; original currency always preserved.
 - **No float math.** Decimal everywhere.
-- **User owns the data.** Full export, full delete, offline-capable PWA.
+- **Users own their data.** Full export, full delete, offline-capable PWA. Export and delete operate at workspace scope (per workspace) and at account scope (a user account, with all the workspaces it solely owns).
 - **Accrual on expenses, cash-aware on cashflow planning.** CC swipes count as expense when they post; paying the CC bill is a scheduled transfer, not a new expense.
 - **Backfill and historical corrections are first-class.** Users don't start using a finance app on day one of their financial lives. Starting points, checkpoints, and retroactive edits are expected.
+
+### Workspaces & membership
+
+A **workspace** (`tenant` in the schema) is the financial container. All accounts, transactions, categories, budgets, goals, trips, etc. scope to a single workspace.
+
+- **Workspace fields:** name, slug, base currency, cycle anchor day, locale, timezone.
+- **Roles:** `owner` and `member`. Owners manage workspace settings, invite/remove members, and change roles. Members read/write financial data and can self-leave. No per-resource ACLs in v1.
+- **Users vs. workspaces:** a user account is platform-level (email, password, MFA, passkeys). One user can belong to many workspaces; one workspace can have many users. `last_tenant_id` drives the default workspace on login; the UI surfaces a workspace switcher.
+- **Invites.** An owner invites by email with a target role; the invitee receives a tokenized email link. To accept, the invitee must be authenticated with a verified email matching the invite. Acceptance creates the membership row. Invites expire; the original inviter or any owner can revoke.
+- **Cold signup vs. join.** Signing up cold creates a fresh workspace with the new user as `owner`. Joining an existing workspace is always invite-mediated; there is no "search & request to join" flow.
+- **Invariants.**
+  - **Last owner:** a workspace must always have ≥1 owner. The final owner cannot be removed or demoted.
+  - **Last workspace:** a user must always have ≥1 workspace. Leaving your last workspace is blocked; create another first.
+- **Platform admin console.** Separate from workspace-level administration. The self-host operator sees a tenant list with member counts, last activity, and deletion state. Workspace owners cannot reach the platform admin surface.
+- **Audit log scope.** Audit entries belong to a workspace and capture the acting user, so multi-member edits are attributable.
 
 ---
 
@@ -206,8 +221,8 @@ Transfers between the user's own accounts are **not a separate data type**; they
 
 ### Payment cycles
 
-- User-defined cycle anchor (typically salary date, e.g. "25th of each month").
-- Cycle = one planning unit. Most users = monthly; biweekly / custom supported.
+- Workspace-defined cycle anchor (typically the primary earner's salary date, e.g. "25th of each month"). Lives on the workspace, so all members share the same cycle.
+- Cycle = one planning unit. Most workspaces = monthly; biweekly / custom supported.
 - Stats and budgets default to cycle-aligned windows; user can switch to calendar-month views.
 
 ### Planning a cycle
@@ -599,13 +614,15 @@ Beyond prebaked events, user can define custom rules:
 ## 25. Onboarding
 
 - First-run wizard walks user through:
-  - Create user profile, set base currency, set cycle anchor.
+  - Create user account (email, password, optional MFA / passkey).
+  - Create the first workspace — name, base currency, cycle anchor, locale, timezone. The creating user becomes the workspace `owner`.
   - Add first account (opening balance + start date).
   - Optionally connect bank via GoCardless / IBKR / CSV import.
   - Review suggested default categories; customise.
   - Set up first income source.
   - Add known recurring expenses.
   - Optional: create first goal.
+  - Optional: invite additional members to the workspace (owner or member).
   - Optional: enable AI features.
 - Every step skippable; wizard can be re-run later.
 - Sample data mode for exploration without real accounts.
@@ -617,20 +634,23 @@ Beyond prebaked events, user can define custom rules:
 ### User-facing
 
 - **Dark mode** (minimum). Optional accent colour. Theming infrastructure for future full themes.
-- **Localisation**: English first. Swiss locales (de-CH, fr-CH, it-CH), Portugal as well.
-- **Number / date formats** — locale-aware, default always EU.
+- **Localisation**: English first. Swiss locales (de-CH, fr-CH, it-CH), Portugal as well. Locale and timezone live on the workspace (so all members see the same formatting); UI language can additionally be overridden per user.
+- **Number / date formats** — locale-aware (workspace locale), default always EU.
 - **Keyboard shortcuts** for power users (jump to accounts, create transaction, global search).
 - **Mobile-first responsive** — PWA runs on phones; feature parity where practical.
 
 ### Data ownership & control
 
-- **Full data export** (see §21).
-- **Full data delete** — one-click wipe of the user's account + all data.
-- **Data portability** — import/export JSON bundles between Folio instances.
+- **Full data export** (see §21). Scoped per workspace; a user can also export every workspace they belong to in one bundle.
+- **Full data delete** — two flavours:
+  - **Workspace delete** — wipes a single workspace and all its financial data. Only an `owner` can trigger; soft-delete with a grace period before hard delete.
+  - **User account delete** — removes the user identity. Workspaces where the user is the sole owner are deleted with the same grace period; workspaces with other owners simply lose this membership.
+- **Data portability** — import/export JSON bundles between Folio instances at workspace granularity.
 
 ### Audit log
 
 - Every edit to transactions, budgets, goals, accounts, categories, rules is logged.
+- Entries are scoped to the workspace and capture the acting user, so multi-member edits are attributable.
 - User can browse the log per entity.
 - Read-only; no undo UI in v1 (undo is a future feature).
 
@@ -659,7 +679,7 @@ Beyond prebaked events, user can define custom rules:
 - One-click backup (pg_dump to user-configured target: local disk, S3-compatible, etc.).
 - Restore from backup.
 - Upgrade path that handles migrations.
-- Admin panel for the self-host owner (tenant list, resource usage).
+- **Platform admin console** for the self-host operator: workspace (tenant) list with member counts, last activity, deletion state; user list; resource usage. Distinct from workspace-level administration (which any owner has within their own workspace).
 
 ---
 
@@ -669,6 +689,7 @@ For easier lookup:
 
 | Concept | Lives in |
 |---|---|
+| Workspaces, members, roles, invites | §1 (Workspaces & membership); referenced from §25 (onboarding), §26 (data delete, audit log, admin console) |
 | Currency + FX | §1, §2, §4, §18 (second-currency display) |
 | Attachments | §23; referenced from §4, §7, §14, §15 |
 | AI | §22; referenced from §5 (categorisation), §24 (anomaly) |

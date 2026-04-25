@@ -12,6 +12,12 @@ import (
 // tokenBucket is a simple fixed-window limiter keyed by string (IP, email).
 // Each key gets cap takes per window; the counter resets at window end.
 // Safe for concurrent use.
+//
+// IMPORTANT: state is process-local. A multi-replica deploy multiplies the
+// effective rate budget by the replica count — a 5/min IP limit becomes
+// 5*N/min. Single-instance self-host hits the documented limits exactly;
+// multi-replica deploys must front this with a shared store (Redis, etc.)
+// or accept the looser bound.
 type tokenBucket struct {
 	mu       sync.Mutex
 	cap      int

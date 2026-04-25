@@ -73,6 +73,11 @@ func (s *Service) CompleteMFA(ctx context.Context, in CompleteMFAInput) (*Comple
 	`, sid, c.UserID, now, now.Add(s.cfg.SessionAbsolute), in.UserAgent, ipString(in.IP)); err != nil {
 		return nil, err
 	}
+	// Fix #6: invalidate any pre-existing sessions for this user. After a
+	// successful MFA-gated login, prior sessions (e.g. attacker-set) die.
+	if _, err := tx.Exec(ctx, `delete from sessions where user_id = $1 and id <> $2`, c.UserID, sid); err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(ctx, `update users set last_login_at = $1 where id = $2`, now, c.UserID); err != nil {
 		return nil, err
 	}
@@ -104,7 +109,7 @@ func (s *Service) CompleteReauth(ctx context.Context, sessionID string, userID u
 	if err := tx.QueryRow(ctx, `select password_hash from users where id = $1 for update`, userID).Scan(&hash); err != nil {
 		return err
 	}
-	ok, err := VerifyPassword(password, hash)
+	ok, err := VerifyPassword(password, hash, s.cfg.SecretKey)
 	if err != nil || !ok {
 		return ErrInvalidCredentials
 	}

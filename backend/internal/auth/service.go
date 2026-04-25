@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -85,11 +86,19 @@ func NewService(pool *pgxpool.Pool, identitySvc *identity.Service, cfg Config) *
 	if len(cfg.WebAuthnOrigins) == 0 {
 		cfg.WebAuthnOrigins = []string{"http://localhost:3000"}
 	}
-	wa, _ := webauthn.New(&webauthn.Config{
+	wa, err := webauthn.New(&webauthn.Config{
 		RPID:          cfg.WebAuthnRPID,
 		RPDisplayName: cfg.WebAuthnRPName,
 		RPOrigins:     cfg.WebAuthnOrigins,
 	})
+	if err != nil {
+		// Don't fail-fast: webauthn is only required for passkey-using
+		// tenants. But we must surface the misconfiguration loudly so a
+		// bad RPID/origin doesn't silently disable passkey login.
+		slog.Default().Error("webauthn init failed; passkey flows disabled",
+			"err", err, "rpid", cfg.WebAuthnRPID, "origins", cfg.WebAuthnOrigins)
+		wa = nil
+	}
 	// SecureCookies is a required knob: zero-value (false) is only acceptable
 	// when the caller explicitly passes it (e.g. APP_ENV=development).
 	return &Service{pool: pool, identity: identitySvc, cfg: cfg, now: time.Now, webauthn: wa}

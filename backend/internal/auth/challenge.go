@@ -27,7 +27,7 @@ type MFAChallenge struct {
 var (
 	ErrChallengeNotFound = errors.New("mfa challenge not found")
 	ErrChallengeExpired  = errors.New("mfa challenge expired")
-	ErrChallengeBinding  = errors.New("mfa challenge ip/ua mismatch")
+	ErrChallengeBinding  = errors.New("mfa challenge ip mismatch")
 	ErrChallengeConsumed = errors.New("mfa challenge already consumed")
 )
 
@@ -61,7 +61,10 @@ func LoadAndBindMFAChallenge(ctx context.Context, db *pgxpool.Pool, id uuid.UUID
 	if now.After(c.ExpiresAt) {
 		return c, ErrChallengeExpired
 	}
-	if !c.IP.Equal(ip) || c.UserAgent != ua {
+	// Bind to IP only. UA strict-equality was rejected legitimate completions
+	// when the browser auto-updated mid-flow; IP binding is the load-bearing
+	// half of the binding check.
+	if !c.IP.Equal(ip) {
 		return c, ErrChallengeBinding
 	}
 	return c, nil

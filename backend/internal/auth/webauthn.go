@@ -65,35 +65,56 @@ func (s *Service) loadWebAuthnCredentials(ctx context.Context, userID uuid.UUID)
 	return creds, rows.Err()
 }
 
-func (s *Service) BeginPasskeyEnrollment(ctx context.Context, userID uuid.UUID) (*protocol.CredentialCreation, string, error) {
+// BeginPasskeyEnrollment returns a credential-creation challenge and persists
+// the webauthn SessionData server-side in auth_mfa_challenges. The client gets
+// back an opaque challengeID which it must present to FinishPasskeyEnrollment.
+// This prevents a client-tampered session from being replayed on completion.
+func (s *Service) BeginPasskeyEnrollment(ctx context.Context, userID uuid.UUID, ip net.IP, ua string) (*protocol.CredentialCreation, uuid.UUID, error) {
 	if s.webauthn == nil {
-		return nil, "", errors.New("webauthn not configured")
+		return nil, uuid.Nil, errors.New("webauthn not configured")
 	}
 	u, err := s.loadWebAuthnUser(ctx, userID)
 	if err != nil {
-		return nil, "", err
+		return nil, uuid.Nil, err
 	}
 	creation, session, err := s.webauthn.BeginRegistration(u, webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired))
 	if err != nil {
-		return nil, "", err
+		return nil, uuid.Nil, err
 	}
-	b, err := json.Marshal(session)
+	stateJSON, err := json.Marshal(session)
 	if err != nil {
-		return nil, "", err
+		return nil, uuid.Nil, err
 	}
-	return creation, string(b), nil
+	now := s.now().UTC()
+	challengeID := uuidx.New()
+	if err := InsertMFAChallenge(ctx, s.pool, MFAChallenge{
+		ID: challengeID, UserID: userID, IP: ip, UserAgent: ua,
+		CreatedAt: now, ExpiresAt: now.Add(s.cfg.MFAChallengeTTL),
+		WebAuthnState: stateJSON,
+	}); err != nil {
+		return nil, uuid.Nil, err
+	}
+	return creation, challengeID, nil
 }
 
-func (s *Service) FinishPasskeyEnrollment(ctx context.Context, userID uuid.UUID, sessionJSON string, label string, r *http.Request) error {
+func (s *Service) FinishPasskeyEnrollment(ctx context.Context, userID uuid.UUID, challengeID uuid.UUID, ip net.IP, ua string, label string, r *http.Request) error {
 	if s.webauthn == nil {
 		return errors.New("webauthn not configured")
+	}
+	now := s.now().UTC()
+	c, err := LoadAndBindMFAChallenge(ctx, s.pool, challengeID, ip, ua, now)
+	if err != nil {
+		return err
+	}
+	if c.UserID != userID {
+		return ErrChallengeNotFound
 	}
 	u, err := s.loadWebAuthnUser(ctx, userID)
 	if err != nil {
 		return err
 	}
 	var session webauthn.SessionData
-	if err := json.Unmarshal([]byte(sessionJSON), &session); err != nil {
+	if err := json.Unmarshal(c.WebAuthnState, &session); err != nil {
 		return err
 	}
 	cred, err := s.webauthn.FinishRegistration(u, session, r)
@@ -104,11 +125,21 @@ func (s *Service) FinishPasskeyEnrollment(ctx context.Context, userID uuid.UUID,
 	for _, t := range cred.Transport {
 		transports = append(transports, string(t))
 	}
-	_, err = s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := ConsumeMFAChallenge(ctx, tx, c.ID, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
 		insert into webauthn_credentials (id, user_id, credential_id, public_key, sign_count, transports, label, created_at)
 		values ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, uuidx.New(), userID, cred.ID, cred.PublicKey, cred.Authenticator.SignCount, transports, label, s.now().UTC())
-	return err
+	`, uuidx.New(), userID, cred.ID, cred.PublicKey, cred.Authenticator.SignCount, transports, label, now); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Service) BeginWebAuthnAssertion(ctx context.Context, challengeID uuid.UUID, ip net.IP, ua string) (*protocol.CredentialAssertion, error) {

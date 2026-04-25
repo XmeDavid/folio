@@ -55,9 +55,10 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.With(reauth).Post("/me/mfa/recovery-codes", h.regenerateRecoveryCodes)
 	r.With(reauth).Post("/me/mfa/passkeys/begin", h.beginPasskeyEnrollment)
 	r.With(reauth).Post("/me/mfa/passkeys/complete", h.completePasskeyEnrollment)
-	r.Post("/auth/reauth", h.reauth)
-	r.Post("/auth/reauth/webauthn/begin", h.beginReauthWebauthn)
-	r.Post("/auth/reauth/webauthn/complete", h.completeReauthWebauthn)
+	// Reauth is a password/passkey gate — brute-force protection parallels /login.
+	r.With(RateLimitByIP(10, 10*time.Minute)).Post("/auth/reauth", h.reauth)
+	r.With(RateLimitByIP(10, 10*time.Minute)).Post("/auth/reauth/webauthn/begin", h.beginReauthWebauthn)
+	r.With(RateLimitByIP(10, 10*time.Minute)).Post("/auth/reauth/webauthn/complete", h.completeReauthWebauthn)
 	r.Post("/tenants", h.createTenant)
 }
 
