@@ -184,8 +184,11 @@ func (s *Service) ApplyPlan(ctx context.Context, tenantID, userID uuid.UUID, in 
 		if cur == "" {
 			return nil, httpx.NewValidationError("group currency is required")
 		}
-		sub := parsedForCurrency(parsed, cur)
+		sub := parsedForGroup(parsed, cur, group.SourceKey)
 		if len(sub.Transactions) == 0 {
+			if group.SourceKey != "" {
+				return nil, httpx.NewValidationError(fmt.Sprintf("file contains no %s transactions for %s", cur, group.SourceKey))
+			}
 			return nil, httpx.NewValidationError(fmt.Sprintf("file contains no %s transactions", cur))
 		}
 
@@ -434,21 +437,30 @@ type importAccountMatch struct {
 	Institution *string
 }
 
+// groupKey identifies one import target: a currency, plus an optional
+// per-section AccountHint for files (like consolidated v2) that emit several
+// logical accounts in the same currency. Empty SourceKey collapses every
+// tx of the currency into one group — preserves banking-style behaviour.
+type groupKey struct {
+	currency  string
+	sourceKey string
+}
+
 func (s *Service) currencyGroups(ctx context.Context, tenantID uuid.UUID, parsed ParsedFile) ([]CurrencyGroup, error) {
-	grouped := map[string]ParsedFile{}
+	grouped := map[groupKey]ParsedFile{}
 	for _, tx := range parsed.Transactions {
-		cur := tx.Currency
-		g := grouped[cur]
+		k := groupKey{currency: tx.Currency, sourceKey: tx.AccountHint}
+		g := grouped[k]
 		if g.Profile == "" {
 			g = ParsedFile{
 				Profile:     parsed.Profile,
 				Institution: parsed.Institution,
-				AccountHint: parsed.AccountHint,
-				Currency:    cur,
+				AccountHint: tx.AccountHint,
+				Currency:    k.currency,
 			}
 		}
 		g.Transactions = append(g.Transactions, tx)
-		grouped[cur] = g
+		grouped[k] = g
 	}
 
 	accounts, err := s.loadImportAccountMatches(ctx, tenantID)
@@ -456,15 +468,20 @@ func (s *Service) currencyGroups(ctx context.Context, tenantID uuid.UUID, parsed
 		return nil, err
 	}
 
-	currencies := make([]string, 0, len(grouped))
-	for cur := range grouped {
-		currencies = append(currencies, cur)
+	keys := make([]groupKey, 0, len(grouped))
+	for k := range grouped {
+		keys = append(keys, k)
 	}
-	sort.Strings(currencies)
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].currency != keys[j].currency {
+			return keys[i].currency < keys[j].currency
+		}
+		return keys[i].sourceKey < keys[j].sourceKey
+	})
 
-	groups := make([]CurrencyGroup, 0, len(currencies))
-	for _, cur := range currencies {
-		sub := grouped[cur]
+	groups := make([]CurrencyGroup, 0, len(keys))
+	for _, k := range keys {
+		sub := grouped[k]
 		finalizeParsedRange(&sub, false)
 		samples := make([]PreviewRow, 0, min(5, len(sub.Transactions)))
 		for _, tx := range sub.Transactions {
@@ -474,8 +491,9 @@ func (s *Service) currencyGroups(ctx context.Context, tenantID uuid.UUID, parsed
 			samples = append(samples, previewRow(tx))
 		}
 		group := CurrencyGroup{
-			Currency:           cur,
-			SuggestedName:      suggestedNameForCurrency(sub, cur),
+			Currency:           k.currency,
+			SourceKey:          k.sourceKey,
+			SuggestedName:      suggestedNameForGroup(parsed.Institution, k),
 			SuggestedKind:      "checking",
 			SuggestedOpenDate:  formatDatePtr(sub.DateFrom),
 			TransactionCount:   len(sub.Transactions),
@@ -485,7 +503,7 @@ func (s *Service) currencyGroups(ctx context.Context, tenantID uuid.UUID, parsed
 			ImportableCount:    len(sub.Transactions),
 			SampleTransactions: samples,
 		}
-		candidates := importCandidates(accounts, parsed.Institution, cur)
+		candidates := importCandidatesForGroup(accounts, parsed.Institution, k, group.SuggestedName)
 		for i := range candidates {
 			existing, err := s.loadExisting(ctx, tenantID, candidates[i].ID, sub)
 			if err != nil {
@@ -511,6 +529,48 @@ func (s *Service) currencyGroups(ctx context.Context, tenantID uuid.UUID, parsed
 		groups = append(groups, group)
 	}
 	return groups, nil
+}
+
+// suggestedNameForGroup builds a default account name for an import group.
+// For section-aware files it incorporates the per-section account hint so
+// pockets get distinct, recognisable names (e.g. "Revolut Travel - 200 CHF").
+func suggestedNameForGroup(institution string, k groupKey) string {
+	parts := []string{}
+	if strings.TrimSpace(institution) != "" {
+		parts = append(parts, strings.TrimSpace(institution))
+	}
+	if k.sourceKey != "" {
+		parts = append(parts, k.sourceKey)
+	}
+	if k.currency != "" {
+		parts = append(parts, k.currency)
+	}
+	if len(parts) == 0 {
+		return "Imported account"
+	}
+	return strings.Join(parts, " ")
+}
+
+// importCandidatesForGroup returns existing accounts matching the institution
+// and currency. When the group represents a specific section (sourceKey set),
+// candidates are further narrowed to ones whose name contains the section
+// name — that lets a re-import of the consolidated file find the previously
+// imported pocket account, without false-matching the main current account.
+func importCandidatesForGroup(accounts []importAccountMatch, institution string, k groupKey, suggestedName string) []AccountCandidate {
+	base := importCandidates(accounts, institution, k.currency)
+	if k.sourceKey == "" {
+		return base
+	}
+	var filtered []AccountCandidate
+	hint := strings.ToLower(strings.TrimSpace(k.sourceKey))
+	suggested := strings.ToLower(strings.TrimSpace(suggestedName))
+	for _, c := range base {
+		name := strings.ToLower(c.Name)
+		if strings.Contains(name, hint) || (suggested != "" && name == suggested) {
+			filtered = append(filtered, c)
+		}
+	}
+	return filtered
 }
 
 func (s *Service) loadImportAccountMatches(ctx context.Context, tenantID uuid.UUID) ([]importAccountMatch, error) {
@@ -701,13 +761,6 @@ func suggestedName(parsed ParsedFile) string {
 	return parsed.Institution
 }
 
-func suggestedNameForCurrency(parsed ParsedFile, currency string) string {
-	name := suggestedName(parsed)
-	if currency == "" {
-		return name
-	}
-	return name + " " + currency
-}
 
 func formatDatePtr(t *time.Time) string {
 	if t == nil {

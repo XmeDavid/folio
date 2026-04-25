@@ -3,6 +3,7 @@ package bankimport
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,7 +29,9 @@ func TestParseRevolutBankingSample(t *testing.T) {
 	if got := first.BookedAt.Format(dateOnly); got != "2019-04-18" {
 		t.Fatalf("first booked date = %s", got)
 	}
-	if !first.Amount.Equal(decimal.RequireFromString("1")) {
+	// Expect the first CONCLUÍDA top-up of €10. The earlier REVERTIDA row
+	// must be filtered out — it never actually settled.
+	if !first.Amount.Equal(decimal.RequireFromString("10")) {
 		t.Fatalf("first amount = %s", first.Amount)
 	}
 	if first.Currency != "EUR" {
@@ -39,6 +42,162 @@ func TestParseRevolutBankingSample(t *testing.T) {
 	}
 	if parsed.DateFrom == nil || parsed.DateFrom.Format(dateOnly) != "2019-04-18" {
 		t.Fatalf("date from = %#v", parsed.DateFrom)
+	}
+	// REVERTIDA rows must never reach the importable set.
+	for _, tx := range parsed.Transactions {
+		if status := tx.Raw["Estado"]; status == "REVERTIDA" {
+			t.Fatalf("REVERTIDA tx leaked into output: %+v", tx)
+		}
+	}
+}
+
+func TestParseRevolutBankingFeeIsSubtracted(t *testing.T) {
+	// One row, one CHF→EUR conversion that charged a 0.17 EUR fee. After
+	// the fix, Montante is reduced by Comissão so the cash hit on the
+	// account matches Revolut's own Saldo column.
+	content := "Tipo,Produto,Data de início,Data de Conclusão,Descrição,Montante,Comissão,Moeda,Estado,Saldo\n" +
+		"Câmbio,Atual,2021-08-29 12:37:08,2021-08-29 12:37:08,Conversão cambial para EUR,16.94,0.17,EUR,CONCLUÍDA,16.77\n"
+	parsed, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(parsed.Transactions) != 1 {
+		t.Fatalf("transactions = %d", len(parsed.Transactions))
+	}
+	got := parsed.Transactions[0].Amount
+	want := decimal.RequireFromString("16.77")
+	if !got.Equal(want) {
+		t.Fatalf("amount = %s, want %s (Montante - Comissão)", got, want)
+	}
+}
+
+func TestParseRevolutBankingSkipsPoupancas(t *testing.T) {
+	content := "Tipo,Produto,Data de início,Data de Conclusão,Descrição,Montante,Comissão,Moeda,Estado,Saldo\n" +
+		"Carregamento,Atual,2025-03-25 13:41:36,2025-03-25 13:41:36,Salary,2000.00,0.00,CHF,CONCLUÍDA,2000.00\n" +
+		"Transferência,Poupanças,2025-03-25 13:41:36,2025-03-25 13:41:36,Carregamento de subconta CHF Dízimo de CHF,200.00,0.00,CHF,CONCLUÍDA,200.00\n"
+	parsed, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(parsed.Transactions) != 1 {
+		t.Fatalf("expected only the Atual row, got %d", len(parsed.Transactions))
+	}
+	if got := parsed.Transactions[0].Currency; got != "CHF" {
+		t.Fatalf("currency = %s", got)
+	}
+	hasPocketWarning := false
+	for _, w := range parsed.Warnings {
+		if strings.Contains(w, "pocket") {
+			hasPocketWarning = true
+		}
+	}
+	if !hasPocketWarning {
+		t.Fatalf("expected a pocket-skipped warning, got %+v", parsed.Warnings)
+	}
+}
+
+func TestRevolutBankingAndConsolidatedShareFingerprint(t *testing.T) {
+	// Same logical transaction (-1.65 CHF Migros on 2025-05-07) parsed from
+	// both export formats must produce the same external_id so cross-file
+	// uploads dedupe via duplicateBySource.
+	banking := "Tipo,Produto,Data de início,Data de Conclusão,Descrição,Montante,Comissão,Moeda,Estado,Saldo\n" +
+		"Pagamento com cartão,Atual,2025-05-07 12:07:38,2025-05-07 12:07:38,Migros,-1.65,0.00,CHF,CONCLUÍDA,98.35\n"
+	consolidated := strings.Join([]string{
+		`"Contas-correntes Extratos de operações",,,,,,,,`,
+		`"Conta Pessoal (CHF)",,,,,,,,`,
+		`"Extrato de operações",,,,,,,,`,
+		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo,Imposto retido,Outros impostos,Comissões`,
+		`07/05/2025,Migros,Outros,"-1,65 CHF (-1,77€)","98,35 CHF (105,02€)","0,00 CHF (0,00€)","0,00 CHF (0,00€)","0,00 CHF (0,00€)"`,
+		`Total,,,"-1,65 CHF",,"0,00 CHF","0,00 CHF","0,00 CHF"`,
+		`---------,,,,,,,,`,
+		``,
+	}, "\n")
+	bp, err := Parse(banking)
+	if err != nil {
+		t.Fatalf("banking Parse: %v", err)
+	}
+	cp, err := Parse(consolidated)
+	if err != nil {
+		t.Fatalf("consolidated Parse: %v", err)
+	}
+	if len(bp.Transactions) != 1 || len(cp.Transactions) != 1 {
+		t.Fatalf("unexpected counts: banking=%d consolidated=%d", len(bp.Transactions), len(cp.Transactions))
+	}
+	if bp.Transactions[0].ExternalID != cp.Transactions[0].ExternalID {
+		t.Fatalf("external IDs differ — cross-file dedup broken:\n  banking      = %s\n  consolidated = %s",
+			bp.Transactions[0].ExternalID, cp.Transactions[0].ExternalID)
+	}
+}
+
+func TestParseRevolutConsolidatedEmitsPockets(t *testing.T) {
+	content := strings.Join([]string{
+		`"Contas-correntes Extratos de operações",,,,,,,,`,
+		`"Conta Pessoal (CHF)",,,,,,,,`,
+		`"Extrato de operações",,,,,,,,`,
+		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo,Imposto retido,Outros impostos,Comissões`,
+		`07/05/2025,Migros,Outros,"-1,65 CHF","98,35 CHF","0,00 CHF","0,00 CHF","0,00 CHF"`,
+		`Total,,,"-1,65 CHF",,"0,00 CHF","0,00 CHF","0,00 CHF"`,
+		`---------,,,,,,,,`,
+		`"Travel - 200 (CHF)",,,,,,,,`,
+		`"Extrato de operações",,,,,,,,`,
+		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo`,
+		`25/04/2026,"Carregamento de subconta CHF Travel - 200 de CHF",Outros,"200,00 CHF","200,00 CHF"`,
+		`Total,,,"200,00 CHF"`,
+		`---------,,,,,,,,`,
+		``,
+	}, "\n")
+	parsed, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if parsed.Profile != "revolut_consolidated_v2" {
+		t.Fatalf("profile = %s", parsed.Profile)
+	}
+	if len(parsed.Transactions) != 2 {
+		t.Fatalf("expected one Conta Pessoal + one pocket row, got %d", len(parsed.Transactions))
+	}
+	hints := map[string]decimal.Decimal{}
+	for _, tx := range parsed.Transactions {
+		hints[tx.AccountHint] = tx.Amount
+	}
+	if got, ok := hints["Conta Pessoal"]; !ok || !got.Equal(decimal.RequireFromString("-1.65")) {
+		t.Fatalf("Conta Pessoal hint missing or wrong: %v", hints)
+	}
+	if got, ok := hints["Travel - 200"]; !ok || !got.Equal(decimal.RequireFromString("200")) {
+		t.Fatalf("Travel pocket hint missing or wrong: %v", hints)
+	}
+}
+
+func TestParseRevolutConsolidatedDisambiguatesDuplicatePockets(t *testing.T) {
+	content := strings.Join([]string{
+		`"Contas-correntes Extratos de operações",,,,,,,,`,
+		`"Vectr (EUR)",,,,,,,,`,
+		`"Extrato de operações",,,,,,,,`,
+		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo`,
+		`01/01/2025,"Carregamento de subconta",Outros,"50,00€","50,00€"`,
+		`Total,,,"50,00€"`,
+		`---------,,,,,,,,`,
+		`"Vectr (EUR)",,,,,,,,`,
+		`"Extrato de operações",,,,,,,,`,
+		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo`,
+		`01/02/2025,"Carregamento de subconta",Outros,"75,00€","75,00€"`,
+		`Total,,,"75,00€"`,
+		`---------,,,,,,,,`,
+		``,
+	}, "\n")
+	parsed, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(parsed.Transactions) != 2 {
+		t.Fatalf("expected 2 txs, got %d", len(parsed.Transactions))
+	}
+	seen := map[string]bool{}
+	for _, tx := range parsed.Transactions {
+		seen[tx.AccountHint] = true
+	}
+	if !seen["Vectr #1"] || !seen["Vectr #2"] {
+		t.Fatalf("expected disambiguated hints Vectr #1 and Vectr #2, got %v", seen)
 	}
 }
 
@@ -96,6 +255,63 @@ func TestClassifyDuplicatesAndConflicts(t *testing.T) {
 	}
 	if len(got.importable) != 1 {
 		t.Fatalf("importable = %d", len(got.importable))
+	}
+}
+
+func TestParsedForGroupFiltersByAccountHint(t *testing.T) {
+	mk := func(hint, cur, amt string) ParsedTransaction {
+		return ParsedTransaction{
+			BookedAt:    mustDate(t, "2026-01-01"),
+			Amount:      decimal.RequireFromString(amt),
+			Currency:    cur,
+			Description: strPtr("test"),
+			AccountHint: hint,
+		}
+	}
+	parsed := ParsedFile{
+		Profile:  "revolut_consolidated_v2",
+		Currency: "CHF",
+		Transactions: []ParsedTransaction{
+			mk("Conta Pessoal", "CHF", "-1.00"),
+			mk("Travel - 200", "CHF", "200.00"),
+			mk("Food - 400", "CHF", "400.00"),
+			mk("Travel - 200", "EUR", "10.00"),
+		},
+	}
+
+	// Filter by (CHF, Travel - 200) — only the matching pocket survives.
+	got := parsedForGroup(parsed, "CHF", "Travel - 200")
+	if len(got.Transactions) != 1 {
+		t.Fatalf("travel pocket: got %d txs, want 1", len(got.Transactions))
+	}
+	if !got.Transactions[0].Amount.Equal(decimal.RequireFromString("200")) {
+		t.Fatalf("travel amount = %s", got.Transactions[0].Amount)
+	}
+
+	// Empty SourceKey → legacy behaviour (every CHF tx).
+	all := parsedForGroup(parsed, "CHF", "")
+	if len(all.Transactions) != 3 {
+		t.Fatalf("legacy filter: got %d txs, want 3", len(all.Transactions))
+	}
+}
+
+func TestSuggestedNameForGroup(t *testing.T) {
+	cases := []struct {
+		institution string
+		k           groupKey
+		want        string
+	}{
+		{"Revolut", groupKey{currency: "CHF"}, "Revolut CHF"},
+		{"Revolut", groupKey{currency: "CHF", sourceKey: "Conta Pessoal"}, "Revolut Conta Pessoal CHF"},
+		{"Revolut", groupKey{currency: "CHF", sourceKey: "Travel - 200"}, "Revolut Travel - 200 CHF"},
+		{"", groupKey{currency: "CHF"}, "CHF"},
+		{"", groupKey{}, "Imported account"},
+	}
+	for _, c := range cases {
+		got := suggestedNameForGroup(c.institution, c.k)
+		if got != c.want {
+			t.Errorf("suggestedNameForGroup(%q, %+v) = %q, want %q", c.institution, c.k, got, c.want)
+		}
 	}
 }
 

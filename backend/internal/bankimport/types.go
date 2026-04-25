@@ -31,6 +31,7 @@ type ParsedTransaction struct {
 	CounterpartyRaw *string
 	Description     *string
 	ExternalID      string
+	AccountHint     string
 	Raw             map[string]string
 }
 
@@ -72,6 +73,7 @@ type ConflictPreview struct {
 
 type CurrencyGroup struct {
 	Currency             string             `json:"currency"`
+	SourceKey            string             `json:"sourceKey,omitempty"`
 	SuggestedName        string             `json:"suggestedName"`
 	SuggestedKind        string             `json:"suggestedKind"`
 	SuggestedOpenDate    string             `json:"suggestedOpenDate,omitempty"`
@@ -107,6 +109,7 @@ type ApplyPlanInput struct {
 
 type ApplyPlanGroup struct {
 	Currency           string     `json:"currency"`
+	SourceKey          string     `json:"sourceKey,omitempty"`
 	Action             string     `json:"action"`
 	AccountID          *uuid.UUID `json:"accountId,omitempty"`
 	Name               string     `json:"name,omitempty"`

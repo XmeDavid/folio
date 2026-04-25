@@ -372,6 +372,7 @@ export type ImportPreview = {
 
 export type ImportCurrencyGroup = {
   currency: string;
+  sourceKey?: string;
   suggestedName: string;
   suggestedKind: AccountKind;
   suggestedOpenDate?: string;
@@ -402,6 +403,7 @@ export type ImportAccountCandidate = {
 
 export type ImportPlanGroup = {
   currency: string;
+  sourceKey?: string;
   action: "create_account" | "import_to_account";
   accountId?: string;
   name?: string;

@@ -178,8 +178,9 @@ function SmartAccountImport({
             } as ImportCurrencyGroup,
           ];
       for (const group of previewGroups) {
-        next[group.currency] = {
+        next[importGroupKey(group)] = {
           currency: group.currency,
+          sourceKey: group.sourceKey,
           action: group.existingAccountId ? "import_to_account" : "create_account",
           accountId: group.existingAccountId,
           name: group.suggestedName,
@@ -199,9 +200,9 @@ function SmartAccountImport({
         tenantId,
         preview.fileToken,
         groups
-          .filter((group) => effectiveImportable(group, plans[group.currency]) > 0)
+          .filter((group) => effectiveImportable(group, plans[importGroupKey(group)]) > 0)
           .map((group) => {
-            const plan = plans[group.currency];
+            const plan = plans[importGroupKey(group)];
             return plan && plan.action === "create_account"
               ? { ...plan, openingBalanceDate: plan.openingBalanceDate || plan.openDate }
               : plan;
@@ -290,19 +291,22 @@ function SmartAccountImport({
             <span className="text-right">Rows</span>
           </div>
           <div className="divide-y divide-border bg-surface">
-            {groups.map((group) => (
-              <ImportGroupRow
-                key={group.currency}
-                group={group}
-                plan={plans[group.currency]}
-                onPlanChange={(plan) =>
-                  setPlans((current) => ({
-                    ...current,
-                    [group.currency]: plan,
-                  }))
-                }
-              />
-            ))}
+            {groups.map((group) => {
+              const key = importGroupKey(group);
+              return (
+                <ImportGroupRow
+                  key={key}
+                  group={group}
+                  plan={plans[key]}
+                  onPlanChange={(plan) =>
+                    setPlans((current) => ({
+                      ...current,
+                      [key]: plan,
+                    }))
+                  }
+                />
+              );
+            })}
           </div>
         </div>
       ) : null}
@@ -322,8 +326,8 @@ function SmartAccountImport({
           disabled={
             !preview ||
             applyMutation.isPending ||
-            groups.every((group) => effectiveImportable(group, plans[group.currency]) === 0) ||
-            groups.some((group) => !isImportPlanReady(group, plans[group.currency]))
+            groups.every((group) => effectiveImportable(group, plans[importGroupKey(group)]) === 0) ||
+            groups.some((group) => !isImportPlanReady(group, plans[importGroupKey(group)]))
           }
           onClick={() => applyMutation.mutate()}
         >
@@ -366,6 +370,11 @@ function ImportGroupRow({
     <div className="grid gap-3 px-4 py-3 text-[13px] lg:grid-cols-[0.55fr_1.4fr_1fr_0.9fr]">
       <div>
         <span className="font-medium tabular text-fg">{group.currency}</span>
+        {group.sourceKey ? (
+          <p className="mt-1 truncate text-[12px] font-medium text-fg" title={group.sourceKey}>
+            {group.sourceKey}
+          </p>
+        ) : null}
         <p className="mt-1 text-[12px] text-fg-muted">
           {group.dateFrom || "-"} to {group.dateTo || "-"}
         </p>
@@ -441,6 +450,10 @@ function ImportGroupRow({
 }
 
 const decimalRe = /^-?\d+(\.\d+)?$/;
+
+function importGroupKey(group: { currency: string; sourceKey?: string }): string {
+  return `${group.currency}|${group.sourceKey ?? ""}`;
+}
 
 function effectiveImportable(group: ImportCurrencyGroup, plan?: ImportPlanGroup) {
   if (plan?.action === "import_to_account" && plan.accountId) {
