@@ -284,11 +284,22 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 	disambiguateSectionHints(sections)
 	skippedRows := 0
 	emptyPockets := 0
+	reconcileRows := 0
 	for _, sec := range sections {
 		if len(sec.dataRows) == 0 {
 			emptyPockets++
 			continue
 		}
+		// Per-section running-balance reconciliation. Revolut's consolidated
+		// export occasionally omits cash-impact rows (FX settlement deltas
+		// on auth-vs-settle, silent pocket adjustments). The "Money in/out"
+		// column then doesn't reconcile with the "Balance" column. We trust
+		// the balance column as the source of truth and emit a synthetic
+		// adjustment row whenever balance_after - balance_before differs
+		// from the stated amount, so an imported account closes at the
+		// same balance Revolut shows.
+		var prevBal decimal.Decimal
+		havePrev := false
 		for _, row := range sec.dataRows {
 			tx, ok, rowErr := parseConsolidatedTxRow(row, sec.accountHint, sec.currency, sec.columns, lang)
 			if rowErr != nil {
@@ -299,7 +310,28 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 				continue
 			}
 			out.Transactions = append(out.Transactions, tx)
+
+			balRaw := tx.Raw["balance"]
+			bal, _, balErr := parseConsolidatedMoney(balRaw, lang)
+			if balErr != nil {
+				havePrev = false
+				continue
+			}
+			if havePrev {
+				expected := bal.Sub(prevBal)
+				diff := expected.Sub(tx.Amount)
+				if diff.Abs().GreaterThan(reconcileTolerance) {
+					synth := buildReconcileTx(tx, diff, balRaw)
+					out.Transactions = append(out.Transactions, synth)
+					reconcileRows++
+				}
+			}
+			prevBal = bal
+			havePrev = true
 		}
+	}
+	if reconcileRows > 0 {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("Inserted %d synthetic balance-adjustment rows where Revolut's stated amount differed from the running balance. Each is dated next to the row that triggered it.", reconcileRows))
 	}
 
 	// Crypto section: a single top-level block with six sub-tables (Sells /
@@ -805,6 +837,48 @@ type consolidatedSection struct {
 }
 
 var consolidatedSectionHeader = regexp.MustCompile(`^(.+) \(([A-Z]{3})\)$`)
+
+// reconcileTolerance is the largest absolute amount/balance-delta gap we'll
+// accept as rounding before treating it as a missing-row artefact. Revolut
+// rounds FX legs to 2dp so 0.01 covers most cumulative-rounding noise; we
+// give ourselves an extra cent of headroom.
+var reconcileTolerance = decimal.RequireFromString("0.02")
+
+// buildReconcileTx wraps a residual delta (= balance_delta − stated_amount)
+// in a ParsedTransaction tagged so the importer / UI can identify it as a
+// synthetic balance-adjustment paired with the preceding row. We carry the
+// triggering row's date and account hint so the reconcile lands inside
+// the same logical day as the cause.
+func buildReconcileTx(trigger ParsedTransaction, residual decimal.Decimal, balanceRaw string) ParsedTransaction {
+	cause := ""
+	if trigger.Description != nil {
+		cause = *trigger.Description
+	}
+	desc := "Revolut balance adjustment"
+	if cause != "" {
+		desc = "Revolut balance adjustment (" + cause + ")"
+	}
+	descPtr := desc
+	raw := map[string]string{
+		"section":         trigger.AccountHint,
+		"currency":        trigger.Currency,
+		"synthetic":       "balance_reconcile",
+		"trigger_amount":  trigger.Amount.String(),
+		"trigger_balance": balanceRaw,
+	}
+	if cause != "" {
+		raw["trigger_description"] = cause
+	}
+	return ParsedTransaction{
+		BookedAt:    trigger.BookedAt,
+		Amount:      residual,
+		Currency:    trigger.Currency,
+		Description: &descPtr,
+		AccountHint: trigger.AccountHint,
+		KindHint:    trigger.KindHint,
+		Raw:         raw,
+	}
+}
 
 func splitConsolidatedSections(rows [][]string) []consolidatedSection {
 	var sections []consolidatedSection
