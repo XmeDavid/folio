@@ -102,6 +102,7 @@ type AccountCandidate struct {
 	Name                 string            `json:"name"`
 	Currency             string            `json:"currency"`
 	Institution          string            `json:"institution,omitempty"`
+	Archived             bool              `json:"archived,omitempty"`
 	ImportableCount      int               `json:"importableCount"`
 	DuplicateCount       int               `json:"duplicateCount"`
 	ConflictCount        int               `json:"conflictCount"`
@@ -123,6 +124,11 @@ type ApplyPlanGroup struct {
 	OpenDate           string     `json:"openDate,omitempty"`
 	OpeningBalance     string     `json:"openingBalance,omitempty"`
 	OpeningBalanceDate string     `json:"openingBalanceDate,omitempty"`
+	// Reactivate, when true on an import_to_account targeting an archived
+	// account, clears archived_at as part of the import. Default false:
+	// import into an archived account keeps it archived (the user only
+	// wanted the data merged, not the account resurfaced).
+	Reactivate bool `json:"reactivate,omitempty"`
 }
 
 type ApplyResult struct {

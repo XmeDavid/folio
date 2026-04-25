@@ -280,6 +280,19 @@ func (s *Service) ApplyPlan(ctx context.Context, tenantID, userID uuid.UUID, in 
 			if err != nil {
 				return nil, err
 			}
+		} else if group.in.Reactivate {
+			// Opt-in reactivate: clear archived_at when the user explicitly
+			// asked to resurface this account. No-op for non-archived rows.
+			// updated_at is set by trigger. Without this opt-in, a re-import
+			// merges new transactions into an archived account silently —
+			// archive is a UI-only hide flag, not a write barrier.
+			if _, err := tx.Exec(ctx, `
+				update accounts
+				set archived_at = null
+				where tenant_id = $1 and id = $2 and archived_at is not null
+			`, tenantID, accountID); err != nil {
+				return nil, fmt.Errorf("unarchive import account: %w", err)
+			}
 		}
 		ids, err := s.insertImportableTx(ctx, tx, tenantID, accountID, batchID, incomingProvider(group.parsed.Profile), group.classified.importable)
 		if err != nil {
@@ -435,6 +448,7 @@ type importAccountMatch struct {
 	Name        string
 	Currency    string
 	Institution *string
+	Archived    bool
 }
 
 // groupKey identifies one import target: a currency, plus an optional
@@ -598,11 +612,14 @@ func bestImportCandidate(candidates []AccountCandidate, incoming int) (AccountCa
 }
 
 func (s *Service) loadImportAccountMatches(ctx context.Context, tenantID uuid.UUID) ([]importAccountMatch, error) {
+	// Archived accounts are kept in the candidate set so re-importing the
+	// same file matches the account the user already imported into instead
+	// of silently creating a duplicate. The wizard surfaces the archived
+	// state and the apply path unarchives the account before importing.
 	rows, err := s.pool.Query(ctx, `
-		select id, name, currency, institution
+		select id, name, currency, institution, archived_at
 		from accounts
 		where tenant_id = $1
-		  and archived_at is null
 		order by name
 	`, tenantID)
 	if err != nil {
@@ -613,9 +630,11 @@ func (s *Service) loadImportAccountMatches(ctx context.Context, tenantID uuid.UU
 	out := []importAccountMatch{}
 	for rows.Next() {
 		var a importAccountMatch
-		if err := rows.Scan(&a.ID, &a.Name, &a.Currency, &a.Institution); err != nil {
+		var archivedAt *time.Time
+		if err := rows.Scan(&a.ID, &a.Name, &a.Currency, &a.Institution, &archivedAt); err != nil {
 			return nil, fmt.Errorf("scan import account match: %w", err)
 		}
+		a.Archived = archivedAt != nil
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -632,7 +651,7 @@ func importCandidates(accounts []importAccountMatch, institution, currency strin
 				continue
 			}
 		}
-		c := AccountCandidate{ID: account.ID, Name: account.Name, Currency: account.Currency}
+		c := AccountCandidate{ID: account.ID, Name: account.Name, Currency: account.Currency, Archived: account.Archived}
 		if account.Institution != nil {
 			c.Institution = strings.TrimSpace(*account.Institution)
 		}

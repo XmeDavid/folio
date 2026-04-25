@@ -76,7 +76,13 @@ func Parse(content string) (ParsedFile, error) {
 	case strings.Contains(normalized, "Date;Type of transaction;Notification text;"):
 		return parsePostFinance(normalized)
 	default:
-		return ParsedFile{}, httpx.NewValidationError("unsupported bank export format")
+		// Surface the first line back to the user so debugging an
+		// unrecognised export doesn't require server logs.
+		preview := firstLine
+		if len(preview) > 120 {
+			preview = preview[:120] + "..."
+		}
+		return ParsedFile{}, httpx.NewValidationError(fmt.Sprintf("unsupported bank export format (first line: %q)", preview))
 	}
 }
 

@@ -423,6 +423,7 @@ function ImportGroupRow({
             <option key={account.id} value={account.id}>
               Import to {account.name}
               {account.institution ? ` (${account.institution})` : ""}
+              {account.archived ? " — archived" : ""}
             </option>
           ))}
         </select>
@@ -464,6 +465,19 @@ function ImportGroupRow({
             placeholder="Opening balance"
           />
         </div>
+      ) : selectedCandidate?.archived ? (
+        <label className="flex items-start gap-2 text-[12px] text-fg-muted">
+          <input
+            type="checkbox"
+            className="mt-[3px]"
+            checked={!!plan.reactivate}
+            onChange={(e) => set({ reactivate: e.target.checked })}
+          />
+          <span>
+            Archived account. Transactions will import either way; tick to also
+            reactivate it.
+          </span>
+        </label>
       ) : (
         <div className="text-[12px] text-fg-muted">Existing account</div>
       )}

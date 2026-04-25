@@ -426,6 +426,7 @@ export type ImportAccountCandidate = {
   name: string;
   currency: string;
   institution?: string;
+  archived?: boolean;
   importableCount: number;
   duplicateCount: number;
   conflictCount: number;
@@ -442,6 +443,7 @@ export type ImportPlanGroup = {
   openDate?: string;
   openingBalance?: string;
   openingBalanceDate?: string;
+  reactivate?: boolean;
 };
 
 export type ImportApplyResult = {
