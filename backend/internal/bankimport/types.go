@@ -73,6 +73,7 @@ type PreviewRow struct {
 }
 
 type ConflictPreview struct {
+	Reason   string     `json:"reason,omitempty"`
 	Incoming PreviewRow `json:"incoming"`
 	Existing PreviewRow `json:"existing"`
 }

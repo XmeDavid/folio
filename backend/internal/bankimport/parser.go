@@ -844,42 +844,6 @@ var consolidatedSectionHeader = regexp.MustCompile(`^(.+) \(([A-Z]{3})\)$`)
 // give ourselves an extra cent of headroom.
 var reconcileTolerance = decimal.RequireFromString("0.02")
 
-// buildReconcileTx wraps a residual delta (= balance_delta − stated_amount)
-// in a ParsedTransaction tagged so the importer / UI can identify it as a
-// synthetic balance-adjustment paired with the preceding row. We carry the
-// triggering row's date and account hint so the reconcile lands inside
-// the same logical day as the cause.
-func buildReconcileTx(trigger ParsedTransaction, residual decimal.Decimal, balanceRaw string) ParsedTransaction {
-	cause := ""
-	if trigger.Description != nil {
-		cause = *trigger.Description
-	}
-	desc := "Revolut balance adjustment"
-	if cause != "" {
-		desc = "Revolut balance adjustment (" + cause + ")"
-	}
-	descPtr := desc
-	raw := map[string]string{
-		"section":         trigger.AccountHint,
-		"currency":        trigger.Currency,
-		"synthetic":       "balance_reconcile",
-		"trigger_amount":  trigger.Amount.String(),
-		"trigger_balance": balanceRaw,
-	}
-	if cause != "" {
-		raw["trigger_description"] = cause
-	}
-	return ParsedTransaction{
-		BookedAt:    trigger.BookedAt,
-		Amount:      residual,
-		Currency:    trigger.Currency,
-		Description: &descPtr,
-		AccountHint: trigger.AccountHint,
-		KindHint:    trigger.KindHint,
-		Raw:         raw,
-	}
-}
-
 func splitConsolidatedSections(rows [][]string) []consolidatedSection {
 	var sections []consolidatedSection
 	var cur *consolidatedSection

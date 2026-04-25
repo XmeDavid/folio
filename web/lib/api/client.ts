@@ -373,6 +373,7 @@ export type ImportPreviewRow = {
 };
 
 export type ImportConflictPreview = {
+  reason?: "description_mismatch" | "date_drift";
   incoming: ImportPreviewRow;
   existing: ImportPreviewRow;
 };

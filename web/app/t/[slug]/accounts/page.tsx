@@ -295,9 +295,29 @@ function SmartAccountImport({
             </div>
           ) : null}
           {preview.conflictTransactions?.length ? (
-            <p className="mt-2 text-[12px] text-amber">
-              Some rows need review and will not be imported automatically.
-            </p>
+            <div className="mt-2 space-y-1 text-[12px] text-amber">
+              <p>
+                {preview.conflictTransactions.length} row{preview.conflictTransactions.length === 1 ? "" : "s"} need review and will not be imported automatically.
+              </p>
+              {(() => {
+                const driftCount = preview.conflictTransactions.filter((c) => c.reason === "date_drift").length;
+                const descCount = preview.conflictTransactions.filter((c) => c.reason === "description_mismatch").length;
+                return (
+                  <ul className="list-disc pl-4 text-fg-muted">
+                    {driftCount > 0 ? (
+                      <li>
+                        {driftCount} possible duplicate{driftCount === 1 ? "" : "s"} with different dates (within ±7 days)
+                      </li>
+                    ) : null}
+                    {descCount > 0 ? (
+                      <li>
+                        {descCount} same amount/date with a different description
+                      </li>
+                    ) : null}
+                  </ul>
+                );
+              })()}
+            </div>
           ) : null}
           {preview.warnings?.length ? (
             <ul className="mt-2 list-disc pl-4 text-[12px] text-fg-muted">

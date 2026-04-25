@@ -22,6 +22,7 @@ import (
 
 type importTx interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
@@ -303,6 +304,11 @@ func (s *Service) ApplyPlan(ctx context.Context, tenantID, userID uuid.UUID, in 
 		out.ConflictCount += len(group.classified.conflicts)
 		out.TransactionIDs = append(out.TransactionIDs, ids...)
 		out.Conflicts = append(out.Conflicts, group.classified.conflicts...)
+		if group.parsed.DateFrom != nil && group.parsed.DateTo != nil {
+			if err := s.retireExplainedSynthetics(ctx, tx, tenantID, accountID, *group.parsed.DateFrom, *group.parsed.DateTo); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit import plan: %w", err)
@@ -675,10 +681,12 @@ func (s *Service) accountCurrency(ctx context.Context, tenantID, accountID uuid.
 type existingTx struct {
 	ID          uuid.UUID
 	BookedAt    time.Time
+	PostedAt    *time.Time
 	Amount      decimal.Decimal
 	Currency    string
 	Description string
 	SourceID    *string
+	Synthetic   bool
 }
 
 func (s *Service) loadExisting(ctx context.Context, tenantID, accountID uuid.UUID, parsed ParsedFile) ([]existingTx, error) {
@@ -686,9 +694,10 @@ func (s *Service) loadExisting(ctx context.Context, tenantID, accountID uuid.UUI
 		return nil, nil
 	}
 	rows, err := s.pool.Query(ctx, `
-		select t.id, t.booked_at, t.amount::text, t.currency,
+		select t.id, t.booked_at, t.posted_at, t.amount::text, t.currency,
 		       coalesce(t.description, t.counterparty_raw, ''),
-		       sr.external_id
+		       sr.external_id,
+		       coalesce(t.raw->>'synthetic' = 'balance_reconcile', false)
 		from transactions t
 		left join source_refs sr
 		  on sr.tenant_id = t.tenant_id
@@ -709,7 +718,7 @@ func (s *Service) loadExisting(ctx context.Context, tenantID, accountID uuid.UUI
 	for rows.Next() {
 		var e existingTx
 		var amount string
-		if err := rows.Scan(&e.ID, &e.BookedAt, &amount, &e.Currency, &e.Description, &e.SourceID); err != nil {
+		if err := rows.Scan(&e.ID, &e.BookedAt, &e.PostedAt, &amount, &e.Currency, &e.Description, &e.SourceID, &e.Synthetic); err != nil {
 			return nil, err
 		}
 		d, err := decimal.NewFromString(amount)
@@ -731,6 +740,12 @@ type classifiedRows struct {
 func classify(parsed ParsedFile, existing []existingTx) classifiedRows {
 	var out classifiedRows
 	for _, incoming := range parsed.Transactions {
+		if incoming.Raw[syntheticTagKey] == syntheticBalanceReconcile {
+			if residualAlreadyImported(incoming, existing) {
+				out.duplicates = append(out.duplicates, incoming)
+				continue
+			}
+		}
 		if duplicateBySource(incoming, existing) || duplicateByFingerprint(incoming, existing) {
 			out.duplicates = append(out.duplicates, incoming)
 			continue
@@ -744,6 +759,32 @@ func classify(parsed ParsedFile, existing []existingTx) classifiedRows {
 	return out
 }
 
+const syntheticTagKey = "synthetic"
+
+// residualAlreadyImported decides whether a parser-emitted synthetic
+// balance-reconcile row should be skipped because the existing transactions
+// in the destination account already net to its residual within ±7 days.
+// This is the banking-first → consolidated-second direction; the post-apply
+// retirement step covers the opposite ordering.
+func residualAlreadyImported(incoming ParsedTransaction, existing []existingTx) bool {
+	residualStr := incoming.Raw["synthetic_residual"]
+	if residualStr == "" {
+		residualStr = incoming.Amount.String()
+	}
+	residual, err := decimal.NewFromString(residualStr)
+	if err != nil {
+		return false
+	}
+	real := make([]existingTx, 0, len(existing))
+	for _, e := range existing {
+		if e.Synthetic {
+			continue
+		}
+		real = append(real, e)
+	}
+	return residualExplainedByExisting(incoming.BookedAt, incoming.Currency, residual, real)
+}
+
 func duplicateBySource(incoming ParsedTransaction, existing []existingTx) bool {
 	for _, e := range existing {
 		if e.SourceID != nil && *e.SourceID == incoming.ExternalID {
@@ -754,8 +795,12 @@ func duplicateBySource(incoming ParsedTransaction, existing []existingTx) bool {
 }
 
 func duplicateByFingerprint(incoming ParsedTransaction, existing []existingTx) bool {
+	incomingDesc := normalizeDescription(valueOf(incoming.Description))
 	for _, e := range existing {
-		if stableMatch(incoming, e) && normalizeText(valueOf(incoming.Description)) == normalizeText(e.Description) {
+		if !fuzzyStableMatch(incoming, e, autoDedupDays) {
+			continue
+		}
+		if incomingDesc == "" || normalizeDescription(e.Description) == incomingDesc {
 			return true
 		}
 	}
@@ -763,26 +808,39 @@ func duplicateByFingerprint(incoming ParsedTransaction, existing []existingTx) b
 }
 
 func conflictByStableFields(incoming ParsedTransaction, existing []existingTx) (ConflictPreview, bool) {
+	incomingDesc := normalizeDescription(valueOf(incoming.Description))
+	// Pass 1: auto-window match with description disagreement.
 	for _, e := range existing {
-		if stableMatch(incoming, e) {
-			return ConflictPreview{
-				Incoming: previewRow(incoming),
-				Existing: PreviewRow{
-					BookedAt:    e.BookedAt.Format(dateOnly),
-					Amount:      e.Amount.String(),
-					Currency:    e.Currency,
-					Description: e.Description,
-				},
-			}, true
+		if !fuzzyStableMatch(incoming, e, autoDedupDays) {
+			continue
+		}
+		if incomingDesc != "" && normalizeDescription(e.Description) != incomingDesc {
+			return previewConflict("description_mismatch", incoming, e), true
+		}
+	}
+	// Pass 2: review-window drift on amount+currency, regardless of description.
+	for _, e := range existing {
+		if fuzzyStableMatch(incoming, e, autoDedupDays) {
+			continue // already handled
+		}
+		if fuzzyStableMatch(incoming, e, reviewDedupDays) {
+			return previewConflict("date_drift", incoming, e), true
 		}
 	}
 	return ConflictPreview{}, false
 }
 
-func stableMatch(incoming ParsedTransaction, existing existingTx) bool {
-	return incoming.BookedAt.Equal(existing.BookedAt) &&
-		incoming.Currency == existing.Currency &&
-		incoming.Amount.Equal(existing.Amount)
+func previewConflict(reason string, incoming ParsedTransaction, e existingTx) ConflictPreview {
+	return ConflictPreview{
+		Reason:   reason,
+		Incoming: previewRow(incoming),
+		Existing: PreviewRow{
+			BookedAt:    e.BookedAt.Format(dateOnly),
+			Amount:      e.Amount.String(),
+			Currency:    e.Currency,
+			Description: e.Description,
+		},
+	}
 }
 
 func previewRow(tx ParsedTransaction) PreviewRow {
@@ -826,4 +884,97 @@ func decodeContent(encoded string) ([]byte, error) {
 		return nil, httpx.NewValidationError("fileToken content is invalid")
 	}
 	return b, nil
+}
+
+// retireExplainedSynthetics scans synthetic balance-reconcile rows in the
+// destination account that fall in the imported file's date range, and
+// voids any whose residual is now covered by real (non-synthetic) rows
+// within ±7d. Called once per affected account after each section's inserts.
+// Voiding (status='voided') keeps the row visible in audit history while
+// removing it from the running balance.
+func (s *Service) retireExplainedSynthetics(ctx context.Context, tx importTx, tenantID, accountID uuid.UUID, dateFrom, dateTo time.Time) error {
+	rows, err := tx.Query(ctx, `
+		select t.id, t.booked_at, t.posted_at, t.amount::text, t.currency,
+		       coalesce(t.raw->>'synthetic_residual', t.amount::text)
+		from transactions t
+		where t.tenant_id = $1
+		  and t.account_id = $2
+		  and t.status = 'posted'
+		  and t.raw->>'synthetic' = 'balance_reconcile'
+		  and t.booked_at between $3 - interval '7 days' and $4 + interval '7 days'
+	`, tenantID, accountID, dateFrom, dateTo)
+	if err != nil {
+		return fmt.Errorf("scan synthetic rows: %w", err)
+	}
+	type synthCandidate struct {
+		id       uuid.UUID
+		bookedAt time.Time
+		currency string
+		residual decimal.Decimal
+	}
+	var candidates []synthCandidate
+	for rows.Next() {
+		var c synthCandidate
+		var amount, residualStr string
+		var posted *time.Time
+		if err := rows.Scan(&c.id, &c.bookedAt, &posted, &amount, &c.currency, &residualStr); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan synthetic row: %w", err)
+		}
+		residual, err := decimal.NewFromString(residualStr)
+		if err != nil {
+			continue
+		}
+		c.residual = residual
+		candidates = append(candidates, c)
+	}
+	rows.Close()
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return rowsErr
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	for _, c := range candidates {
+		from := c.bookedAt.Add(-time.Duration(reviewDedupDays) * 24 * time.Hour)
+		to := c.bookedAt.Add(time.Duration(reviewDedupDays) * 24 * time.Hour)
+		realRows, err := tx.Query(ctx, `
+			select id, booked_at, posted_at, amount::text, currency,
+			       coalesce(description, counterparty_raw, '')
+			from transactions
+			where tenant_id = $1
+			  and account_id = $2
+			  and status = 'posted'
+			  and currency = $3
+			  and booked_at between $4 and $5
+			  and coalesce(raw->>'synthetic', '') <> 'balance_reconcile'
+			  and id <> $6
+		`, tenantID, accountID, c.currency, from, to, c.id)
+		if err != nil {
+			return fmt.Errorf("scan real rows for synthetic: %w", err)
+		}
+		var existing []existingTx
+		for realRows.Next() {
+			var e existingTx
+			var amount string
+			if err := realRows.Scan(&e.ID, &e.BookedAt, &e.PostedAt, &amount, &e.Currency, &e.Description); err != nil {
+				realRows.Close()
+				return err
+			}
+			d, err := decimal.NewFromString(amount)
+			if err != nil {
+				continue
+			}
+			e.Amount = d
+			existing = append(existing, e)
+		}
+		realRows.Close()
+		if !residualExplainedByExisting(c.bookedAt, c.currency, c.residual, existing) {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `update transactions set status = 'voided' where id = $1 and tenant_id = $2`, c.id, tenantID); err != nil {
+			return fmt.Errorf("void synthetic %s: %w", c.id, err)
+		}
+	}
+	return nil
 }
