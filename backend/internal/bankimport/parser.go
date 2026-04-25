@@ -496,22 +496,30 @@ func parseConsolidatedDate(raw string, lang consolidatedLang) (time.Time, error)
 
 // parseConsolidatedMoney accepts the export's amount forms:
 //
-//	"-378,56 CHF (-413,02€)"   pt-pt non-EUR section, comma decimal
-//	"16,77€"                    pt-pt EUR section
-//	"20,00$ (16,97€)"           pt-pt USD section
-//	"-32.52 CHF"                en section, period decimal
-//	"27.38 CHF"                 en section
+//	"-378,56 CHF (-413,02€)"          pt-pt non-EUR section, comma decimal
+//	"16,77€"                           pt-pt EUR section
+//	"20,00$ (16,97€)"                  pt-pt USD section
+//	"-32.52 CHF"                       en section, period decimal
+//	"27.38 CHF"                        en section
+//	"1 063,95 CHF"                pt-pt with NBSP thousands separator (≥1000)
+//	"-2 585,94 CHF (-2 750€)"     same, negative
 //
 // Returns the signed amount and the trimmed currency suffix (which the caller
 // generally ignores in favour of the section currency).
-var consolidatedMoneyHead = regexp.MustCompile(`^\s*(-?[\d.,]+)\s*([A-Za-z€$£¥]*)`)
+var consolidatedMoneyHead = regexp.MustCompile(`^(-?[\d.,]+)([A-Za-z€$£¥]*)`)
 
 func parseConsolidatedMoney(raw string, lang consolidatedLang) (decimal.Decimal, string, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return decimal.Zero, "", nil
 	}
-	m := consolidatedMoneyHead.FindStringSubmatch(s)
+	// Revolut's pt-locale exports use U+00A0 (non-breaking space) as a
+	// thousand separator, e.g. "1 063,95 CHF". Without this strip the
+	// regex stops at the NBSP and parses the value as just "1". Strip ALL
+	// whitespace (NBSP + ASCII) up to the currency code so the numeric
+	// portion is one token.
+	stripped := stripWhitespace(s)
+	m := consolidatedMoneyHead.FindStringSubmatch(stripped)
 	if m == nil {
 		return decimal.Zero, "", fmt.Errorf("invalid money %q", raw)
 	}
@@ -519,7 +527,22 @@ func parseConsolidatedMoney(raw string, lang consolidatedLang) (decimal.Decimal,
 	if err != nil {
 		return decimal.Zero, "", err
 	}
-	return d, strings.TrimSpace(m[2]), nil
+	return d, m[2], nil
+}
+
+// stripWhitespace removes ASCII space, tab, and U+00A0 (non-breaking space).
+// We don't use strings.Map(unicode.IsSpace, …) because we want to drop NBSP
+// even though some encodings of "is whitespace" exclude it.
+func stripWhitespace(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == ' ' || r == '\t' || r == ' ' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // parseLocalizedDecimal handles "1.234,56" (pt) and "1,234.56" (en). When only

@@ -168,6 +168,41 @@ func TestParseRevolutConsolidatedEmitsPockets(t *testing.T) {
 	}
 }
 
+func TestParseRevolutConsolidatedHandlesThousandSeparators(t *testing.T) {
+	// pt-locale Revolut exports use U+00A0 (non-breaking space) as the
+	// thousand separator. Earlier versions of the parser stopped at the
+	// NBSP and lost the integer part — silently dropping ~999 from a
+	// "1 063,95 CHF" row and skewing the section's net by thousands.
+	content := strings.Join([]string{
+		`"Contas-correntes Extratos de operações",,,,,,,,`,
+		`"Conta Pessoal (CHF)",,,,,,,,`,
+		`"Extrato de operações",,,,,,,,`,
+		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo,Imposto retido,Outros impostos,Comissões`,
+		`17/06/2025,ecofort,Comerciante,"-1 063,95 CHF (-1 066,18€)","38,11 CHF (39,11€)","0,00 CHF","0,00 CHF","0,00 CHF"`,
+		`18/06/2025,Salary,Carregar,"5 000,00 CHF","5 038,11 CHF","0,00 CHF","0,00 CHF","0,00 CHF"`,
+		`Total,,,"3 936,05 CHF",,"0,00 CHF","0,00 CHF","0,00 CHF"`,
+		`---------,,,,,,,,`,
+		``,
+	}, "\n")
+	parsed, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(parsed.Transactions) != 2 {
+		t.Fatalf("expected 2 txs, got %d", len(parsed.Transactions))
+	}
+	got1 := parsed.Transactions[0].Amount
+	want1 := decimal.RequireFromString("-1063.95")
+	if !got1.Equal(want1) {
+		t.Errorf("ecofort amount = %s, want %s", got1, want1)
+	}
+	got2 := parsed.Transactions[1].Amount
+	want2 := decimal.RequireFromString("5000")
+	if !got2.Equal(want2) {
+		t.Errorf("salary amount = %s, want %s", got2, want2)
+	}
+}
+
 func TestParseRevolutConsolidatedDisambiguatesDuplicatePockets(t *testing.T) {
 	content := strings.Join([]string{
 		`"Contas-correntes Extratos de operações",,,,,,,,`,
