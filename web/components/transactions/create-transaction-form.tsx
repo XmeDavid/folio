@@ -14,9 +14,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field } from "@/components/ui/field";
-import { cn } from "@/lib/utils";
-
-const amountRegex = /^-?\d+(\.\d+)?$/;
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { FormError } from "@/components/ui/form-error";
+import { AMOUNT_REGEX } from "@/lib/decimal";
 
 const schema = z.object({
   accountId: z.string().uuid("Pick an account"),
@@ -24,7 +25,7 @@ const schema = z.object({
   amount: z
     .string()
     .trim()
-    .regex(amountRegex, "Decimal like 42.50 or -42.50")
+    .regex(AMOUNT_REGEX, "Decimal like 42.50 or -42.50")
     .refine((v) => v !== "0" && v !== "-0", "Amount can't be zero"),
   description: z.string().trim().max(200).optional().or(z.literal("")),
   counterpartyRaw: z.string().trim().max(200).optional().or(z.literal("")),
@@ -123,20 +124,13 @@ export function CreateTransactionForm({
               : undefined
           }
         >
-          <select
-            id="tx-account"
-            className={cn(
-              "h-9 w-full rounded-[8px] border border-border bg-surface px-3 text-[14px]",
-              "focus:border-border-strong focus:ring-2 focus:ring-accent focus:outline-none"
-            )}
-            {...form.register("accountId")}
-          >
+          <Select id="tx-account" {...form.register("accountId")}>
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name} - {a.currency}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
 
         <Field
@@ -192,22 +186,10 @@ export function CreateTransactionForm({
         htmlFor="tx-notes"
         error={form.formState.errors.notes?.message}
       >
-        <textarea
-          id="tx-notes"
-          rows={3}
-          className={cn(
-            "w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-[14px]",
-            "focus:border-border-strong focus:ring-2 focus:ring-accent focus:outline-none"
-          )}
-          {...form.register("notes")}
-        />
+        <Textarea id="tx-notes" rows={3} {...form.register("notes")} />
       </Field>
 
-      {err ? (
-        <div className="rounded-[8px] border border-border bg-[#F5DADA] px-3 py-2 text-[13px] text-danger">
-          {err.body?.error || err.message}
-        </div>
-      ) : null}
+      {err ? <FormError>{err.body?.error || err.message}</FormError> : null}
 
       <div className="flex items-center justify-end gap-2">
         {onCancel ? (

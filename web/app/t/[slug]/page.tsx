@@ -6,7 +6,7 @@ import type { Route } from "next";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Banknote, Plus, ReceiptText, Shapes } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
-import { EmptyState, ErrorBanner } from "@/components/app/empty";
+import { EmptyState, ErrorBanner, LoadingText } from "@/components/app/empty";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -23,6 +23,7 @@ import {
 } from "@/lib/api/client";
 import { useCurrentTenant } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
+import { addDecimalStrings } from "@/lib/decimal";
 
 export default function TenantDashboardPage({
   params,
@@ -132,7 +133,7 @@ export default function TenantDashboardPage({
           </CardHeader>
           <CardContent>
             {accounts.isLoading ? (
-              <p className="text-[13px] text-fg-muted">Loading...</p>
+              <LoadingText />
             ) : balances.length > 0 ? (
               <div className="flex flex-col divide-y divide-border">
                 {balances.map(([currency, amount]) => (
@@ -179,7 +180,7 @@ export default function TenantDashboardPage({
           </CardHeader>
           {transactions.isLoading ? (
             <CardContent>
-              <p className="text-[13px] text-fg-muted">Loading...</p>
+              <LoadingText />
             </CardContent>
           ) : transactionRows.length > 0 ? (
             <RecentTransactions
@@ -302,31 +303,4 @@ function balanceByCurrency(accounts: Account[]): [string, string][] {
     );
   }
   return [...balances.entries()].sort(([a], [b]) => a.localeCompare(b));
-}
-
-function addDecimalStrings(a: string, b: string): string {
-  const left = parseDecimal(a);
-  const right = parseDecimal(b);
-  const scale = Math.max(left.scale, right.scale);
-  const total =
-    left.units * 10n ** BigInt(scale - left.scale) +
-    right.units * 10n ** BigInt(scale - right.scale);
-  return formatDecimal(total, scale);
-}
-
-function parseDecimal(value: string): { units: bigint; scale: number } {
-  const match = value.trim().match(/^([+-]?)(\d+)(?:\.(\d+))?$/);
-  if (!match) return { units: 0n, scale: 0 };
-  const fraction = match[3] ?? "";
-  const units = BigInt(`${match[1] ?? ""}${match[2]}${fraction}`);
-  return { units, scale: fraction.length };
-}
-
-function formatDecimal(units: bigint, scale: number): string {
-  const sign = units < 0n ? "-" : "";
-  const raw = (units < 0n ? -units : units).toString().padStart(scale + 1, "0");
-  if (scale === 0) return `${sign}${raw}`;
-  const whole = raw.slice(0, -scale);
-  const fraction = raw.slice(-scale).replace(/0+$/, "");
-  return fraction ? `${sign}${whole}.${fraction}` : `${sign}${whole}`;
 }

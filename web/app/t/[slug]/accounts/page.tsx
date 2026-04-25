@@ -5,7 +5,7 @@ import { use } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { FileUp, Plus } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
-import { EmptyState, ErrorBanner } from "@/components/app/empty";
+import { EmptyState, ErrorBanner, LoadingText } from "@/components/app/empty";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -109,7 +109,7 @@ export default function AccountsPage({
       ) : null}
 
       {accountsQuery.isLoading ? (
-        <p className="text-[13px] text-fg-muted">Loading...</p>
+        <LoadingText />
       ) : accountsQuery.data && accountsQuery.data.length > 0 ? (
         <AccountList accounts={accountsQuery.data} locale={locale} />
       ) : (

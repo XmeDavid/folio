@@ -17,11 +17,10 @@ import { ACCOUNT_KINDS } from "@/lib/accounts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field } from "@/components/ui/field";
-import { cn } from "@/lib/utils";
+import { Select } from "@/components/ui/select";
+import { FormError } from "@/components/ui/form-error";
 import { currencyOptionsWith } from "@/lib/localization";
-
-// Keep amounts as strings - backend owns the decimal math.
-const amountRegex = /^-?\d+(\.\d+)?$/;
+import { AMOUNT_REGEX } from "@/lib/decimal";
 
 const schema = z
   .object({
@@ -37,7 +36,7 @@ const schema = z
     openingBalance: z
       .string()
       .trim()
-      .regex(amountRegex, "Decimal like 0 or 1234.50"),
+      .regex(AMOUNT_REGEX, "Decimal like 0 or 1234.50"),
     openingBalanceDate: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
@@ -209,9 +208,9 @@ export function CreateAccountForm({
             </span>
           </div>
           {importErr ? (
-            <div className="mt-3 rounded-[8px] border border-border bg-[#F5DADA] px-3 py-2 text-[13px] text-danger">
+            <FormError className="mt-3">
               {importErr.body?.error || importErr.message}
-            </div>
+            </FormError>
           ) : null}
         </div>
         <div className="flex items-center justify-end gap-2">
@@ -255,20 +254,13 @@ export function CreateAccountForm({
           htmlFor="acc-kind"
           error={form.formState.errors.kind?.message}
         >
-          <select
-            id="acc-kind"
-            className={cn(
-              "h-9 w-full rounded-[8px] border border-border bg-surface px-3 text-[14px]",
-              "focus:border-border-strong focus:ring-2 focus:ring-accent focus:outline-none"
-            )}
-            {...form.register("kind")}
-          >
+          <Select id="acc-kind" {...form.register("kind")}>
             {ACCOUNT_KINDS.map((k) => (
               <option key={k.value} value={k.value}>
                 {k.label}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
       </div>
 
@@ -278,12 +270,9 @@ export function CreateAccountForm({
           htmlFor="acc-ccy"
           error={form.formState.errors.currency?.message}
         >
-          <select
+          <Select
             id="acc-ccy"
-            className={cn(
-              "h-9 w-full rounded-[8px] border border-border bg-surface px-3 text-[14px] tabular",
-              "focus:border-border-strong focus:ring-2 focus:ring-accent focus:outline-none"
-            )}
+            className="tabular"
             {...form.register("currency")}
           >
             {currencyOptions.map((option) => (
@@ -291,7 +280,7 @@ export function CreateAccountForm({
                 {option.label}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
 
         <Field
@@ -371,9 +360,9 @@ export function CreateAccountForm({
       ) : null}
 
       {previewErr ? (
-        <div className="rounded-[8px] border border-border bg-[#F5DADA] px-3 py-2 text-[13px] text-danger">
+        <FormError>
           {previewErr.body?.error || previewErr.message}
-        </div>
+        </FormError>
       ) : null}
 
       <div className="grid gap-5 sm:grid-cols-3">
@@ -419,11 +408,7 @@ export function CreateAccountForm({
         </Field>
       </div>
 
-      {err ? (
-        <div className="rounded-[8px] border border-border bg-[#F5DADA] px-3 py-2 text-[13px] text-danger">
-          {err.body?.error || err.message}
-        </div>
-      ) : null}
+      {err ? <FormError>{err.body?.error || err.message}</FormError> : null}
 
       <div className="flex items-center justify-end gap-2">
         {onCancel ? (

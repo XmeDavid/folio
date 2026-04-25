@@ -5,7 +5,7 @@ import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
-import { EmptyState, ErrorBanner } from "@/components/app/empty";
+import { EmptyState, ErrorBanner, LoadingText } from "@/components/app/empty";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -93,7 +93,7 @@ export default function TransactionsPage({
           description="Transactions must post to an account. Head to Accounts to create one."
         />
       ) : txQuery.isLoading || accountsQuery.isLoading ? (
-        <p className="text-[13px] text-fg-muted">Loading...</p>
+        <LoadingText />
       ) : txQuery.data && txQuery.data.length > 0 ? (
         <TransactionTable
           transactions={txQuery.data}

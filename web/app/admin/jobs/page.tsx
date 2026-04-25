@@ -4,7 +4,14 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DataTable } from "@/components/ui/data-table";
+import { PageHeader } from "@/components/app/page-header";
 import { useAdminJobs, useAdminMutation } from "@/lib/admin/client";
+import { formatDateTime } from "@/lib/format";
+
+type AdminJob = NonNullable<
+  ReturnType<typeof useAdminJobs>["data"]
+>["data"][number];
 
 export default function AdminJobsPage() {
   const [state, setState] = useState("");
@@ -12,15 +19,62 @@ export default function AdminJobsPage() {
   const q = useAdminJobs({ state, kind });
   const retry = useAdminMutation((id) => `/api/v1/admin/jobs/${id}/retry`);
   return (
-    <section className="space-y-5">
-      <div className="border-b border-border pb-5"><h1 className="text-[28px] font-normal">Jobs</h1><p className="text-[14px] text-fg-muted">River queue inspection and retry.</p></div>
-      <div className="flex max-w-2xl gap-3"><Input value={state} onChange={(e) => setState(e.target.value)} placeholder="State" /><Input value={kind} onChange={(e) => setKind(e.target.value)} placeholder="Kind" /></div>
-      <div className="overflow-hidden border border-border bg-surface">
-        <table className="w-full text-left text-[14px]">
-          <thead className="bg-surface-subtle text-[12px] text-fg-muted uppercase"><tr><th className="px-4 py-3">Kind</th><th>Queue</th><th>State</th><th>Scheduled</th><th></th></tr></thead>
-          <tbody>{(q.data?.data ?? []).map((j) => <tr key={j.id} className="border-t border-border"><td className="px-4 py-3 font-medium">{j.kind}</td><td>{j.queue}</td><td><Badge variant={j.state === "completed" ? "success" : j.state === "discarded" ? "danger" : "neutral"}>{j.state}</Badge></td><td>{new Date(j.scheduledAt).toLocaleString()}</td><td className="pr-4 text-right"><Button variant="secondary" size="sm" onClick={() => retry.mutate(String(j.id))}>Retry</Button></td></tr>)}</tbody>
-        </table>
+    <section className="flex flex-col gap-5">
+      <PageHeader
+        title="Jobs"
+        description="River queue inspection and retry."
+      />
+      <div className="flex max-w-2xl gap-3">
+        <Input
+          value={state}
+          onChange={(e) => setState(e.target.value)}
+          placeholder="State"
+        />
+        <Input
+          value={kind}
+          onChange={(e) => setKind(e.target.value)}
+          placeholder="Kind"
+        />
       </div>
+      <DataTable<AdminJob>
+        columns={[
+          { header: "Kind", cell: (j) => <span className="font-medium">{j.kind}</span> },
+          { header: "Queue", cell: (j) => j.queue },
+          {
+            header: "State",
+            cell: (j) => (
+              <Badge
+                variant={
+                  j.state === "completed"
+                    ? "success"
+                    : j.state === "discarded"
+                      ? "danger"
+                      : "neutral"
+                }
+              >
+                {j.state}
+              </Badge>
+            ),
+          },
+          { header: "Scheduled", cell: (j) => formatDateTime(j.scheduledAt) },
+          {
+            header: "",
+            align: "right",
+            cell: (j) => (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => retry.mutate(String(j.id))}
+              >
+                Retry
+              </Button>
+            ),
+          },
+        ]}
+        rows={q.data?.data ?? []}
+        rowKey={(j) => j.id}
+        isLoading={q.isLoading}
+      />
     </section>
   );
 }

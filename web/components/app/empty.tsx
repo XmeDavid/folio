@@ -1,6 +1,18 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
+export function LoadingText({
+  children = "Loading...",
+  className,
+}: {
+  children?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <p className={cn("text-[13px] text-fg-muted", className)}>{children}</p>
+  );
+}
+
 export function EmptyState({
   title,
   description,
