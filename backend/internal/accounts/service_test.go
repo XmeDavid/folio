@@ -141,4 +141,21 @@ func TestPatchInput_normalize(t *testing.T) {
 			t.Fatalf("unexpected: %v", err)
 		}
 	})
+	t.Run("invalid kind rejected", func(t *testing.T) {
+		bogus := "bogus"
+		_, err := PatchInput{Kind: &bogus}.normalize()
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("kind is lowercased", func(t *testing.T) {
+		k := "  SAVINGS  "
+		out, err := PatchInput{Kind: &k}.normalize()
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+		if got := *out.Kind; got != "savings" {
+			t.Fatalf("kind = %q, want %q", got, "savings")
+		}
+	})
 }

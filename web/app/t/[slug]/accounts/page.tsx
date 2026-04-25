@@ -3,7 +3,16 @@
 import * as React from "react";
 import { use } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, FileUp, Pencil, Plus, Trash2, X } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  Check,
+  FileUp,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
 import { EmptyState, ErrorBanner, LoadingText } from "@/components/app/empty";
 import { Button } from "@/components/ui/button";
@@ -38,10 +47,11 @@ export default function AccountsPage({
   const tenantId = tenant?.id ?? null;
   const [creating, setCreating] = React.useState(false);
   const [importing, setImporting] = React.useState(false);
+  const [includeArchived, setIncludeArchived] = React.useState(false);
 
   const accountsQuery = useQuery({
-    queryKey: ["accounts", tenantId],
-    queryFn: () => fetchAccounts(tenantId!),
+    queryKey: ["accounts", tenantId, includeArchived],
+    queryFn: () => fetchAccounts(tenantId!, { includeArchived }),
     enabled: !!tenantId,
   });
 
@@ -113,11 +123,22 @@ export default function AccountsPage({
       {accountsQuery.isLoading ? (
         <LoadingText />
       ) : accountsQuery.data && accountsQuery.data.length > 0 ? (
-        <AccountList
-          accounts={accountsQuery.data}
-          locale={locale}
-          tenantId={tenant.id}
-        />
+        <div className="flex flex-col gap-2">
+          <label className="flex items-center gap-2 self-end text-[12px] text-fg-muted">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5"
+              checked={includeArchived}
+              onChange={(e) => setIncludeArchived(e.target.checked)}
+            />
+            Show archived
+          </label>
+          <AccountList
+            accounts={accountsQuery.data}
+            locale={locale}
+            tenantId={tenant.id}
+          />
+        </div>
       ) : (
         <EmptyState
           title="No accounts yet"
@@ -519,70 +540,89 @@ function AccountRow({
   const queryClient = useQueryClient();
   const [mode, setMode] = React.useState<"view" | "edit" | "confirm-delete">("view");
   const [draftName, setDraftName] = React.useState(account.name);
+  const [draftKind, setDraftKind] = React.useState<AccountKind>(account.kind);
 
-  const renameMutation = useMutation({
-    mutationFn: (name: string) =>
-      updateAccount(tenantId, account.id, { name }),
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["accounts", tenantId] });
+
+  const editMutation = useMutation({
+    mutationFn: (patch: { name?: string; kind?: AccountKind }) =>
+      updateAccount(tenantId, account.id, patch),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["accounts", tenantId] });
+      await invalidate();
       setMode("view");
     },
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: () => deleteAccount(tenantId, account.id),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["accounts", tenantId] });
-    },
+  const archiveMutation = useMutation({
+    mutationFn: (archived: boolean) =>
+      updateAccount(tenantId, account.id, { archived }),
+    onSuccess: invalidate,
   });
 
-  const busy = renameMutation.isPending || deleteMutation.isPending;
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteAccount(tenantId, account.id),
+    onSuccess: invalidate,
+  });
+
+  const busy =
+    editMutation.isPending ||
+    archiveMutation.isPending ||
+    deleteMutation.isPending;
+  const apiError =
+    (editMutation.error instanceof ApiError && editMutation.error) ||
+    (archiveMutation.error instanceof ApiError && archiveMutation.error) ||
+    (deleteMutation.error instanceof ApiError && deleteMutation.error) ||
+    null;
+
+  const archived = !!account.archivedAt;
 
   return (
-    <li className="flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-surface-subtle sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <div className="flex flex-wrap items-center gap-2">
-          {mode === "edit" ? (
+    <li className="flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-surface-subtle sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex min-w-0 flex-col gap-1.5">
+        {mode === "edit" ? (
+          <div className="flex flex-wrap items-center gap-2">
             <Input
               value={draftName}
               onChange={(e) => setDraftName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && draftName.trim()) {
-                  renameMutation.mutate(draftName.trim());
-                } else if (e.key === "Escape") {
-                  setDraftName(account.name);
-                  setMode("view");
-                }
-              }}
               autoFocus
               className="h-8 max-w-[280px]"
+              placeholder="Account name"
             />
-          ) : (
+            <select
+              value={draftKind}
+              onChange={(e) => setDraftKind(e.target.value as AccountKind)}
+              className="h-8 rounded-[8px] border border-border bg-surface px-2 text-[13px]"
+            >
+              {ACCOUNT_KINDS.map((k) => (
+                <option key={k.value} value={k.value}>
+                  {k.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-[15px] font-medium text-fg">
               {account.name}
             </span>
-          )}
-          {account.nickname && mode === "view" ? (
-            <span className="text-[12px] text-fg-faint">
-              ({account.nickname})
-            </span>
-          ) : null}
-          <Badge variant="neutral">{accountKindLabel(account.kind)}</Badge>
-          {account.archivedAt ? <Badge variant="amber">Archived</Badge> : null}
-        </div>
+            {account.nickname ? (
+              <span className="text-[12px] text-fg-faint">
+                ({account.nickname})
+              </span>
+            ) : null}
+            <Badge variant="neutral">{accountKindLabel(account.kind)}</Badge>
+            {archived ? <Badge variant="amber">Archived</Badge> : null}
+          </div>
+        )}
         <div className="text-[12px] text-fg-muted">
           {account.currency}
           {account.institution ? `  -  ${account.institution}` : ""} - opened{" "}
           {formatDate(account.openDate, locale)}
         </div>
-        {renameMutation.error instanceof ApiError ? (
+        {apiError ? (
           <p className="text-[11px] text-danger">
-            {renameMutation.error.body?.error || renameMutation.error.message}
-          </p>
-        ) : null}
-        {deleteMutation.error instanceof ApiError ? (
-          <p className="text-[11px] text-danger">
-            {deleteMutation.error.body?.error || deleteMutation.error.message}
+            {apiError.body?.error || apiError.message}
           </p>
         ) : null}
       </div>
@@ -600,25 +640,33 @@ function AccountRow({
         <AccountRowActions
           mode={mode}
           busy={busy}
+          archived={archived}
           onEdit={() => {
             setDraftName(account.name);
+            setDraftKind(account.kind);
             setMode("edit");
           }}
           onSaveEdit={() => {
+            const patch: { name?: string; kind?: AccountKind } = {};
             const trimmed = draftName.trim();
-            if (trimmed && trimmed !== account.name) {
-              renameMutation.mutate(trimmed);
-            } else {
+            if (trimmed && trimmed !== account.name) patch.name = trimmed;
+            if (draftKind !== account.kind) patch.kind = draftKind;
+            if (Object.keys(patch).length === 0) {
               setMode("view");
+              return;
             }
+            editMutation.mutate(patch);
           }}
           onCancelEdit={() => {
             setDraftName(account.name);
+            setDraftKind(account.kind);
             setMode("view");
           }}
           onAskDelete={() => setMode("confirm-delete")}
           onConfirmDelete={() => deleteMutation.mutate()}
           onCancelDelete={() => setMode("view")}
+          onArchive={() => archiveMutation.mutate(true)}
+          onRestore={() => archiveMutation.mutate(false)}
         />
       </div>
     </li>
@@ -628,21 +676,27 @@ function AccountRow({
 function AccountRowActions({
   mode,
   busy,
+  archived,
   onEdit,
   onSaveEdit,
   onCancelEdit,
   onAskDelete,
   onConfirmDelete,
   onCancelDelete,
+  onArchive,
+  onRestore,
 }: {
   mode: "view" | "edit" | "confirm-delete";
   busy: boolean;
+  archived: boolean;
   onEdit: () => void;
   onSaveEdit: () => void;
   onCancelEdit: () => void;
   onAskDelete: () => void;
   onConfirmDelete: () => void;
   onCancelDelete: () => void;
+  onArchive: () => void;
+  onRestore: () => void;
 }) {
   if (mode === "edit") {
     return (
@@ -653,7 +707,7 @@ function AccountRowActions({
           size="sm"
           onClick={onSaveEdit}
           disabled={busy}
-          aria-label="Save name"
+          aria-label="Save changes"
         >
           <Check className="h-4 w-4" />
         </Button>
@@ -663,7 +717,7 @@ function AccountRowActions({
           size="sm"
           onClick={onCancelEdit}
           disabled={busy}
-          aria-label="Cancel rename"
+          aria-label="Cancel"
         >
           <X className="h-4 w-4" />
         </Button>
@@ -706,15 +760,40 @@ function AccountRowActions({
         variant="ghost"
         size="sm"
         onClick={onEdit}
-        aria-label="Rename account"
+        disabled={busy}
+        aria-label="Edit account"
       >
         <Pencil className="h-4 w-4" />
       </Button>
+      {archived ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onRestore}
+          disabled={busy}
+          aria-label="Restore account"
+        >
+          <ArchiveRestore className="h-4 w-4" />
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onArchive}
+          disabled={busy}
+          aria-label="Archive account"
+        >
+          <Archive className="h-4 w-4" />
+        </Button>
+      )}
       <Button
         type="button"
         variant="ghost"
         size="sm"
         onClick={onAskDelete}
+        disabled={busy}
         aria-label="Delete account"
       >
         <Trash2 className="h-4 w-4" />

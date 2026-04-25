@@ -337,6 +337,7 @@ export async function createAccount(
 export type AccountPatchInput = {
   name?: string;
   nickname?: string | null;
+  kind?: AccountKind;
   institution?: string | null;
   includeInNetworth?: boolean;
   includeInSavingsRate?: boolean;

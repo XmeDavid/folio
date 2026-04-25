@@ -117,6 +117,7 @@ func (in CreateInput) normalize() (CreateInput, error) {
 type PatchInput struct {
 	Name                 *string
 	Nickname             *string
+	Kind                 *string
 	Institution          *string
 	IncludeInNetworth    *bool
 	IncludeInSavingsRate *bool
@@ -128,6 +129,13 @@ type PatchInput struct {
 func (in PatchInput) normalize() (PatchInput, error) {
 	if in.Name != nil && strings.TrimSpace(*in.Name) == "" {
 		return in, httpx.NewValidationError("name cannot be empty")
+	}
+	if in.Kind != nil {
+		k := strings.ToLower(strings.TrimSpace(*in.Kind))
+		if !validKinds[k] {
+			return in, httpx.NewValidationError(fmt.Sprintf("kind %q is not a valid account_kind", *in.Kind))
+		}
+		*in.Kind = k
 	}
 	if in.CloseDate != nil && *in.CloseDate != "" {
 		if _, err := time.Parse("2006-01-02", *in.CloseDate); err != nil {
@@ -365,6 +373,12 @@ func (s *Service) Update(ctx context.Context, tenantID, accountID uuid.UUID, raw
 			args[len(args)-1] = *in.Nickname
 		}
 		sets = append(sets, "nickname = "+ph)
+	}
+	if in.Kind != nil {
+		ph := next()
+		args[len(args)-1] = *in.Kind
+		// account_kind is an enum; explicit cast keeps Postgres happy.
+		sets = append(sets, "kind = "+ph+"::account_kind")
 	}
 	if in.Institution != nil {
 		ph := next()

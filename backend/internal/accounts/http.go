@@ -48,6 +48,7 @@ type createReq struct {
 type patchReq struct {
 	Name                 *string `json:"name"`
 	Nickname             *string `json:"nickname"`
+	Kind                 *string `json:"kind"`
 	Institution          *string `json:"institution"`
 	IncludeInNetworth    *bool   `json:"includeInNetworth"`
 	IncludeInSavingsRate *bool   `json:"includeInSavingsRate"`
@@ -146,6 +147,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	in := PatchInput{
 		Name:                 req.Name,
 		Nickname:             req.Nickname,
+		Kind:                 req.Kind,
 		Institution:          req.Institution,
 		IncludeInNetworth:    req.IncludeInNetworth,
 		IncludeInSavingsRate: req.IncludeInSavingsRate,
