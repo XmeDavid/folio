@@ -427,18 +427,43 @@ func (s *Service) Update(ctx context.Context, tenantID, accountID uuid.UUID, raw
 	return s.Get(ctx, tenantID, accountID)
 }
 
-// Delete hard-deletes an account. Cascades drop all transactions, source
-// refs, balance snapshots, reconciliation checkpoints, allocations, etc.
-// via the FK chain. Use Update(Archived=true) for soft removal that keeps
-// historical data; this is the path for genuine "remove this entirely"
-// (e.g. cleaning up a buggy import).
+// Delete hard-deletes an account. Use Update(Archived=true) for soft
+// removal that keeps historical data; this is the path for genuine "remove
+// this entirely" (e.g. cleaning up a buggy import).
+//
+// `source_refs` is polymorphic and intentionally has no FK to `transactions`
+// (it can point at any entity_type), so the transactions FK cascade does
+// NOT clean them up. We delete them by hand in the same transaction; if
+// that step is skipped, the unique index `source_refs_dedupe_idx` later
+// rejects re-imports of the same logical rows with a 23505 collision
+// against orphaned source_refs.
 func (s *Service) Delete(ctx context.Context, tenantID, accountID uuid.UUID) error {
-	tag, err := s.pool.Exec(ctx, `delete from accounts where tenant_id = $1 and id = $2`, tenantID, accountID)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete account: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `
+		delete from source_refs
+		where tenant_id = $1
+		  and entity_type = 'transaction'
+		  and entity_id in (
+		    select id from transactions where tenant_id = $1 and account_id = $2
+		  )
+	`, tenantID, accountID); err != nil {
+		return fmt.Errorf("delete account source_refs: %w", err)
+	}
+
+	tag, err := tx.Exec(ctx, `delete from accounts where tenant_id = $1 and id = $2`, tenantID, accountID)
 	if err != nil {
 		return fmt.Errorf("delete account: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return httpx.NewNotFoundError("account")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete account: %w", err)
 	}
 	return nil
 }
