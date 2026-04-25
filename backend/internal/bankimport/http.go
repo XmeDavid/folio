@@ -1,0 +1,109 @@
+package bankimport
+
+import (
+	"encoding/json"
+	"mime/multipart"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	"github.com/xmedavid/folio/backend/internal/auth"
+	"github.com/xmedavid/folio/backend/internal/httpx"
+)
+
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+func (h *Handler) MountAccountRoutes(r chi.Router) {
+	r.Post("/import-preview", h.previewForNewAccount)
+	r.Post("/{accountId}/imports/preview", h.previewForExistingAccount)
+	r.Post("/{accountId}/imports", h.applyToExistingAccount)
+}
+
+func (h *Handler) previewForNewAccount(w http.ResponseWriter, r *http.Request) {
+	tenantID := auth.MustTenant(r).ID
+	fileName, file, ok := readImportFile(w, r)
+	if !ok {
+		return
+	}
+	defer file.Close()
+	res, err := h.svc.Preview(r.Context(), tenantID, fileName, file, nil)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) previewForExistingAccount(w http.ResponseWriter, r *http.Request) {
+	tenantID := auth.MustTenant(r).ID
+	accountID, ok := parseAccountID(w, r)
+	if !ok {
+		return
+	}
+	fileName, file, ok := readImportFile(w, r)
+	if !ok {
+		return
+	}
+	defer file.Close()
+	res, err := h.svc.Preview(r.Context(), tenantID, fileName, file, &accountID)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+type applyReq struct {
+	FileToken string `json:"fileToken"`
+}
+
+func (h *Handler) applyToExistingAccount(w http.ResponseWriter, r *http.Request) {
+	tenantID := auth.MustTenant(r).ID
+	userID := auth.MustUser(r).ID
+	accountID, ok := parseAccountID(w, r)
+	if !ok {
+		return
+	}
+	var req applyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return
+	}
+	if req.FileToken == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "fileToken is required")
+		return
+	}
+	res, err := h.svc.Apply(r.Context(), tenantID, accountID, userID, req.FileToken)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, res)
+}
+
+func parseAccountID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	id, err := uuid.Parse(chi.URLParam(r, "accountId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "accountId must be a UUID")
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+func readImportFile(w http.ResponseWriter, r *http.Request) (string, multipart.File, bool) {
+	if err := r.ParseMultipartForm(maxImportBytes); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_multipart", "request must include a file field")
+		return "", nil, false
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "file is required")
+		return "", nil, false
+	}
+	return header.Filename, file, true
+}

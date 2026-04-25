@@ -66,6 +66,19 @@ async function request<T>(
   return (await res.json()) as T;
 }
 
+async function uploadRequest<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    credentials: "include",
+    headers: defaultHeaders(),
+    body: form,
+  });
+  if (!res.ok) {
+    throw await parseError(res);
+  }
+  return (await res.json()) as T;
+}
+
 // ---------------------------------------------------------------------------
 // Identity
 // ---------------------------------------------------------------------------
@@ -319,6 +332,77 @@ export async function createAccount(
     method: "POST",
     json: body,
   });
+}
+
+export type ImportPreviewRow = {
+  bookedAt: string;
+  amount: string;
+  currency: string;
+  description: string;
+};
+
+export type ImportConflictPreview = {
+  incoming: ImportPreviewRow;
+  existing: ImportPreviewRow;
+};
+
+export type ImportPreview = {
+  profile: string;
+  institution?: string;
+  accountHint?: string;
+  suggestedName?: string;
+  suggestedKind?: AccountKind;
+  suggestedCurrency?: string;
+  suggestedOpenDate?: string;
+  transactionCount: number;
+  dateFrom?: string;
+  dateTo?: string;
+  sampleTransactions: ImportPreviewRow[];
+  warnings?: string[];
+  fileToken: string;
+  fileName?: string;
+  fileHash: string;
+  existingAccountId?: string;
+  duplicateCount: number;
+  conflictCount: number;
+  importableCount: number;
+  conflictTransactions?: ImportConflictPreview[];
+};
+
+export type ImportApplyResult = {
+  batchId: string;
+  insertedCount: number;
+  duplicateCount: number;
+  conflictCount: number;
+  transactionIds: string[];
+  conflicts?: ImportConflictPreview[];
+};
+
+export async function previewAccountImport(
+  tenantId: string,
+  file: File,
+  accountId?: string,
+): Promise<ImportPreview> {
+  const form = new FormData();
+  form.append("file", file);
+  const path = accountId
+    ? `/api/v1/t/${tenantId}/accounts/${accountId}/imports/preview`
+    : `/api/v1/t/${tenantId}/accounts/import-preview`;
+  return uploadRequest<ImportPreview>(path, form);
+}
+
+export async function applyAccountImport(
+  tenantId: string,
+  accountId: string,
+  fileToken: string,
+): Promise<ImportApplyResult> {
+  return request<ImportApplyResult>(
+    `/api/v1/t/${tenantId}/accounts/${accountId}/imports`,
+    {
+      method: "POST",
+      json: { fileToken },
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------

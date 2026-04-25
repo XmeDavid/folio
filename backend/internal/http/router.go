@@ -15,6 +15,7 @@ import (
 	"github.com/xmedavid/folio/backend/internal/accounts"
 	"github.com/xmedavid/folio/backend/internal/admin"
 	"github.com/xmedavid/folio/backend/internal/auth"
+	"github.com/xmedavid/folio/backend/internal/bankimport"
 	"github.com/xmedavid/folio/backend/internal/classification"
 	"github.com/xmedavid/folio/backend/internal/config"
 	"github.com/xmedavid/folio/backend/internal/identity"
@@ -70,6 +71,8 @@ func NewRouter(d Deps) http.Handler {
 
 	accountsSvc := accounts.NewService(d.DB)
 	accountsH := accounts.NewHandler(accountsSvc)
+	importSvc := bankimport.NewService(d.DB)
+	importH := bankimport.NewHandler(importSvc)
 	transactionsSvc := transactions.NewService(d.DB)
 	transactionsH := transactions.NewHandler(transactionsSvc)
 	classificationSvc := classification.NewService(d.DB)
@@ -111,7 +114,10 @@ func NewRouter(d Deps) http.Handler {
 			authH.MountTenantAdmin(r)  // PATCH /, DELETE / — owner-gated
 			r.With(authSvc.RequireEmailVerified).Route("/invites", inviteH.MountTenantInvites)
 
-			r.Route("/accounts", accountsH.Mount)
+			r.Route("/accounts", func(r chi.Router) {
+				importH.MountAccountRoutes(r)
+				accountsH.Mount(r)
+			})
 			r.Route("/transactions", transactionsH.Mount)
 			r.Route("/transactions/{transactionId}/tags", classificationH.MountTransactionTags)
 			r.Post("/transactions/{transactionId}/apply-categorization-rules",
