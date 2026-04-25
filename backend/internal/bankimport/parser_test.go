@@ -168,6 +168,94 @@ func TestParseRevolutConsolidatedEmitsPockets(t *testing.T) {
 	}
 }
 
+func TestParseRevolutConsolidatedCryptoSection(t *testing.T) {
+	// Compact synthetic Crypto section covering all six sub-tables. Each
+	// row exercises one op kind so the test pins down: signed amount,
+	// currency=symbol, AccountHint="Crypto <SYMBOL>", KindHint=crypto_wallet,
+	// description preserves op semantics, and the Raw map carries the
+	// "op" tag the trade-pipeline pass will read later.
+	content := strings.Join([]string{
+		`"Contas-correntes Extratos de operações",,,,,,,,`,
+		`"Conta Pessoal (EUR)",,,,,,,,`,
+		`"Extrato de operações",,,,,,,,`,
+		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo`,
+		`15/05/2019,Conversão cambial para BTC,Câmbio,"-2,00€","8,00€"`,
+		`Total,,,"-2,00€"`,
+		`---------,,,,,,,,`,
+		`"Cripto Extratos de operações",,,,,,,,`,
+		`"Extrato de operação (apenas vendas)",,,,,,,,`,
+		`"Data (da venda, da compra)","Descrição e símbolo","Idade das unidades","Unidades vendidas","Preço unitário (Data de venda, na Data de compra)","Valor (da venda, da compra)","Ganhos de capital","Comissões"`,
+		`"15.06.19, 15.05.19",BTC,1 month,"0,00027215","+ 7679,59€","+ 2,09€","0,08€","0,00€"`,
+		`"Extrato de operação (apenas aquisições)",,,,,,,,`,
+		`"Data de compra","Descrição e símbolo","Unidades compradas","Preço unitário","Valor de compra","Comissões"`,
+		`"15.05.19",BTC,"0,00027215","7348,89€","2,00€","0,00€"`,
+		`"Extrato de operação (apenas depósitos)",,,,,,,,`,
+		`"Data do depósito","Descrição e símbolo","Unidades depositadas","Preço unitário","Valor de compra","Comissões"`,
+		`"26.01.24",BTC,"0,0066141","39052,93€","258,30€","0,00€"`,
+		`"Extrato de operação (apenas levantamentos)",,,,,,,,`,
+		`"Data de levantamento","Descrição e símbolo","Unidades retiradas","Comissões"`,
+		`"04.07.24",SOL,"0,02429","1,25€"`,
+		`"Extrato de operação (apenas aquisições através de Learn & Earn)",,,,,,,,`,
+		`"Data do recibo","Descrição e símbolo","Unidades recebidas","Preço unitário","Valor recebido","Comissões"`,
+		`"28.01.25",LMWR,"0,57948523","0,17€","0,10€","0,00€"`,
+		`"Extrato de operação (apenas aquisições por Staking)",,,,,,,,`,
+		`"Data do recibo","Descrição e símbolo","Unidades recebidas","Preço unitário","Valor recebido","Comissões"`,
+		`"16.09.24",SOL,"0,000032","0,00€","0,00€","0,01€"`,
+		``,
+	}, "\n")
+
+	parsed, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	type want struct {
+		hint     string
+		currency string
+		amount   string
+		op       string
+		desc     string
+	}
+	// Sorted by booked date (stable sort preserves insertion order on ties).
+	expected := []want{
+		{"Conta Pessoal", "EUR", "-2", "", "Conversão cambial para BTC"},
+		{"Crypto BTC", "BTC", "0.00027215", "buy", "Buy BTC"},
+		{"Crypto BTC", "BTC", "-0.00027215", "sell", "Sell BTC"},
+		{"Crypto BTC", "BTC", "0.0066141", "deposit", "Deposit BTC"},
+		{"Crypto SOL", "SOL", "-0.02429", "withdrawal", "Withdrawal SOL"},
+		{"Crypto SOL", "SOL", "0.000032", "staking", "Staking reward SOL"},
+		{"Crypto LMWR", "LMWR", "0.57948523", "learn_and_earn", "Learn & Earn reward LMWR"},
+	}
+	if len(parsed.Transactions) != len(expected) {
+		t.Fatalf("expected %d txs, got %d", len(expected), len(parsed.Transactions))
+	}
+	for i, w := range expected {
+		got := parsed.Transactions[i]
+		if got.AccountHint != w.hint {
+			t.Errorf("[%d] account hint = %q, want %q", i, got.AccountHint, w.hint)
+		}
+		if got.Currency != w.currency {
+			t.Errorf("[%d] currency = %q, want %q", i, got.Currency, w.currency)
+		}
+		if !got.Amount.Equal(decimal.RequireFromString(w.amount)) {
+			t.Errorf("[%d] amount = %s, want %s", i, got.Amount, w.amount)
+		}
+		if w.op != "" {
+			if got.KindHint != "crypto_wallet" {
+				t.Errorf("[%d] kind hint = %q, want crypto_wallet", i, got.KindHint)
+			}
+			if op := got.Raw["op"]; op != w.op {
+				t.Errorf("[%d] raw op = %q, want %q", i, op, w.op)
+			}
+			if got.Description == nil || *got.Description != w.desc {
+				t.Errorf("[%d] desc = %v, want %q", i, got.Description, w.desc)
+			}
+		} else if got.KindHint != "" {
+			t.Errorf("[%d] non-crypto row should have empty KindHint, got %q", i, got.KindHint)
+		}
+	}
+}
+
 func TestParseRevolutConsolidatedHandlesThousandSeparators(t *testing.T) {
 	// pt-locale Revolut exports use U+00A0 (non-breaking space) as the
 	// thousand separator. Earlier versions of the parser stopped at the

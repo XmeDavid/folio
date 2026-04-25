@@ -262,6 +262,19 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 			out.Transactions = append(out.Transactions, tx)
 		}
 	}
+
+	// Crypto section: a single top-level block with six sub-tables (Sells /
+	// Acquisitions / Deposits / Withdrawals / Learn & Earn / Staking).
+	// Each emits one ParsedTransaction per row in its asset's native
+	// currency (BTC, SOL, …), tagged with KindHint=crypto_wallet so the
+	// importer creates per-asset wallet accounts.
+	cryptoTxs, cryptoSkipped, err := parseConsolidatedCryptoSection(records, lang)
+	if err != nil {
+		return ParsedFile{}, err
+	}
+	out.Transactions = append(out.Transactions, cryptoTxs...)
+	skippedRows += cryptoSkipped
+
 	if skippedRows > 0 {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("Skipped %d unparseable Revolut consolidated rows.", skippedRows))
 	}
@@ -270,6 +283,275 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 	}
 	finalizeParsed(&out)
 	return out, nil
+}
+
+// cryptoOpKind identifies which sub-table of the Cripto section a row came
+// from. Drives the description, sign of the amount, and downstream income
+// categorisation when the trade pipeline lands.
+type cryptoOpKind string
+
+const (
+	cryptoOpBuy        cryptoOpKind = "buy"
+	cryptoOpSell       cryptoOpKind = "sell"
+	cryptoOpDeposit    cryptoOpKind = "deposit"
+	cryptoOpWithdrawal cryptoOpKind = "withdrawal"
+	cryptoOpLearnEarn  cryptoOpKind = "learn_and_earn"
+	cryptoOpStaking    cryptoOpKind = "staking"
+)
+
+// parseConsolidatedCryptoSection finds the Cripto / Crypto block in the
+// records and walks each of its six sub-tables.
+func parseConsolidatedCryptoSection(records [][]string, lang consolidatedLang) ([]ParsedTransaction, int, error) {
+	startIdx := -1
+	header := "Cripto Extratos de operações"
+	if lang == consolidatedLangEN {
+		header = "Crypto Transaction statements"
+	}
+	for i, row := range records {
+		if strings.TrimSpace(firstField(row)) == header {
+			startIdx = i
+			break
+		}
+	}
+	if startIdx < 0 {
+		return nil, 0, nil
+	}
+	// Stop at next top-level category or end-of-file.
+	endIdx := len(records)
+	for i := startIdx + 1; i < len(records); i++ {
+		first := strings.TrimSpace(firstField(records[i]))
+		if first == "" {
+			continue
+		}
+		if isConsolidatedTopLevelHeader(first, lang) && first != header {
+			endIdx = i
+			break
+		}
+	}
+
+	var out []ParsedTransaction
+	skipped := 0
+	var currentOp cryptoOpKind
+	var columns []string
+	expectColumns := false
+	for i := startIdx + 1; i < endIdx; i++ {
+		row := records[i]
+		first := strings.TrimSpace(firstField(row))
+		if first == "" {
+			continue
+		}
+		if first == "Total" || strings.HasPrefix(first, "---") {
+			continue
+		}
+		if op, ok := matchCryptoSubsectionHeader(first); ok {
+			currentOp = op
+			columns = nil
+			expectColumns = true
+			continue
+		}
+		if expectColumns {
+			columns = make([]string, len(row))
+			for j, c := range row {
+				columns[j] = strings.TrimSpace(c)
+			}
+			expectColumns = false
+			continue
+		}
+		if currentOp == "" || columns == nil {
+			continue
+		}
+		tx, ok, parseErr := parseCryptoRow(row, columns, currentOp, lang)
+		if parseErr != nil {
+			return nil, 0, parseErr
+		}
+		if !ok {
+			skipped++
+			continue
+		}
+		out = append(out, tx)
+	}
+	return out, skipped, nil
+}
+
+func matchCryptoSubsectionHeader(s string) (cryptoOpKind, bool) {
+	switch s {
+	case "Extrato de operação (apenas vendas)",
+		"Transaction statement (only sales)":
+		return cryptoOpSell, true
+	case "Extrato de operação (apenas aquisições)",
+		"Transaction statement (only acquisitions)":
+		return cryptoOpBuy, true
+	case "Extrato de operação (apenas depósitos)",
+		"Transaction statement (only deposits)":
+		return cryptoOpDeposit, true
+	case "Extrato de operação (apenas levantamentos)",
+		"Transaction statement (only withdrawals)":
+		return cryptoOpWithdrawal, true
+	case "Extrato de operação (apenas aquisições através de Learn & Earn)",
+		"Transaction statement (only acquisitions through Learn & Earn)":
+		return cryptoOpLearnEarn, true
+	case "Extrato de operação (apenas aquisições por Staking)",
+		"Transaction statement (only acquisitions through Staking)":
+		return cryptoOpStaking, true
+	}
+	return "", false
+}
+
+// parseCryptoRow turns a single Cripto sub-table row into a ParsedTransaction.
+// The crypto section's date format is dd.mm.yy (different from the dd/mm/yyyy
+// used in current accounts). Sells pack two dates (`sale, buy`); we take the
+// sale date.
+//
+// The Raw map carries trade-level details (price per unit, EUR value, fees,
+// realised gain / age for sells, op kind) so the trade-pipeline pass can
+// populate `instruments` / `investment_trades` / `investment_lots` without
+// re-parsing the file.
+func parseCryptoRow(row, columns []string, op cryptoOpKind, lang consolidatedLang) (ParsedTransaction, bool, error) {
+	col := func(name string) string {
+		for i, c := range columns {
+			if c == name && i < len(row) {
+				return strings.TrimSpace(row[i])
+			}
+		}
+		return ""
+	}
+	// Date column varies; gather any column whose label starts with "Data " /
+	// "Date ". Sell rows pack "sale, buy" — sale date is the first.
+	var dateRaw string
+	for i, c := range columns {
+		if (strings.HasPrefix(c, "Data") || strings.HasPrefix(c, "Date")) && i < len(row) {
+			dateRaw = strings.TrimSpace(row[i])
+			break
+		}
+	}
+	if dateRaw == "" {
+		return ParsedTransaction{}, false, nil
+	}
+	saleDateRaw := dateRaw
+	if comma := strings.Index(dateRaw, ","); comma >= 0 {
+		saleDateRaw = strings.TrimSpace(dateRaw[:comma])
+	}
+	bookedAt, err := parseCryptoDate(saleDateRaw)
+	if err != nil {
+		// Skip subtotal/comment rows that don't have a parseable date.
+		return ParsedTransaction{}, false, nil
+	}
+
+	symbol := strings.ToUpper(strings.TrimSpace(firstNonBlank(col("Descrição e símbolo"), col("Description and symbol"))))
+	if symbol == "" || !cryptoSymbolValid(symbol) {
+		return ParsedTransaction{}, false, nil
+	}
+
+	// Find the units column based on op kind.
+	var unitsRaw string
+	for _, candidate := range cryptoUnitsColumnNames(op) {
+		if v := col(candidate); v != "" {
+			unitsRaw = v
+			break
+		}
+	}
+	units, _, err := parseConsolidatedMoney(unitsRaw, lang)
+	if err != nil {
+		return ParsedTransaction{}, false, nil
+	}
+	// Sell-like ops emit a negative amount on the wallet account; buy-like
+	// ops are positive. Withdrawals also negative.
+	signed := units
+	switch op {
+	case cryptoOpSell, cryptoOpWithdrawal:
+		signed = units.Neg()
+	}
+
+	desc := cryptoDescription(op, symbol)
+	descPtr := &desc
+
+	raw := map[string]string{
+		"section":  "Crypto",
+		"op":       string(op),
+		"symbol":   symbol,
+		"currency": symbol,
+		"date":     dateRaw,
+	}
+	for i, c := range columns {
+		if c == "" || i >= len(row) {
+			continue
+		}
+		raw[c] = row[i]
+	}
+
+	return ParsedTransaction{
+		BookedAt:        bookedAt,
+		Amount:          signed,
+		Currency:        symbol,
+		CounterpartyRaw: descPtr,
+		Description:     descPtr,
+		AccountHint:     "Crypto " + symbol,
+		KindHint:        "crypto_wallet",
+		Raw:             raw,
+	}, true, nil
+}
+
+// cryptoSymbolValid mirrors the money_currency domain regex
+// (^[A-Z0-9]{3,10}$). Symbols outside this range are skipped (we'd
+// otherwise fail at INSERT time).
+func cryptoSymbolValid(s string) bool {
+	if len(s) < 3 || len(s) > 10 {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// cryptoUnitsColumnNames returns the candidate column labels carrying the
+// quantity for a given op, in priority order. Each sub-table phrases the
+// quantity differently (sold / bought / deposited / withdrawn / received).
+func cryptoUnitsColumnNames(op cryptoOpKind) []string {
+	switch op {
+	case cryptoOpSell:
+		return []string{"Unidades vendidas", "Units sold"}
+	case cryptoOpBuy:
+		return []string{"Unidades compradas", "Units bought"}
+	case cryptoOpDeposit:
+		return []string{"Unidades depositadas", "Units deposited"}
+	case cryptoOpWithdrawal:
+		return []string{"Unidades retiradas", "Units withdrawn"}
+	case cryptoOpLearnEarn, cryptoOpStaking:
+		return []string{"Unidades recebidas", "Units received"}
+	}
+	return nil
+}
+
+func cryptoDescription(op cryptoOpKind, symbol string) string {
+	switch op {
+	case cryptoOpBuy:
+		return "Buy " + symbol
+	case cryptoOpSell:
+		return "Sell " + symbol
+	case cryptoOpDeposit:
+		return "Deposit " + symbol
+	case cryptoOpWithdrawal:
+		return "Withdrawal " + symbol
+	case cryptoOpLearnEarn:
+		return "Learn & Earn reward " + symbol
+	case cryptoOpStaking:
+		return "Staking reward " + symbol
+	}
+	return symbol
+}
+
+// parseCryptoDate accepts dd.mm.yy (the crypto section's local format).
+func parseCryptoDate(raw string) (time.Time, error) {
+	s := strings.TrimSpace(raw)
+	for _, layout := range []string{"02.01.06", "02.01.2006"} {
+		if t, err := time.ParseInLocation(layout, s, time.UTC); err == nil {
+			return datePart(t), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid crypto date %q", s)
 }
 
 // disambiguateSectionHints assigns a unique AccountHint to each section.

@@ -490,11 +490,18 @@ func (s *Service) currencyGroups(ctx context.Context, tenantID uuid.UUID, parsed
 			}
 			samples = append(samples, previewRow(tx))
 		}
+		// All txs in a group share the same AccountHint, so any tx's
+		// KindHint represents the section's suggested kind. Default to
+		// checking when the parser didn't supply one.
+		kind := "checking"
+		if h := sub.Transactions[0].KindHint; h != "" {
+			kind = h
+		}
 		group := CurrencyGroup{
 			Currency:           k.currency,
 			SourceKey:          k.sourceKey,
 			SuggestedName:      suggestedNameForGroup(parsed.Institution, k),
-			SuggestedKind:      "checking",
+			SuggestedKind:      kind,
 			SuggestedOpenDate:  formatDatePtr(sub.DateFrom),
 			TransactionCount:   len(sub.Transactions),
 			DateFrom:           formatDatePtr(sub.DateFrom),

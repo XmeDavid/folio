@@ -32,7 +32,13 @@ type ParsedTransaction struct {
 	Description     *string
 	ExternalID      string
 	AccountHint     string
-	Raw             map[string]string
+	// KindHint is the suggested Folio account_kind for the importer when
+	// it materialises a new account from this transaction. Empty defaults
+	// to "checking" at the service layer; investment-typed sections set
+	// "crypto_wallet" / "brokerage" / "asset" so created accounts get the
+	// right kind without requiring user intervention.
+	KindHint string
+	Raw      map[string]string
 }
 
 type Preview struct {
