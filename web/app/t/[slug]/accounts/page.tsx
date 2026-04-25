@@ -74,7 +74,7 @@ export default function AccountsPage({
       ) : null}
 
       {accountsQuery.isLoading ? (
-        <p className="text-[13px] text-[--color-fg-muted]">Loading...</p>
+        <p className="text-[13px] text-fg-muted">Loading...</p>
       ) : accountsQuery.data && accountsQuery.data.length > 0 ? (
         <AccountList accounts={accountsQuery.data} locale={locale} />
       ) : (
@@ -102,36 +102,36 @@ function AccountList({
 }) {
   return (
     <Card className="overflow-hidden">
-      <ul className="divide-y divide-[--color-border]">
+      <ul className="divide-y divide-border">
         {accounts.map((a) => (
           <li
             key={a.id}
-            className="flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-[--color-surface-subtle] sm:flex-row sm:items-center sm:justify-between"
+            className="flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-surface-subtle sm:flex-row sm:items-center sm:justify-between"
           >
             <div className="flex min-w-0 flex-col gap-0.5">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[15px] font-medium text-[--color-fg]">
+                <span className="text-[15px] font-medium text-fg">
                   {a.name}
                 </span>
                 {a.nickname ? (
-                  <span className="text-[12px] text-[--color-fg-faint]">
+                  <span className="text-[12px] text-fg-faint">
                     ({a.nickname})
                   </span>
                 ) : null}
                 <Badge variant="neutral">{accountKindLabel(a.kind)}</Badge>
                 {a.archivedAt ? <Badge variant="amber">Archived</Badge> : null}
               </div>
-              <div className="text-[12px] text-[--color-fg-muted]">
+              <div className="text-[12px] text-fg-muted">
                 {a.currency}
                 {a.institution ? `  -  ${a.institution}` : ""} - opened{" "}
                 {formatDate(a.openDate, locale)}
               </div>
             </div>
             <div className="flex flex-col items-end">
-              <span className="tabular text-[15px] font-medium text-[--color-fg]">
+              <span className="tabular text-[15px] font-medium text-fg">
                 {formatAmount(a.balance, a.currency, locale)}
               </span>
-              <span className="text-[11px] text-[--color-fg-faint]">
+              <span className="text-[11px] text-fg-faint">
                 {a.balanceAsOf
                   ? `as of ${formatDate(a.balanceAsOf, locale)}`
                   : "no snapshot yet"}

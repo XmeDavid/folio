@@ -111,7 +111,7 @@ export default function TenantDashboardPage({
           action={
             <Link
               href={`${basePath}/transactions` as Route}
-              className="text-[12px] font-medium text-[--color-accent] hover:underline"
+              className="text-[12px] font-medium text-accent hover:underline"
             >
               Review
             </Link>
@@ -132,15 +132,15 @@ export default function TenantDashboardPage({
           </CardHeader>
           <CardContent>
             {accounts.isLoading ? (
-              <p className="text-[13px] text-[--color-fg-muted]">Loading...</p>
+              <p className="text-[13px] text-fg-muted">Loading...</p>
             ) : balances.length > 0 ? (
-              <div className="flex flex-col divide-y divide-[--color-border]">
+              <div className="flex flex-col divide-y divide-border">
                 {balances.map(([currency, amount]) => (
                   <div
                     key={currency}
                     className="flex items-center justify-between py-3"
                   >
-                    <span className="text-[13px] text-[--color-fg-muted]">
+                    <span className="text-[13px] text-fg-muted">
                       {currency.toUpperCase()}
                     </span>
                     <span className="tabular text-[18px] font-medium">
@@ -179,7 +179,7 @@ export default function TenantDashboardPage({
           </CardHeader>
           {transactions.isLoading ? (
             <CardContent>
-              <p className="text-[13px] text-[--color-fg-muted]">Loading...</p>
+              <p className="text-[13px] text-fg-muted">Loading...</p>
             </CardContent>
           ) : transactionRows.length > 0 ? (
             <RecentTransactions
@@ -229,14 +229,14 @@ function MetricCard({
     <Card>
       <CardContent className="flex items-start justify-between gap-4 pt-5">
         <div className="flex min-w-0 flex-col gap-1">
-          <div className="flex items-center gap-2 text-[12px] font-medium text-[--color-fg-muted]">
+          <div className="flex items-center gap-2 text-[12px] font-medium text-fg-muted">
             {icon}
             {label}
           </div>
           <div className="tabular text-[28px] leading-tight font-normal">
             {value}
           </div>
-          <div className="text-[12px] text-[--color-fg-faint]">{detail}</div>
+          <div className="text-[12px] text-fg-faint">{detail}</div>
         </div>
         {action ? <div className="shrink-0">{action}</div> : null}
       </CardContent>
@@ -255,19 +255,19 @@ function RecentTransactions({
 }) {
   const accountById = new Map(accounts.map((a) => [a.id, a]));
   return (
-    <ul className="divide-y divide-[--color-border]">
+    <ul className="divide-y divide-border">
       {transactions.map((t) => {
         const account = accountById.get(t.accountId);
         return (
           <li
             key={t.id}
-            className="grid grid-cols-[1fr_auto] gap-3 px-5 py-3 transition-colors hover:bg-[--color-surface-subtle]"
+            className="grid grid-cols-[1fr_auto] gap-3 px-5 py-3 transition-colors hover:bg-surface-subtle"
           >
             <div className="min-w-0">
               <div className="truncate text-[14px] font-medium">
                 {t.description ?? t.counterpartyRaw ?? "Untitled transaction"}
               </div>
-              <div className="flex flex-wrap items-center gap-2 text-[12px] text-[--color-fg-muted]">
+              <div className="flex flex-wrap items-center gap-2 text-[12px] text-fg-muted">
                 <span>{formatDate(t.bookedAt, locale)}</span>
                 <span>·</span>
                 <span className="truncate">
@@ -279,8 +279,8 @@ function RecentTransactions({
             <div
               className={`tabular text-right text-[14px] font-medium ${
                 t.amount.startsWith("-")
-                  ? "text-[--color-fg]"
-                  : "text-[--color-success]"
+                  ? "text-fg"
+                  : "text-success"
               }`}
             >
               {formatAmount(t.amount, t.currency, locale)}

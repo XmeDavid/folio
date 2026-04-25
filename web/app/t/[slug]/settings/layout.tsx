@@ -27,7 +27,7 @@ export default function TenantSettingsLayout({
     <div className="grid gap-6 lg:grid-cols-[180px_minmax(0,1fr)]">
       <nav
         aria-label="Settings navigation"
-        className="flex gap-1 overflow-x-auto border-b border-[--color-border] pb-3 lg:flex-col lg:overflow-visible lg:border-b-0 lg:border-r lg:pr-4"
+        className="flex gap-1 overflow-x-auto border-b border-border pb-3 lg:flex-col lg:overflow-visible lg:border-b-0 lg:border-r lg:pr-4"
       >
         {settingsLinks.map((link) => {
           const href = `${base}${link.href}`;
@@ -37,9 +37,9 @@ export default function TenantSettingsLayout({
               key={link.label}
               href={href as Route}
               className={cn(
-                "inline-flex h-9 shrink-0 items-center rounded-[6px] px-3 text-[13px] text-[--color-fg-muted] transition-colors hover:bg-[--color-surface-subtle] hover:text-[--color-fg]",
+                "inline-flex h-9 shrink-0 items-center rounded-[6px] px-3 text-[13px] text-fg-muted transition-colors hover:bg-surface-subtle hover:text-fg",
                 active &&
-                  "border-l-2 border-[--color-accent] bg-[--color-surface-subtle] pl-2.5 text-[--color-fg]"
+                  "border-l-2 border-accent bg-surface-subtle pl-2.5 text-fg"
               )}
               aria-current={active ? "page" : undefined}
             >

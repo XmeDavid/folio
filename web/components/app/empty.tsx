@@ -15,13 +15,13 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-2 rounded-[12px] border border-dashed border-[--color-border] bg-[--color-surface] px-6 py-12 text-center",
+        "flex flex-col items-center justify-center gap-2 rounded-[12px] border border-dashed border-border bg-surface px-6 py-12 text-center",
         className
       )}
     >
-      <p className="text-[15px] font-medium text-[--color-fg]">{title}</p>
+      <p className="text-[15px] font-medium text-fg">{title}</p>
       {description ? (
-        <p className="max-w-md text-[13px] text-[--color-fg-muted]">
+        <p className="max-w-md text-[13px] text-fg-muted">
           {description}
         </p>
       ) : null}
@@ -40,9 +40,9 @@ export function ErrorBanner({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-[12px] border border-[--color-border] bg-[#FAECE7] px-4 py-3 text-[13px] text-[#7A3B20]">
+    <div className="rounded-[12px] border border-border bg-[#FAECE7] px-4 py-3 text-[13px] text-[#7A3B20]">
       <div className="flex items-start gap-3">
-        <div className="mt-0.5 h-2 w-2 rounded-full bg-[--color-accent]" />
+        <div className="mt-0.5 h-2 w-2 rounded-full bg-accent" />
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="font-medium">{title}</div>
           {description ? (

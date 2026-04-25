@@ -93,7 +93,7 @@ export default function TransactionsPage({
           description="Transactions must post to an account. Head to Accounts to create one."
         />
       ) : txQuery.isLoading || accountsQuery.isLoading ? (
-        <p className="text-[13px] text-[--color-fg-muted]">Loading...</p>
+        <p className="text-[13px] text-fg-muted">Loading...</p>
       ) : txQuery.data && txQuery.data.length > 0 ? (
         <TransactionTable
           transactions={txQuery.data}
@@ -131,35 +131,35 @@ function TransactionTable({
 
   return (
     <Card className="overflow-hidden">
-      <div className="hidden grid-cols-[110px_1fr_160px_120px_140px] items-center gap-4 border-b border-[--color-border] px-5 py-2 text-[11px] font-medium tracking-[0.07em] text-[--color-fg-faint] uppercase md:grid">
+      <div className="hidden grid-cols-[110px_1fr_160px_120px_140px] items-center gap-4 border-b border-border px-5 py-2 text-[11px] font-medium tracking-[0.07em] text-fg-faint uppercase md:grid">
         <span>Date</span>
         <span>Description</span>
         <span>Account</span>
         <span>Status</span>
         <span className="text-right">Amount</span>
       </div>
-      <ul className="divide-y divide-[--color-border]">
+      <ul className="divide-y divide-border">
         {transactions.map((t) => {
           const account = accountById.get(t.accountId);
           return (
             <li
               key={t.id}
-              className="grid grid-cols-1 gap-1 px-5 py-3 transition-colors hover:bg-[--color-surface-subtle] md:grid-cols-[110px_1fr_160px_120px_140px] md:items-center md:gap-4"
+              className="grid grid-cols-1 gap-1 px-5 py-3 transition-colors hover:bg-surface-subtle md:grid-cols-[110px_1fr_160px_120px_140px] md:items-center md:gap-4"
             >
-              <span className="tabular text-[13px] text-[--color-fg-muted]">
+              <span className="tabular text-[13px] text-fg-muted">
                 {formatDate(t.bookedAt, locale)}
               </span>
               <div className="flex min-w-0 flex-col">
-                <span className="truncate text-[14px] font-medium text-[--color-fg]">
+                <span className="truncate text-[14px] font-medium text-fg">
                   {t.description ?? t.counterpartyRaw ?? "-"}
                 </span>
                 {t.counterpartyRaw && t.description ? (
-                  <span className="truncate text-[12px] text-[--color-fg-faint]">
+                  <span className="truncate text-[12px] text-fg-faint">
                     {t.counterpartyRaw}
                   </span>
                 ) : null}
               </div>
-              <span className="truncate text-[13px] text-[--color-fg-muted]">
+              <span className="truncate text-[13px] text-fg-muted">
                 {account ? account.name : t.accountId.slice(0, 8)}
               </span>
               <span>
@@ -168,8 +168,8 @@ function TransactionTable({
               <span
                 className={`tabular text-right text-[14px] font-medium ${
                   t.amount.startsWith("-")
-                    ? "text-[--color-fg]"
-                    : "text-[--color-success]"
+                    ? "text-fg"
+                    : "text-success"
                 }`}
               >
                 {formatAmount(t.amount, t.currency, locale)}

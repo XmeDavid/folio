@@ -11,11 +11,11 @@ export default function AdminUserDetailPage() {
   const grant = useAdminMutation((id) => `/api/v1/admin/users/${id}/grant-admin`);
   const revoke = useAdminMutation((id) => `/api/v1/admin/users/${id}/revoke-admin`);
   const d = q.data?.data;
-  if (!d) return <p className="text-sm text-[--color-fg-muted]">Loading...</p>;
+  if (!d) return <p className="text-sm text-fg-muted">Loading...</p>;
   return (
     <section className="space-y-6">
-      <div className="flex flex-col gap-3 border-b border-[--color-border] pb-5 sm:flex-row sm:items-start sm:justify-between">
-        <div><div className="flex items-center gap-2"><h1 className="text-[28px] font-normal">{d.user.email}</h1>{d.user.isAdmin ? <Badge variant="danger">Admin</Badge> : null}</div><p className="text-[14px] text-[--color-fg-muted]">{d.user.displayName}</p></div>
+      <div className="flex flex-col gap-3 border-b border-border pb-5 sm:flex-row sm:items-start sm:justify-between">
+        <div><div className="flex items-center gap-2"><h1 className="text-[28px] font-normal">{d.user.email}</h1>{d.user.isAdmin ? <Badge variant="danger">Admin</Badge> : null}</div><p className="text-[14px] text-fg-muted">{d.user.displayName}</p></div>
         {d.user.isAdmin ? <Button variant="danger" onClick={() => revoke.mutate(d.user.id)}>Revoke admin</Button> : <Button onClick={() => grant.mutate(d.user.id)}>Grant admin</Button>}
       </div>
       <div className="grid gap-6 lg:grid-cols-2">
@@ -28,9 +28,9 @@ export default function AdminUserDetailPage() {
 }
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="border border-[--color-border] bg-[--color-surface] p-4"><h2 className="mb-3 text-[15px] font-medium">{title}</h2><div className="space-y-2">{children}</div></section>;
+  return <section className="border border-border bg-surface p-4"><h2 className="mb-3 text-[15px] font-medium">{title}</h2><div className="space-y-2">{children}</div></section>;
 }
 
 function Row({ left, right }: { left: string; right: string }) {
-  return <div className="flex justify-between gap-4 border-t border-[--color-border] pt-2 text-[14px]"><span className="text-[--color-fg-muted]">{left}</span><span className="text-right">{right}</span></div>;
+  return <div className="flex justify-between gap-4 border-t border-border pt-2 text-[14px]"><span className="text-fg-muted">{left}</span><span className="text-right">{right}</span></div>;
 }

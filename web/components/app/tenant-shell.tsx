@@ -43,21 +43,21 @@ export function TenantShell({
   const base = `/t/${tenant.slug}`;
 
   return (
-    <div className="flex min-h-dvh bg-[--color-page] text-[--color-fg]">
-      <aside className="hidden w-64 shrink-0 border-r border-[--color-border] bg-[--color-surface] px-4 py-4 lg:flex lg:flex-col">
+    <div className="flex min-h-dvh bg-page text-fg">
+      <aside className="hidden w-64 shrink-0 border-r border-border bg-surface px-4 py-4 lg:flex lg:flex-col">
         <div className="mb-5 flex items-center gap-3 px-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[--color-border-strong] text-[13px] font-semibold">
+          <div className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-border-strong text-[13px] font-semibold">
             F
           </div>
           <div className="min-w-0">
             <div className="text-[15px] font-medium leading-tight">Folio</div>
-            <div className="truncate text-[12px] text-[--color-fg-muted]">
+            <div className="truncate text-[12px] text-fg-muted">
               {tenant.name}
             </div>
           </div>
         </div>
         <TenantNav base={base} pathname={pathname} />
-        <div className="mt-auto flex flex-col gap-2 border-t border-[--color-border] pt-4">
+        <div className="mt-auto flex flex-col gap-2 border-t border-border pt-4">
           <Button asChild variant="secondary" className="w-full justify-start">
             <Link href={`${base}/accounts` as Route}>
               <Plus className="h-4 w-4" />
@@ -74,22 +74,22 @@ export function TenantShell({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-10 flex min-h-14 items-center justify-between border-b border-[--color-border] bg-[--color-page]/95 px-4 py-3 backdrop-blur sm:px-6">
+        <header className="sticky top-0 z-10 flex min-h-14 items-center justify-between border-b border-border bg-page/95 px-4 py-3 backdrop-blur sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <span className="text-[15px] font-semibold lg:hidden">Folio</span>
-            <span className="hidden text-[13px] text-[--color-fg-faint] sm:inline">
+            <span className="hidden text-[13px] text-fg-faint sm:inline">
               /
             </span>
             <div className="min-w-0">
               <TenantSwitcher currentSlug={tenant.slug} />
             </div>
           </div>
-          <div className="hidden text-[12px] text-[--color-fg-muted] sm:block">
+          <div className="hidden text-[12px] text-fg-muted sm:block">
             {tenant.baseCurrency} · day {tenant.cycleAnchorDay}
           </div>
         </header>
 
-        <div className="border-b border-[--color-border] bg-[--color-surface] px-3 py-2 lg:hidden">
+        <div className="border-b border-border bg-surface px-3 py-2 lg:hidden">
           <div className="flex gap-1 overflow-x-auto">
             <TenantNav base={base} pathname={pathname} compact />
           </div>
@@ -131,10 +131,10 @@ function TenantNav({
             key={item.label}
             href={href as Route}
             className={cn(
-              "inline-flex h-9 items-center gap-2 rounded-[6px] px-3 text-[--color-fg-muted] transition-colors hover:bg-[--color-surface-subtle] hover:text-[--color-fg]",
+              "inline-flex h-9 items-center gap-2 rounded-[6px] px-3 text-fg-muted transition-colors hover:bg-surface-subtle hover:text-fg",
               compact && "shrink-0",
               active &&
-                "border-l-2 border-[--color-accent] bg-[--color-surface-subtle] pl-2.5 text-[--color-fg]"
+                "border-l-2 border-accent bg-surface-subtle pl-2.5 text-fg"
             )}
             aria-current={active ? "page" : undefined}
           >

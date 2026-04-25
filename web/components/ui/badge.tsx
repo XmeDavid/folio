@@ -7,12 +7,12 @@ const badge = cva(
   {
     variants: {
       variant: {
-        neutral: "bg-[--color-surface-subtle] text-[--color-fg-muted]",
-        accent: "bg-[--color-accent-tint] text-[--color-accent]",
-        amber: "bg-[#F7ECD9] text-[--color-amber]",
-        success: "bg-[#E5EFDB] text-[--color-success]",
-        danger: "bg-[#F5DADA] text-[--color-danger]",
-        info: "bg-[#DBE7F4] text-[--color-info]",
+        neutral: "bg-surface-subtle text-fg-muted",
+        accent: "bg-accent-tint text-accent",
+        amber: "bg-[#F7ECD9] text-amber",
+        success: "bg-[#E5EFDB] text-success",
+        danger: "bg-[#F5DADA] text-danger",
+        info: "bg-[#DBE7F4] text-info",
       },
     },
     defaultVariants: { variant: "neutral" },
