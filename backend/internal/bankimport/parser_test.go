@@ -256,6 +256,73 @@ func TestParseRevolutConsolidatedCryptoSection(t *testing.T) {
 	}
 }
 
+func TestParseRevolutConsolidatedMMFSection(t *testing.T) {
+	// MMF section is interest-only; emits one positive-amount transaction
+	// per non-zero interest day in a per-currency brokerage account.
+	content := strings.Join([]string{
+		`"Contas-correntes Extratos de operações",,,,,,,,`,
+		`"Conta Pessoal (EUR)",,,,,,,,`,
+		`"Extrato de operações",,,,,,,,`,
+		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo`,
+		`01/01/2024,Salary,Carregar,"100,00€","100,00€"`,
+		`Total,,,"100,00€"`,
+		`---------,,,,,,,,`,
+		`"Fundos Monetários Flexíveis Extratos de operações",,,,,,,,`,
+		`"Fundos Monetários Flexíveis  (EUR)",,,,,,,,`,
+		`"Transaction statement (only returns)",,,,,,,,`,
+		`Data,Descrição,"Juros líquidos","Imposto retido","Outros impostos","Comissões de serviço","Juros líquidos distribuídos e levantados"`,
+		`24/08/2024,Interest earned - Flexible Cash Funds,"0,01€","0,00€","0,00€","0,00€","0,01€"`,
+		`25/08/2024,Interest earned - Flexible Cash Funds,"0,02€","0,00€","0,00€","0,00€","0,02€"`,
+		`26/08/2024,Interest earned - Flexible Cash Funds,"0,00€","0,00€","0,00€","0,00€","0,00€"`,
+		`Total,,,"0,03€","0,00€","0,00€","0,00€"`,
+		`---------,,,,,,,,`,
+		`"Fundos Monetários Flexíveis  (USD)",,,,,,,,`,
+		`"Transaction statement (only returns)",,,,,,,,`,
+		`Data,Descrição,"Juros líquidos","Imposto retido","Outros impostos","Comissões de serviço","Juros líquidos distribuídos e levantados"`,
+		`01/09/2024,Interest earned - Flexible Cash Funds,"0,05$","0,00$","0,00$","0,00$","0,05$"`,
+		``,
+	}, "\n")
+
+	parsed, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	mmfByCurrency := map[string]decimal.Decimal{}
+	mmfCount := 0
+	for _, tx := range parsed.Transactions {
+		if tx.AccountHint != "Flexible Cash Funds" {
+			continue
+		}
+		if tx.KindHint != "brokerage" {
+			t.Errorf("MMF tx kind hint = %q, want brokerage", tx.KindHint)
+		}
+		if tx.Raw["op"] != "interest" {
+			t.Errorf("MMF tx op = %q, want interest", tx.Raw["op"])
+		}
+		mmfByCurrency[tx.Currency] = mmfByCurrency[tx.Currency].Add(tx.Amount)
+		mmfCount++
+	}
+	if mmfCount != 3 {
+		t.Fatalf("expected 3 MMF txs (zero-day skipped), got %d", mmfCount)
+	}
+	if got := mmfByCurrency["EUR"]; !got.Equal(decimal.RequireFromString("0.03")) {
+		t.Errorf("EUR MMF total = %s, want 0.03", got)
+	}
+	if got := mmfByCurrency["USD"]; !got.Equal(decimal.RequireFromString("0.05")) {
+		t.Errorf("USD MMF total = %s, want 0.05", got)
+	}
+	hasMMFWarning := false
+	for _, w := range parsed.Warnings {
+		if strings.Contains(w, "Flexible Cash Funds") {
+			hasMMFWarning = true
+		}
+	}
+	if !hasMMFWarning {
+		t.Errorf("expected MMF warning about partial data, got %+v", parsed.Warnings)
+	}
+}
+
 func TestParseRevolutConsolidatedHandlesThousandSeparators(t *testing.T) {
 	// pt-locale Revolut exports use U+00A0 (non-breaking space) as the
 	// thousand separator. Earlier versions of the parser stopped at the

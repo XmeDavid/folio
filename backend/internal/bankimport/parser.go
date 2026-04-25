@@ -275,6 +275,22 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 	out.Transactions = append(out.Transactions, cryptoTxs...)
 	skippedRows += cryptoSkipped
 
+	// Flexible Cash Funds (Money Market Funds) section: one sub-table per
+	// currency (EUR / GBP / USD), each containing only daily interest
+	// payments. Buy/sell of fund shares is NOT in this file — those live
+	// in the standalone savings-statement.csv. Importing the consolidated
+	// alone gives accurate interest-income history but the fund balance
+	// will only reflect cumulative interest, not actual share value.
+	mmfTxs, mmfSkipped, err := parseConsolidatedMMFSection(records, lang)
+	if err != nil {
+		return ParsedFile{}, err
+	}
+	out.Transactions = append(out.Transactions, mmfTxs...)
+	skippedRows += mmfSkipped
+	if len(mmfTxs) > 0 {
+		out.Warnings = append(out.Warnings, "Imported Flexible Cash Funds interest only. Fund share buy/sell history is not in the consolidated export — for full position tracking, also import the dedicated savings statement.")
+	}
+
 	if skippedRows > 0 {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("Skipped %d unparseable Revolut consolidated rows.", skippedRows))
 	}
@@ -552,6 +568,157 @@ func parseCryptoDate(raw string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("invalid crypto date %q", s)
+}
+
+// parseConsolidatedMMFSection walks the "Fundos Monetários Flexíveis" /
+// "Flexible Cash Funds" block. The consolidated export only contains
+// interest payments here — fund-share buys and sells live in the
+// standalone savings statement, not in this file. We emit each interest
+// payment as a positive-amount transaction in a per-currency brokerage
+// account, leaving the position pipeline (instruments / trades / lots)
+// to be wired in when the savings-statement parser ships.
+func parseConsolidatedMMFSection(records [][]string, lang consolidatedLang) ([]ParsedTransaction, int, error) {
+	header := "Fundos Monetários Flexíveis Extratos de operações"
+	if lang == consolidatedLangEN {
+		header = "Flexible Cash Funds Transaction statements"
+	}
+	startIdx := -1
+	for i, row := range records {
+		if strings.TrimSpace(firstField(row)) == header {
+			startIdx = i
+			break
+		}
+	}
+	if startIdx < 0 {
+		return nil, 0, nil
+	}
+	endIdx := len(records)
+	for i := startIdx + 1; i < len(records); i++ {
+		first := strings.TrimSpace(firstField(records[i]))
+		if first == "" {
+			continue
+		}
+		if isConsolidatedTopLevelHeader(first, lang) && first != header {
+			endIdx = i
+			break
+		}
+	}
+
+	var out []ParsedTransaction
+	skipped := 0
+	var currency string
+	var columns []string
+	expectColumns := false
+	subHeaderPat := regexp.MustCompile(`\s*\(([A-Z]{3})\)\s*$`)
+	for i := startIdx + 1; i < endIdx; i++ {
+		row := records[i]
+		first := strings.TrimSpace(firstField(row))
+		if first == "" {
+			continue
+		}
+		if first == "Total" || strings.HasPrefix(first, "---") {
+			continue
+		}
+		// Sub-section header: "Fundos Monetários Flexíveis  (EUR)" / "(GBP)" / "(USD)"
+		if m := subHeaderPat.FindStringSubmatch(first); m != nil && allBlank(row[1:]) {
+			currency = m[1]
+			columns = nil
+			continue
+		}
+		// Column header: "Transaction statement (only returns)" then a row of column labels.
+		if first == "Transaction statement (only returns)" || first == "Extrato de operações (apenas rendimentos)" {
+			expectColumns = true
+			continue
+		}
+		if expectColumns {
+			columns = make([]string, len(row))
+			for j, c := range row {
+				columns[j] = strings.TrimSpace(c)
+			}
+			expectColumns = false
+			continue
+		}
+		if currency == "" || columns == nil {
+			continue
+		}
+		tx, ok, parseErr := parseMMFRow(row, columns, currency, lang)
+		if parseErr != nil {
+			return nil, 0, parseErr
+		}
+		if !ok {
+			skipped++
+			continue
+		}
+		out = append(out, tx)
+	}
+	return out, skipped, nil
+}
+
+// parseMMFRow turns a single Flexible Cash Funds interest row into a
+// positive-amount transaction in the per-currency brokerage account.
+// Columns we care about:
+//
+//	Data | Descrição | Juros líquidos | Imposto retido | Outros impostos | Comissões de serviço | Juros líquidos distribuídos e levantados
+//
+// "Juros líquidos" is net interest after fees and is the cash impact on
+// the fund. "distribuídos e levantados" mirrors that value for fully
+// distributed funds; we use the simpler "Juros líquidos" column.
+func parseMMFRow(row, columns []string, currency string, lang consolidatedLang) (ParsedTransaction, bool, error) {
+	col := func(name string) string {
+		for i, c := range columns {
+			if c == name && i < len(row) {
+				return strings.TrimSpace(row[i])
+			}
+		}
+		return ""
+	}
+	dateRaw := col("Data")
+	if dateRaw == "" {
+		dateRaw = col("Date")
+	}
+	if dateRaw == "" {
+		return ParsedTransaction{}, false, nil
+	}
+	bookedAt, err := parseConsolidatedDate(dateRaw, lang)
+	if err != nil {
+		return ParsedTransaction{}, false, nil
+	}
+	amountRaw := firstNonBlank(col("Juros líquidos"), col("Net interest"))
+	if amountRaw == "" {
+		return ParsedTransaction{}, false, nil
+	}
+	amount, _, err := parseConsolidatedMoney(amountRaw, lang)
+	if err != nil {
+		return ParsedTransaction{}, false, fmt.Errorf("parse MMF amount %q: %w", amountRaw, err)
+	}
+	if amount.IsZero() {
+		// Skip zero-interest rows (sub-cent days where Revolut reports 0).
+		return ParsedTransaction{}, false, nil
+	}
+	desc := firstNonBlank(col("Descrição"), col("Description"), "Interest earned - Flexible Cash Funds")
+	descPtr := &desc
+
+	raw := map[string]string{
+		"section":  "Flexible Cash Funds",
+		"op":       "interest",
+		"currency": currency,
+	}
+	for i, c := range columns {
+		if c == "" || i >= len(row) {
+			continue
+		}
+		raw[c] = row[i]
+	}
+	return ParsedTransaction{
+		BookedAt:        bookedAt,
+		Amount:          amount,
+		Currency:        currency,
+		CounterpartyRaw: descPtr,
+		Description:     descPtr,
+		AccountHint:     "Flexible Cash Funds",
+		KindHint:        "brokerage",
+		Raw:             raw,
+	}, true, nil
 }
 
 // disambiguateSectionHints assigns a unique AccountHint to each section.
