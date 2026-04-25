@@ -901,8 +901,8 @@ func (s *Service) retireExplainedSynthetics(ctx context.Context, tx importTx, te
 		  and t.account_id = $2
 		  and t.status = 'posted'
 		  and t.raw->>'synthetic' = 'balance_reconcile'
-		  and t.booked_at between $3 - interval '7 days' and $4 + interval '7 days'
-	`, tenantID, accountID, dateFrom, dateTo)
+		  and t.booked_at between $3::timestamptz and $4::timestamptz
+	`, tenantID, accountID, dateFrom.Add(-time.Duration(reviewDedupDays)*24*time.Hour), dateTo.Add(time.Duration(reviewDedupDays)*24*time.Hour))
 	if err != nil {
 		return fmt.Errorf("scan synthetic rows: %w", err)
 	}
@@ -946,7 +946,7 @@ func (s *Service) retireExplainedSynthetics(ctx context.Context, tx importTx, te
 			  and account_id = $2
 			  and status = 'posted'
 			  and currency = $3
-			  and booked_at between $4 and $5
+			  and booked_at between $4::timestamptz and $5::timestamptz
 			  and coalesce(raw->>'synthetic', '') <> 'balance_reconcile'
 			  and id <> $6
 		`, tenantID, accountID, c.currency, from, to, c.id)
