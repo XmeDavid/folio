@@ -895,8 +895,13 @@ func decodeContent(encoded string) ([]byte, error) {
 func (s *Service) retireExplainedSynthetics(ctx context.Context, tx importTx, tenantID, accountID uuid.UUID, dateFrom, dateTo time.Time) error {
 	rows, err := tx.Query(ctx, `
 		select t.id, t.booked_at, t.posted_at, t.amount::text, t.currency,
-		       coalesce(t.raw->>'synthetic_residual', t.amount::text)
+		       coalesce(t.raw->>'synthetic_residual', t.amount::text),
+		       sr.import_batch_id
 		from transactions t
+		left join source_refs sr
+		  on sr.tenant_id = t.tenant_id
+		 and sr.entity_type = 'transaction'
+		 and sr.entity_id = t.id
 		where t.tenant_id = $1
 		  and t.account_id = $2
 		  and t.status = 'posted'
@@ -911,13 +916,14 @@ func (s *Service) retireExplainedSynthetics(ctx context.Context, tx importTx, te
 		bookedAt time.Time
 		currency string
 		residual decimal.Decimal
+		batchID  *uuid.UUID
 	}
 	var candidates []synthCandidate
 	for rows.Next() {
 		var c synthCandidate
 		var amount, residualStr string
 		var posted *time.Time
-		if err := rows.Scan(&c.id, &c.bookedAt, &posted, &amount, &c.currency, &residualStr); err != nil {
+		if err := rows.Scan(&c.id, &c.bookedAt, &posted, &amount, &c.currency, &residualStr, &c.batchID); err != nil {
 			rows.Close()
 			return fmt.Errorf("scan synthetic row: %w", err)
 		}
@@ -938,18 +944,29 @@ func (s *Service) retireExplainedSynthetics(ctx context.Context, tx importTx, te
 	for _, c := range candidates {
 		from := c.bookedAt.Add(-time.Duration(reviewDedupDays) * 24 * time.Hour)
 		to := c.bookedAt.Add(time.Duration(reviewDedupDays) * 24 * time.Hour)
+		// Only consider rows from a different import batch than the
+		// synthetic itself. The matcher's subset-sum search false-positives
+		// when same-batch rows coincidentally add up to the residual (e.g.
+		// many -15 transfers in the window covering a -15 synthetic). The
+		// synthetic only deserves voiding when *new* data — from a
+		// subsequent import — actually explains the residual.
 		realRows, err := tx.Query(ctx, `
-			select id, booked_at, posted_at, amount::text, currency,
-			       coalesce(description, counterparty_raw, '')
-			from transactions
-			where tenant_id = $1
-			  and account_id = $2
-			  and status = 'posted'
-			  and currency = $3
-			  and booked_at between $4::timestamptz and $5::timestamptz
-			  and coalesce(raw->>'synthetic', '') <> 'balance_reconcile'
-			  and id <> $6
-		`, tenantID, accountID, c.currency, from, to, c.id)
+			select t.id, t.booked_at, t.posted_at, t.amount::text, t.currency,
+			       coalesce(t.description, t.counterparty_raw, '')
+			from transactions t
+			join source_refs sr
+			  on sr.tenant_id = t.tenant_id
+			 and sr.entity_type = 'transaction'
+			 and sr.entity_id = t.id
+			where t.tenant_id = $1
+			  and t.account_id = $2
+			  and t.status = 'posted'
+			  and t.currency = $3
+			  and t.booked_at between $4::timestamptz and $5::timestamptz
+			  and coalesce(t.raw->>'synthetic', '') <> 'balance_reconcile'
+			  and t.id <> $6
+			  and ($7::uuid is null or sr.import_batch_id <> $7::uuid)
+		`, tenantID, accountID, c.currency, from, to, c.id, c.batchID)
 		if err != nil {
 			return fmt.Errorf("scan real rows for synthetic: %w", err)
 		}
