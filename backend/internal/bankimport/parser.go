@@ -286,9 +286,16 @@ func parseOptionalDecimal(raw string) (decimal.Decimal, error) {
 }
 
 func finalizeParsed(p *ParsedFile) {
+	finalizeParsedRange(p, true)
+}
+
+func finalizeParsedRange(p *ParsedFile, assignExternalIDs bool) {
 	if len(p.Transactions) == 0 {
 		return
 	}
+	p.Currency = ""
+	p.DateFrom = nil
+	p.DateTo = nil
 	sort.SliceStable(p.Transactions, func(i, j int) bool {
 		return p.Transactions[i].BookedAt.Before(p.Transactions[j].BookedAt)
 	})
@@ -308,6 +315,9 @@ func finalizeParsed(p *ParsedFile) {
 			d := tx.BookedAt
 			p.DateTo = &d
 		}
+		if !assignExternalIDs {
+			continue
+		}
 		base := fingerprintSource(p.Profile, *tx)
 		counts[base]++
 		if tx.ExternalID == "" {
@@ -317,6 +327,23 @@ func finalizeParsed(p *ParsedFile) {
 			}
 		}
 	}
+}
+
+func parsedForCurrency(p ParsedFile, currency string) ParsedFile {
+	out := ParsedFile{
+		Profile:     p.Profile,
+		Institution: p.Institution,
+		AccountHint: p.AccountHint,
+		Currency:    currency,
+		Warnings:    append([]string(nil), p.Warnings...),
+	}
+	for _, tx := range p.Transactions {
+		if tx.Currency == currency {
+			out.Transactions = append(out.Transactions, tx)
+		}
+	}
+	finalizeParsedRange(&out, false)
+	return out
 }
 
 func fingerprintSource(profile string, tx ParsedTransaction) string {

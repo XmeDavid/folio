@@ -6,17 +6,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
+
+type importTx interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
 
 type Service struct {
 	pool *pgxpool.Pool
@@ -35,7 +42,7 @@ func (s *Service) Preview(ctx context.Context, tenantID uuid.UUID, fileName stri
 	return s.buildPreview(ctx, tenantID, parsed, fileName, fileHash, token, accountID)
 }
 
-func (s *Service) Apply(ctx context.Context, tenantID, accountID, userID uuid.UUID, token string) (*ApplyResult, error) {
+func (s *Service) Apply(ctx context.Context, tenantID, accountID, userID uuid.UUID, token, currency string) (*ApplyResult, error) {
 	payload, err := parseToken(token)
 	if err != nil {
 		return nil, err
@@ -47,6 +54,9 @@ func (s *Service) Apply(ctx context.Context, tenantID, accountID, userID uuid.UU
 	parsed, err := Parse(string(contentBytes))
 	if err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(currency) != "" {
+		parsed = parsedForCurrency(parsed, strings.ToUpper(strings.TrimSpace(currency)))
 	}
 	if len(parsed.Transactions) == 0 {
 		return nil, httpx.NewValidationError("file contains no importable transactions")
@@ -142,6 +152,222 @@ func (s *Service) Apply(ctx context.Context, tenantID, accountID, userID uuid.UU
 	}, nil
 }
 
+func (s *Service) ApplyPlan(ctx context.Context, tenantID, userID uuid.UUID, in ApplyPlanInput) (*ApplyResult, error) {
+	if strings.TrimSpace(in.FileToken) == "" {
+		return nil, httpx.NewValidationError("fileToken is required")
+	}
+	if len(in.Groups) == 0 {
+		return nil, httpx.NewValidationError("at least one import group is required")
+	}
+	payload, err := parseToken(in.FileToken)
+	if err != nil {
+		return nil, err
+	}
+	contentBytes, err := decodeContent(payload.Content)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := Parse(string(contentBytes))
+	if err != nil {
+		return nil, err
+	}
+
+	type plannedGroup struct {
+		in         ApplyPlanGroup
+		parsed     ParsedFile
+		accountID  uuid.UUID
+		classified classifiedRows
+	}
+	planned := make([]plannedGroup, 0, len(in.Groups))
+	for _, group := range in.Groups {
+		cur := strings.ToUpper(strings.TrimSpace(group.Currency))
+		if cur == "" {
+			return nil, httpx.NewValidationError("group currency is required")
+		}
+		sub := parsedForCurrency(parsed, cur)
+		if len(sub.Transactions) == 0 {
+			return nil, httpx.NewValidationError(fmt.Sprintf("file contains no %s transactions", cur))
+		}
+
+		action := strings.TrimSpace(group.Action)
+		if action == "" {
+			action = "create_account"
+		}
+		var accountID uuid.UUID
+		switch action {
+		case "import_to_account":
+			if group.AccountID == nil {
+				return nil, httpx.NewValidationError(fmt.Sprintf("%s group requires an account", cur))
+			}
+			accountCurrency, err := s.accountCurrency(ctx, tenantID, *group.AccountID)
+			if err != nil {
+				return nil, err
+			}
+			if accountCurrency != cur {
+				return nil, httpx.NewValidationError(fmt.Sprintf("%s group cannot import into %s account", cur, accountCurrency))
+			}
+			accountID = *group.AccountID
+		case "create_account":
+			if strings.TrimSpace(group.Name) == "" {
+				return nil, httpx.NewValidationError(fmt.Sprintf("%s group requires an account name", cur))
+			}
+			if strings.TrimSpace(group.Kind) == "" {
+				return nil, httpx.NewValidationError(fmt.Sprintf("%s group requires an account type", cur))
+			}
+			if _, err := decimal.NewFromString(strings.TrimSpace(group.OpeningBalance)); err != nil {
+				return nil, httpx.NewValidationError(fmt.Sprintf("%s opening balance must be a decimal string", cur))
+			}
+			if _, err := time.Parse(dateOnly, group.OpenDate); err != nil {
+				return nil, httpx.NewValidationError(fmt.Sprintf("%s open date must be YYYY-MM-DD", cur))
+			}
+			if _, err := time.Parse(dateOnly, group.OpeningBalanceDate); err != nil {
+				return nil, httpx.NewValidationError(fmt.Sprintf("%s opening balance date must be YYYY-MM-DD", cur))
+			}
+		default:
+			return nil, httpx.NewValidationError(fmt.Sprintf("unknown import action %q", action))
+		}
+
+		var existing []existingTx
+		if accountID != uuid.Nil {
+			existing, err = s.loadExisting(ctx, tenantID, accountID, sub)
+			if err != nil {
+				return nil, err
+			}
+		}
+		planned = append(planned, plannedGroup{
+			in:         group,
+			parsed:     sub,
+			accountID:  accountID,
+			classified: classify(sub, existing),
+		})
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin import plan: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	batchID := uuidx.New()
+	now := s.now()
+	summary, _ := json.Marshal(map[string]any{
+		"profile":  parsed.Profile,
+		"fileHash": payload.FileHash,
+		"fileName": payload.FileName,
+		"groups":   len(planned),
+	})
+	_, err = tx.Exec(ctx, `
+		insert into import_batches (
+			id, tenant_id, source_kind, file_name, file_hash, status,
+			summary, created_by_user_id, started_at, finished_at
+		) values (
+			$1, $2, 'file_upload', $3, $4, 'applied',
+			$5::jsonb, $6, $7, $7
+		)
+	`, batchID, tenantID, payload.FileName, payload.FileHash, string(summary), userID, now)
+	if err != nil {
+		return nil, fmt.Errorf("insert import batch: %w", err)
+	}
+
+	out := &ApplyResult{BatchID: batchID}
+	for _, group := range planned {
+		accountID := group.accountID
+		if accountID == uuid.Nil {
+			accountID, err = s.createImportAccountTx(ctx, tx, tenantID, parsed.Institution, group.in)
+			if err != nil {
+				return nil, err
+			}
+		}
+		ids, err := s.insertImportableTx(ctx, tx, tenantID, accountID, batchID, incomingProvider(group.parsed.Profile), group.classified.importable)
+		if err != nil {
+			return nil, err
+		}
+		out.InsertedCount += len(ids)
+		out.DuplicateCount += len(group.classified.duplicates)
+		out.ConflictCount += len(group.classified.conflicts)
+		out.TransactionIDs = append(out.TransactionIDs, ids...)
+		out.Conflicts = append(out.Conflicts, group.classified.conflicts...)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit import plan: %w", err)
+	}
+	return out, nil
+}
+
+func (s *Service) createImportAccountTx(ctx context.Context, tx importTx, tenantID uuid.UUID, institution string, group ApplyPlanGroup) (uuid.UUID, error) {
+	openDate, _ := time.Parse(dateOnly, group.OpenDate)
+	openingBalanceDate, _ := time.Parse(dateOnly, group.OpeningBalanceDate)
+	accountID := uuidx.New()
+	snapshotID := uuidx.New()
+	inst := strings.TrimSpace(institution)
+	var instPtr *string
+	if inst != "" {
+		instPtr = &inst
+	}
+	openingTS := time.Date(openingBalanceDate.Year(), openingBalanceDate.Month(), openingBalanceDate.Day(), 0, 0, 0, 0, time.UTC)
+	includeInSavingsRate := group.Kind == "checking" || group.Kind == "savings" || group.Kind == "cash"
+	_, err := tx.Exec(ctx, `
+		insert into accounts (
+			id, tenant_id, name, kind, currency, institution,
+			open_date, opening_balance, opening_balance_date,
+			include_in_networth, include_in_savings_rate
+		) values (
+			$1, $2, $3, $4::account_kind, $5, $6,
+			$7, $8::numeric, $9, true, $10
+		)
+	`, accountID, tenantID, strings.TrimSpace(group.Name), strings.TrimSpace(group.Kind), strings.ToUpper(strings.TrimSpace(group.Currency)), instPtr,
+		openDate, strings.TrimSpace(group.OpeningBalance), openingBalanceDate, includeInSavingsRate)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("insert import account: %w", err)
+	}
+	_, err = tx.Exec(ctx, `
+		insert into account_balance_snapshots (
+			id, tenant_id, account_id, as_of, balance, currency, source
+		) values (
+			$1, $2, $3, $4, $5::numeric, $6, 'opening'
+		)
+	`, snapshotID, tenantID, accountID, openingTS, strings.TrimSpace(group.OpeningBalance), strings.ToUpper(strings.TrimSpace(group.Currency)))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("insert import opening snapshot: %w", err)
+	}
+	return accountID, nil
+}
+
+func (s *Service) insertImportableTx(ctx context.Context, tx importTx, tenantID, accountID, batchID uuid.UUID, provider string, rows []ParsedTransaction) ([]uuid.UUID, error) {
+	inserted := make([]uuid.UUID, 0, len(rows))
+	for _, incoming := range rows {
+		id := uuidx.New()
+		rawJSON, _ := json.Marshal(incoming.Raw)
+		_, err := tx.Exec(ctx, `
+			insert into transactions (
+				id, tenant_id, account_id, status, booked_at, value_at, posted_at,
+				amount, currency, counterparty_raw, description, raw
+			) values (
+				$1, $2, $3, 'posted', $4, $5, $6,
+				$7::numeric, $8, $9, $10, $11::jsonb
+			)
+		`, id, tenantID, accountID, incoming.BookedAt, incoming.ValueAt, incoming.PostedAt,
+			incoming.Amount.String(), incoming.Currency, incoming.CounterpartyRaw, incoming.Description, string(rawJSON))
+		if err != nil {
+			return nil, fmt.Errorf("insert transaction: %w", err)
+		}
+		_, err = tx.Exec(ctx, `
+			insert into source_refs (
+				id, tenant_id, entity_type, entity_id, provider,
+				import_batch_id, external_id, raw_payload, observed_at
+			) values (
+				$1, $2, 'transaction', $3, $4,
+				$5, $6, $7::jsonb, $8
+			)
+		`, uuidx.New(), tenantID, id, provider, batchID, incoming.ExternalID, string(rawJSON), s.now())
+		if err != nil {
+			return nil, fmt.Errorf("insert source ref: %w", err)
+		}
+		inserted = append(inserted, id)
+	}
+	return inserted, nil
+}
+
 func (s *Service) buildPreview(ctx context.Context, tenantID uuid.UUID, parsed ParsedFile, fileName, fileHash, token string, accountID *uuid.UUID) (*Preview, error) {
 	if len(parsed.Transactions) == 0 {
 		return nil, httpx.NewValidationError("file contains no importable transactions")
@@ -191,8 +417,144 @@ func (s *Service) buildPreview(ctx context.Context, tenantID uuid.UUID, parsed P
 		p.ConflictCount = len(classified.conflicts)
 		p.ImportableCount = len(classified.importable)
 		p.ConflictTransactions = classified.conflicts
+		return p, nil
 	}
+	groups, err := s.currencyGroups(ctx, tenantID, parsed)
+	if err != nil {
+		return nil, err
+	}
+	p.CurrencyGroups = groups
 	return p, nil
+}
+
+type importAccountMatch struct {
+	ID          uuid.UUID
+	Name        string
+	Currency    string
+	Institution *string
+}
+
+func (s *Service) currencyGroups(ctx context.Context, tenantID uuid.UUID, parsed ParsedFile) ([]CurrencyGroup, error) {
+	grouped := map[string]ParsedFile{}
+	for _, tx := range parsed.Transactions {
+		cur := tx.Currency
+		g := grouped[cur]
+		if g.Profile == "" {
+			g = ParsedFile{
+				Profile:     parsed.Profile,
+				Institution: parsed.Institution,
+				AccountHint: parsed.AccountHint,
+				Currency:    cur,
+			}
+		}
+		g.Transactions = append(g.Transactions, tx)
+		grouped[cur] = g
+	}
+
+	accounts, err := s.loadImportAccountMatches(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	currencies := make([]string, 0, len(grouped))
+	for cur := range grouped {
+		currencies = append(currencies, cur)
+	}
+	sort.Strings(currencies)
+
+	groups := make([]CurrencyGroup, 0, len(currencies))
+	for _, cur := range currencies {
+		sub := grouped[cur]
+		finalizeParsedRange(&sub, false)
+		samples := make([]PreviewRow, 0, min(5, len(sub.Transactions)))
+		for _, tx := range sub.Transactions {
+			if len(samples) >= 5 {
+				break
+			}
+			samples = append(samples, previewRow(tx))
+		}
+		group := CurrencyGroup{
+			Currency:           cur,
+			SuggestedName:      suggestedNameForCurrency(sub, cur),
+			SuggestedKind:      "checking",
+			SuggestedOpenDate:  formatDatePtr(sub.DateFrom),
+			TransactionCount:   len(sub.Transactions),
+			DateFrom:           formatDatePtr(sub.DateFrom),
+			DateTo:             formatDatePtr(sub.DateTo),
+			Action:             "create_account",
+			ImportableCount:    len(sub.Transactions),
+			SampleTransactions: samples,
+		}
+		candidates := importCandidates(accounts, parsed.Institution, cur)
+		for i := range candidates {
+			existing, err := s.loadExisting(ctx, tenantID, candidates[i].ID, sub)
+			if err != nil {
+				return nil, err
+			}
+			classified := classify(sub, existing)
+			candidates[i].ImportableCount = len(classified.importable)
+			candidates[i].DuplicateCount = len(classified.duplicates)
+			candidates[i].ConflictCount = len(classified.conflicts)
+			candidates[i].ConflictTransactions = classified.conflicts
+		}
+		group.CandidateAccounts = candidates
+		if len(candidates) == 1 {
+			match := candidates[0]
+			group.ExistingAccountID = &match.ID
+			group.ExistingAccountName = match.Name
+			group.Action = "import_to_account"
+			group.ImportableCount = match.ImportableCount
+			group.DuplicateCount = match.DuplicateCount
+			group.ConflictCount = match.ConflictCount
+			group.ConflictTransactions = match.ConflictTransactions
+		}
+		groups = append(groups, group)
+	}
+	return groups, nil
+}
+
+func (s *Service) loadImportAccountMatches(ctx context.Context, tenantID uuid.UUID) ([]importAccountMatch, error) {
+	rows, err := s.pool.Query(ctx, `
+		select id, name, currency, institution
+		from accounts
+		where tenant_id = $1
+		  and archived_at is null
+		order by name
+	`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("load import account matches: %w", err)
+	}
+	defer rows.Close()
+
+	out := []importAccountMatch{}
+	for rows.Next() {
+		var a importAccountMatch
+		if err := rows.Scan(&a.ID, &a.Name, &a.Currency, &a.Institution); err != nil {
+			return nil, fmt.Errorf("scan import account match: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func importCandidates(accounts []importAccountMatch, institution, currency string) []AccountCandidate {
+	var matches []AccountCandidate
+	for _, account := range accounts {
+		if account.Currency != currency {
+			continue
+		}
+		if institution != "" {
+			if account.Institution != nil && strings.TrimSpace(*account.Institution) != "" && !strings.EqualFold(strings.TrimSpace(*account.Institution), institution) {
+				continue
+			}
+		}
+		c := AccountCandidate{ID: account.ID, Name: account.Name, Currency: account.Currency}
+		if account.Institution != nil {
+			c.Institution = strings.TrimSpace(*account.Institution)
+		}
+		matches = append(matches, c)
+	}
+	return matches
 }
 
 func (s *Service) accountCurrency(ctx context.Context, tenantID, accountID uuid.UUID) (string, error) {
@@ -337,6 +699,14 @@ func suggestedName(parsed ParsedFile) string {
 		return parsed.Institution + " " + parsed.AccountHint
 	}
 	return parsed.Institution
+}
+
+func suggestedNameForCurrency(parsed ParsedFile, currency string) string {
+	name := suggestedName(parsed)
+	if currency == "" {
+		return name
+	}
+	return name + " " + currency
 }
 
 func formatDatePtr(t *time.Time) string {

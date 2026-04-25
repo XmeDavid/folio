@@ -55,6 +55,7 @@ type Preview struct {
 	ConflictCount        int               `json:"conflictCount"`
 	ImportableCount      int               `json:"importableCount"`
 	ConflictTransactions []ConflictPreview `json:"conflictTransactions,omitempty"`
+	CurrencyGroups       []CurrencyGroup   `json:"currencyGroups,omitempty"`
 }
 
 type PreviewRow struct {
@@ -67,6 +68,52 @@ type PreviewRow struct {
 type ConflictPreview struct {
 	Incoming PreviewRow `json:"incoming"`
 	Existing PreviewRow `json:"existing"`
+}
+
+type CurrencyGroup struct {
+	Currency             string             `json:"currency"`
+	SuggestedName        string             `json:"suggestedName"`
+	SuggestedKind        string             `json:"suggestedKind"`
+	SuggestedOpenDate    string             `json:"suggestedOpenDate,omitempty"`
+	TransactionCount     int                `json:"transactionCount"`
+	DateFrom             string             `json:"dateFrom,omitempty"`
+	DateTo               string             `json:"dateTo,omitempty"`
+	ExistingAccountID    *uuid.UUID         `json:"existingAccountId,omitempty"`
+	ExistingAccountName  string             `json:"existingAccountName,omitempty"`
+	CandidateAccounts    []AccountCandidate `json:"candidateAccounts,omitempty"`
+	Action               string             `json:"action"`
+	ImportableCount      int                `json:"importableCount"`
+	DuplicateCount       int                `json:"duplicateCount"`
+	ConflictCount        int                `json:"conflictCount"`
+	SampleTransactions   []PreviewRow       `json:"sampleTransactions"`
+	ConflictTransactions []ConflictPreview  `json:"conflictTransactions,omitempty"`
+}
+
+type AccountCandidate struct {
+	ID                   uuid.UUID         `json:"id"`
+	Name                 string            `json:"name"`
+	Currency             string            `json:"currency"`
+	Institution          string            `json:"institution,omitempty"`
+	ImportableCount      int               `json:"importableCount"`
+	DuplicateCount       int               `json:"duplicateCount"`
+	ConflictCount        int               `json:"conflictCount"`
+	ConflictTransactions []ConflictPreview `json:"conflictTransactions,omitempty"`
+}
+
+type ApplyPlanInput struct {
+	FileToken string           `json:"fileToken"`
+	Groups    []ApplyPlanGroup `json:"groups"`
+}
+
+type ApplyPlanGroup struct {
+	Currency           string     `json:"currency"`
+	Action             string     `json:"action"`
+	AccountID          *uuid.UUID `json:"accountId,omitempty"`
+	Name               string     `json:"name,omitempty"`
+	Kind               string     `json:"kind,omitempty"`
+	OpenDate           string     `json:"openDate,omitempty"`
+	OpeningBalance     string     `json:"openingBalance,omitempty"`
+	OpeningBalanceDate string     `json:"openingBalanceDate,omitempty"`
 }
 
 type ApplyResult struct {

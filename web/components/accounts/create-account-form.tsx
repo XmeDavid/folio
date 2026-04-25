@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
+import { currencyOptionsWith } from "@/lib/localization";
 
 // Keep amounts as strings - backend owns the decimal math.
 const amountRegex = /^-?\d+(\.\d+)?$/;
@@ -85,6 +86,11 @@ export function CreateAccountForm({
     },
     mode: "onBlur",
   });
+  const selectedCurrency = useWatch({
+    control: form.control,
+    name: "currency",
+  });
+  const currencyOptions = currencyOptionsWith(selectedCurrency);
 
   const mutation = useMutation({
     mutationFn: (values: FormValues) =>
@@ -174,30 +180,30 @@ export function CreateAccountForm({
   if (createdAccount && preview) {
     return (
       <div className="flex flex-col gap-5">
-        <div className="rounded-[12px] border border-[--color-border] bg-[--color-surface] px-5 py-4">
+        <div className="rounded-[12px] border border-border bg-surface px-5 py-4">
           <h3 className="text-[15px] font-medium">Import transactions?</h3>
-          <p className="mt-1 text-[13px] text-[--color-fg-muted]">
+          <p className="mt-1 text-[13px] text-fg-muted">
             {preview.fileName || "This export"} contains{" "}
             <span className="tabular">{preview.transactionCount}</span>{" "}
             transactions from {preview.dateFrom || "the first entry"} to{" "}
             {preview.dateTo || "the last entry"}.
           </p>
-          <div className="mt-3 grid gap-2 text-[12px] text-[--color-fg-muted] sm:grid-cols-3">
+          <div className="mt-3 grid gap-2 text-[12px] text-fg-muted sm:grid-cols-3">
             <span>
               Importable:{" "}
-              <strong className="tabular text-[--color-fg]">
+              <strong className="tabular text-fg">
                 {preview.importableCount}
               </strong>
             </span>
             <span>
               Duplicates:{" "}
-              <strong className="tabular text-[--color-fg]">
+              <strong className="tabular text-fg">
                 {preview.duplicateCount}
               </strong>
             </span>
             <span>
               Review:{" "}
-              <strong className="tabular text-[--color-fg]">
+              <strong className="tabular text-fg">
                 {preview.conflictCount}
               </strong>
             </span>
@@ -272,12 +278,20 @@ export function CreateAccountForm({
           htmlFor="acc-ccy"
           error={form.formState.errors.currency?.message}
         >
-          <Input
+          <select
             id="acc-ccy"
-            maxLength={3}
-            className="tabular uppercase"
+            className={cn(
+              "h-9 w-full rounded-[8px] border border-border bg-surface px-3 text-[14px] tabular",
+              "focus:border-border-strong focus:ring-2 focus:ring-accent focus:outline-none"
+            )}
             {...form.register("currency")}
-          />
+          >
+            {currencyOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </Field>
 
         <Field
@@ -317,19 +331,19 @@ export function CreateAccountForm({
       </Field>
 
       {previewMutation.isPending ? (
-        <p className="text-[13px] text-[--color-fg-muted]">
+        <p className="text-[13px] text-fg-muted">
           Reading bank export...
         </p>
       ) : null}
 
       {preview ? (
-        <div className="rounded-[12px] border border-[--color-border] bg-[--color-surface] px-4 py-3">
+        <div className="rounded-[12px] border border-border bg-surface px-4 py-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-[13px] font-medium text-[--color-fg]">
+              <p className="text-[13px] font-medium text-fg">
                 {preview.institution || "Bank export"} detected
               </p>
-              <p className="text-[12px] text-[--color-fg-muted]">
+              <p className="text-[12px] text-fg-muted">
                 <span className="tabular">{preview.transactionCount}</span>{" "}
                 transactions
                 {preview.dateFrom && preview.dateTo
@@ -347,7 +361,7 @@ export function CreateAccountForm({
             </Button>
           </div>
           {preview.warnings?.length ? (
-            <ul className="mt-2 list-disc pl-4 text-[12px] text-[--color-fg-muted]">
+            <ul className="mt-2 list-disc pl-4 text-[12px] text-fg-muted">
               {preview.warnings.map((warning) => (
                 <li key={warning}>{warning}</li>
               ))}

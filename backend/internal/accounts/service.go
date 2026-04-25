@@ -243,7 +243,12 @@ const derivedBalanceSelect = `
 	a.open_date, a.close_date, a.opening_balance::text, a.opening_balance_date,
 	a.include_in_networth, a.include_in_savings_rate, a.archived_at,
 	a.created_at, a.updated_at,
-	s.as_of,
+	case
+	  when t.max_booked_at is null then s.as_of
+	  when s.as_of is null then t.max_booked_at::timestamp at time zone 'UTC'
+	  when t.max_booked_at::timestamp at time zone 'UTC' > s.as_of then t.max_booked_at::timestamp at time zone 'UTC'
+	  else s.as_of
+	end as balance_as_of,
 	(coalesce(s.balance, a.opening_balance) + coalesce(t.post_sum, 0))::text as balance
 `
 
@@ -257,7 +262,7 @@ const derivedBalanceFrom = `
 	  limit 1
 	) s on true
 	left join lateral (
-	  select coalesce(sum(amount), 0) as post_sum
+	  select coalesce(sum(amount), 0) as post_sum, max(booked_at) as max_booked_at
 	  from transactions
 	  where account_id = a.id
 	    and status in ('posted', 'reconciled')

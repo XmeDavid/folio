@@ -367,6 +367,48 @@ export type ImportPreview = {
   conflictCount: number;
   importableCount: number;
   conflictTransactions?: ImportConflictPreview[];
+  currencyGroups?: ImportCurrencyGroup[];
+};
+
+export type ImportCurrencyGroup = {
+  currency: string;
+  suggestedName: string;
+  suggestedKind: AccountKind;
+  suggestedOpenDate?: string;
+  transactionCount: number;
+  dateFrom?: string;
+  dateTo?: string;
+  existingAccountId?: string;
+  existingAccountName?: string;
+  candidateAccounts?: ImportAccountCandidate[];
+  action: "create_account" | "import_to_account";
+  importableCount: number;
+  duplicateCount: number;
+  conflictCount: number;
+  sampleTransactions: ImportPreviewRow[];
+  conflictTransactions?: ImportConflictPreview[];
+};
+
+export type ImportAccountCandidate = {
+  id: string;
+  name: string;
+  currency: string;
+  institution?: string;
+  importableCount: number;
+  duplicateCount: number;
+  conflictCount: number;
+  conflictTransactions?: ImportConflictPreview[];
+};
+
+export type ImportPlanGroup = {
+  currency: string;
+  action: "create_account" | "import_to_account";
+  accountId?: string;
+  name?: string;
+  kind?: AccountKind;
+  openDate?: string;
+  openingBalance?: string;
+  openingBalanceDate?: string;
 };
 
 export type ImportApplyResult = {
@@ -395,12 +437,27 @@ export async function applyAccountImport(
   tenantId: string,
   accountId: string,
   fileToken: string,
+  currency?: string,
 ): Promise<ImportApplyResult> {
   return request<ImportApplyResult>(
     `/api/v1/t/${tenantId}/accounts/${accountId}/imports`,
     {
       method: "POST",
-      json: { fileToken },
+      json: { fileToken, currency },
+    },
+  );
+}
+
+export async function applyAccountImportPlan(
+  tenantId: string,
+  fileToken: string,
+  groups: ImportPlanGroup[],
+): Promise<ImportApplyResult> {
+  return request<ImportApplyResult>(
+    `/api/v1/t/${tenantId}/accounts/imports/apply-plan`,
+    {
+      method: "POST",
+      json: { fileToken, groups },
     },
   );
 }

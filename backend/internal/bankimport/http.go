@@ -20,6 +20,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 func (h *Handler) MountAccountRoutes(r chi.Router) {
 	r.Post("/import-preview", h.previewForNewAccount)
+	r.Post("/imports/apply-plan", h.applyPlan)
 	r.Post("/{accountId}/imports/preview", h.previewForExistingAccount)
 	r.Post("/{accountId}/imports", h.applyToExistingAccount)
 }
@@ -37,6 +38,22 @@ func (h *Handler) previewForNewAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) applyPlan(w http.ResponseWriter, r *http.Request) {
+	tenantID := auth.MustTenant(r).ID
+	userID := auth.MustUser(r).ID
+	var req ApplyPlanInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return
+	}
+	res, err := h.svc.ApplyPlan(r.Context(), tenantID, userID, req)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, res)
 }
 
 func (h *Handler) previewForExistingAccount(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +77,7 @@ func (h *Handler) previewForExistingAccount(w http.ResponseWriter, r *http.Reque
 
 type applyReq struct {
 	FileToken string `json:"fileToken"`
+	Currency  string `json:"currency,omitempty"`
 }
 
 func (h *Handler) applyToExistingAccount(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +96,7 @@ func (h *Handler) applyToExistingAccount(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "fileToken is required")
 		return
 	}
-	res, err := h.svc.Apply(r.Context(), tenantID, accountID, userID, req.FileToken)
+	res, err := h.svc.Apply(r.Context(), tenantID, accountID, userID, req.FileToken, req.Currency)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return

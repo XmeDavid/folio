@@ -5,6 +5,11 @@ import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
 import { useQueryClient } from "@tanstack/react-query";
+import {
+  CURRENCY_OPTIONS,
+  LANGUAGE_OPTIONS,
+  REGION_OPTIONS,
+} from "@/lib/localization";
 
 export default function SignupPage() {
   return (
@@ -22,7 +27,8 @@ function SignupForm() {
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [baseCurrency, setBaseCurrency] = useState("USD");
-  const [locale, setLocale] = useState("en-US");
+  const [language, setLanguage] = useState("en");
+  const [region, setRegion] = useState("US");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const router = useRouter();
@@ -33,6 +39,7 @@ function SignupForm() {
     e.preventDefault();
     setBusy(true);
     setErr(null);
+    const locale = `${language}-${region}`;
     try {
       const res = await fetch("/api/v1/auth/signup", {
         method: "POST",
@@ -99,10 +106,26 @@ function SignupForm() {
         <Field
           label="Base currency"
           value={baseCurrency}
-          onChange={(v) => setBaseCurrency(v.toUpperCase())}
+          onChange={setBaseCurrency}
+          options={CURRENCY_OPTIONS}
           required
         />
-        <Field label="Locale" value={locale} onChange={setLocale} required />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field
+            label="Language"
+            value={language}
+            onChange={setLanguage}
+            options={LANGUAGE_OPTIONS}
+            required
+          />
+          <Field
+            label="Region"
+            value={region}
+            onChange={setRegion}
+            options={REGION_OPTIONS}
+            required
+          />
+        </div>
         {err ? <p className="text-sm text-red-600">{err}</p> : null}
         <button
           type="submit"
@@ -131,6 +154,7 @@ function Field({
   autoComplete,
   hint,
   disabled,
+  options,
 }: {
   label: string;
   value: string;
@@ -140,19 +164,36 @@ function Field({
   autoComplete?: string;
   hint?: string;
   disabled?: boolean;
+  options?: readonly { value: string; label: string }[];
 }) {
   return (
     <label className="flex flex-col gap-1">
       <span className="text-sm text-muted-foreground">{label}</span>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        required={required}
-        autoComplete={autoComplete}
-        disabled={disabled}
-        className="rounded border px-3 py-2 disabled:opacity-60"
-      />
+      {options ? (
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          required={required}
+          disabled={disabled}
+          className="rounded border bg-background px-3 py-2 disabled:opacity-60"
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          required={required}
+          autoComplete={autoComplete}
+          disabled={disabled}
+          className="rounded border px-3 py-2 disabled:opacity-60"
+        />
+      )}
       {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
     </label>
   );
