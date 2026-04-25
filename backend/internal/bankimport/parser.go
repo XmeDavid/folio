@@ -87,12 +87,12 @@ func Parse(content string) (ParsedFile, error) {
 }
 
 func isRevolutConsolidatedV2(firstLine, content string) bool {
-	stripped := strings.Trim(firstLine, `"`)
-	if stripped == "Current Accounts Summaries" || stripped == "Contas-correntes Resumos" {
+	if headerEqAny(firstCellOfLine(firstLine), "Current Accounts Summaries", "Contas-correntes Resumos") {
 		return true
 	}
-	return strings.Contains(content, "Contas-correntes Extratos de operações") ||
-		strings.Contains(content, "Current Accounts Transaction statements")
+	lc := strings.ToLower(content)
+	return strings.Contains(lc, strings.ToLower("Contas-correntes Extratos de operações")) ||
+		strings.Contains(lc, strings.ToLower("Current Accounts Transaction Statements"))
 }
 
 func firstNonEmptyLine(s string) string {
@@ -102,6 +102,39 @@ func firstNonEmptyLine(s string) string {
 		}
 	}
 	return ""
+}
+
+// firstCellOfLine returns the first CSV cell of a single line, with quotes
+// and surrounding whitespace stripped. Revolut header rows pad with empty
+// trailing columns, so the raw line looks like `"Header",,,,,,` and naive
+// quote-trimming leaves the trailing commas behind. CSV-parsing the line
+// gives the actual cell value.
+func firstCellOfLine(line string) string {
+	r := csv.NewReader(strings.NewReader(line))
+	r.FieldsPerRecord = -1
+	rec, err := r.Read()
+	if err != nil || len(rec) == 0 {
+		return strings.TrimSpace(strings.Trim(line, `"`))
+	}
+	return strings.TrimSpace(rec[0])
+}
+
+// headerEq compares Revolut section labels case-insensitively after
+// trimming whitespace. Casing has drifted between language exports
+// ("Statements" vs "statements"); this absorbs that drift without forcing
+// us to track every variant by hand.
+func headerEq(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+func headerEqAny(s string, options ...string) bool {
+	t := strings.TrimSpace(s)
+	for _, o := range options {
+		if strings.EqualFold(t, o) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseRevolutBanking(content string) (ParsedFile, error) {
@@ -225,7 +258,7 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 		if len(row) == 0 {
 			continue
 		}
-		if strings.TrimSpace(row[0]) == txAnchor {
+		if headerEq(row[0], txAnchor) {
 			startIdx = i
 			break
 		}
@@ -241,7 +274,7 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 		if first == "" {
 			continue
 		}
-		if isConsolidatedTopLevelHeader(first, lang) && first != txAnchor {
+		if isConsolidatedTopLevelHeader(first, lang) && !headerEq(first, txAnchor) {
 			endIdx = i
 			break
 		}
@@ -330,7 +363,7 @@ func parseConsolidatedCryptoSection(records [][]string, lang consolidatedLang) (
 		header = "Crypto Transaction statements"
 	}
 	for i, row := range records {
-		if strings.TrimSpace(firstField(row)) == header {
+		if headerEq(firstField(row), header) {
 			startIdx = i
 			break
 		}
@@ -345,7 +378,7 @@ func parseConsolidatedCryptoSection(records [][]string, lang consolidatedLang) (
 		if first == "" {
 			continue
 		}
-		if isConsolidatedTopLevelHeader(first, lang) && first != header {
+		if isConsolidatedTopLevelHeader(first, lang) && !headerEq(first, header) {
 			endIdx = i
 			break
 		}
@@ -396,24 +429,35 @@ func parseConsolidatedCryptoSection(records [][]string, lang consolidatedLang) (
 }
 
 func matchCryptoSubsectionHeader(s string) (cryptoOpKind, bool) {
-	switch s {
-	case "Extrato de operação (apenas vendas)",
-		"Transaction statement (only sales)":
+	// Both "through" (older EN export) and "via" (current EN export) are
+	// accepted for Learn & Earn / Staking, since Revolut quietly switched
+	// the wording. Case-insensitive equality covers Statement(s) drift.
+	switch {
+	case headerEqAny(s,
+		"Extrato de operação (apenas vendas)",
+		"Transaction statement (only sales)"):
 		return cryptoOpSell, true
-	case "Extrato de operação (apenas aquisições)",
-		"Transaction statement (only acquisitions)":
+	case headerEqAny(s,
+		"Extrato de operação (apenas aquisições)",
+		"Transaction statement (only acquisitions)"):
 		return cryptoOpBuy, true
-	case "Extrato de operação (apenas depósitos)",
-		"Transaction statement (only deposits)":
+	case headerEqAny(s,
+		"Extrato de operação (apenas depósitos)",
+		"Transaction statement (only deposits)"):
 		return cryptoOpDeposit, true
-	case "Extrato de operação (apenas levantamentos)",
-		"Transaction statement (only withdrawals)":
+	case headerEqAny(s,
+		"Extrato de operação (apenas levantamentos)",
+		"Transaction statement (only withdrawals)"):
 		return cryptoOpWithdrawal, true
-	case "Extrato de operação (apenas aquisições através de Learn & Earn)",
-		"Transaction statement (only acquisitions through Learn & Earn)":
+	case headerEqAny(s,
+		"Extrato de operação (apenas aquisições através de Learn & Earn)",
+		"Transaction statement (only acquisitions through Learn & Earn)",
+		"Transaction statement (only acquisitions via Learn & Earn)"):
 		return cryptoOpLearnEarn, true
-	case "Extrato de operação (apenas aquisições por Staking)",
-		"Transaction statement (only acquisitions through Staking)":
+	case headerEqAny(s,
+		"Extrato de operação (apenas aquisições por Staking)",
+		"Transaction statement (only acquisitions through Staking)",
+		"Transaction statement (only acquisitions via Staking)"):
 		return cryptoOpStaking, true
 	}
 	return "", false
@@ -590,7 +634,7 @@ func parseConsolidatedMMFSection(records [][]string, lang consolidatedLang) ([]P
 	}
 	startIdx := -1
 	for i, row := range records {
-		if strings.TrimSpace(firstField(row)) == header {
+		if headerEq(firstField(row), header) {
 			startIdx = i
 			break
 		}
@@ -604,7 +648,7 @@ func parseConsolidatedMMFSection(records [][]string, lang consolidatedLang) ([]P
 		if first == "" {
 			continue
 		}
-		if isConsolidatedTopLevelHeader(first, lang) && first != header {
+		if isConsolidatedTopLevelHeader(first, lang) && !headerEq(first, header) {
 			endIdx = i
 			break
 		}
@@ -632,7 +676,9 @@ func parseConsolidatedMMFSection(records [][]string, lang consolidatedLang) ([]P
 			continue
 		}
 		// Column header: "Transaction statement (only returns)" then a row of column labels.
-		if first == "Transaction statement (only returns)" || first == "Extrato de operações (apenas rendimentos)" {
+		if headerEqAny(first,
+			"Transaction statement (only returns)",
+			"Extrato de operações (apenas rendimentos)") {
 			expectColumns = true
 			continue
 		}
@@ -808,11 +854,7 @@ func splitConsolidatedSections(rows [][]string) []consolidatedSection {
 }
 
 func isConsolidatedTxSubheader(s string) bool {
-	switch s {
-	case "Extrato de operações", "Transaction statement":
-		return true
-	}
-	return false
+	return headerEqAny(s, "Extrato de operações", "Transaction statement")
 }
 
 // buildConsolidatedColumns recognises the column header row of a current-account
@@ -898,11 +940,11 @@ const (
 
 func detectConsolidatedLang(records [][]string) consolidatedLang {
 	for _, row := range records {
-		first := strings.TrimSpace(firstField(row))
-		if first == "Extrato de operações" || first == "Contas-correntes Resumos" {
+		first := firstField(row)
+		if headerEqAny(first, "Extrato de operações", "Contas-correntes Resumos") {
 			return consolidatedLangPT
 		}
-		if first == "Transaction statement" || first == "Current Accounts Summaries" {
+		if headerEqAny(first, "Transaction statement", "Current Accounts Summaries") {
 			return consolidatedLangEN
 		}
 	}
@@ -911,27 +953,32 @@ func detectConsolidatedLang(records [][]string) consolidatedLang {
 
 func consolidatedTxAnchor(lang consolidatedLang) string {
 	if lang == consolidatedLangEN {
-		return "Current Accounts Transaction statements"
+		return "Current Accounts Transaction Statements"
 	}
 	return "Contas-correntes Extratos de operações"
 }
 
+// isConsolidatedTopLevelHeader matches the section banners that delimit each
+// asset class in the consolidated v2 export. Comparisons are case-insensitive
+// (Revolut renamed "Statements"→"statements"→"Statements" across versions)
+// and accept both "Commodities" and "Commodity" since the EN export uses
+// the latter while older fixtures use the former.
 func isConsolidatedTopLevelHeader(s string, lang consolidatedLang) bool {
-	switch s {
-	case "Fundos Monetários Flexíveis Extratos de operações",
+	return headerEqAny(s,
+		// PT
+		"Fundos Monetários Flexíveis Extratos de operações",
 		"Investment Services Extratos de operações",
 		"Cripto Extratos de operações",
 		"Bem Extratos de operações",
-		"Glossário":
-		return true
-	case "Flexible Cash Funds Transaction statements",
-		"Investment Services Transaction statements",
-		"Crypto Transaction statements",
-		"Commodities Transaction statements",
-		"Glossary":
-		return true
-	}
-	return false
+		"Glossário",
+		// EN
+		"Flexible Cash Funds Transaction Statements",
+		"Investment Services Transaction Statements",
+		"Crypto Transaction Statements",
+		"Commodities Transaction Statements",
+		"Commodity Transaction Statements",
+		"Glossary",
+	)
 }
 
 // parseConsolidatedDate accepts the export's localized date forms.
@@ -974,15 +1021,42 @@ func parseConsolidatedMoney(raw string, lang consolidatedLang) (decimal.Decimal,
 	// whitespace (NBSP + ASCII) up to the currency code so the numeric
 	// portion is one token.
 	stripped := stripWhitespace(s)
+	// EN exports add a parenthesized cross-currency display when the txn
+	// currency differs from the section currency: "$5.53 (5.51 CHF)" or
+	// "€10.00 (11.38 CHF)". The section currency is always derivable from
+	// upstream context, so we drop everything from the open-paren onwards.
+	if i := strings.Index(stripped, "("); i >= 0 {
+		stripped = strings.TrimSpace(stripped[:i])
+	}
+	// EN exports prefix the currency symbol ("$0.05", "-$0.01", "€10.00")
+	// while pt-pt exports suffix it ("16,77€"). Detect a leading sign and
+	// optional currency symbol so the numeric regex can match the digits.
+	sign := ""
+	if strings.HasPrefix(stripped, "-") {
+		sign = "-"
+		stripped = stripped[1:]
+	}
+	leadCurrency := ""
+	for _, sym := range []string{"€", "$", "£", "¥"} {
+		if strings.HasPrefix(stripped, sym) {
+			leadCurrency = sym
+			stripped = strings.TrimPrefix(stripped, sym)
+			break
+		}
+	}
 	m := consolidatedMoneyHead.FindStringSubmatch(stripped)
 	if m == nil {
 		return decimal.Zero, "", fmt.Errorf("invalid money %q", raw)
 	}
-	d, err := parseLocalizedDecimal(m[1], lang)
+	d, err := parseLocalizedDecimal(sign+m[1], lang)
 	if err != nil {
 		return decimal.Zero, "", err
 	}
-	return d, m[2], nil
+	cur := m[2]
+	if cur == "" {
+		cur = leadCurrency
+	}
+	return d, cur, nil
 }
 
 // stripWhitespace removes ASCII space, tab, and U+00A0 (non-breaking space).
