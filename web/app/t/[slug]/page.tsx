@@ -1,9 +1,28 @@
 "use client";
 
 import { use } from "react";
+import Link from "next/link";
+import type { Route } from "next";
 import { useQuery } from "@tanstack/react-query";
+import { ArrowRight, Banknote, Plus, ReceiptText, Shapes } from "lucide-react";
+import { PageHeader } from "@/components/app/page-header";
+import { EmptyState, ErrorBanner } from "@/components/app/empty";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  fetchAccounts,
+  fetchTransactions,
+  type Account,
+  type Transaction,
+} from "@/lib/api/client";
 import { useCurrentTenant } from "@/lib/hooks/use-identity";
-import { fetchAccounts, fetchTransactions } from "@/lib/api/client";
+import { formatAmount, formatDate } from "@/lib/format";
 
 export default function TenantDashboardPage({
   params,
@@ -12,47 +31,302 @@ export default function TenantDashboardPage({
 }) {
   const { slug } = use(params);
   const tenant = useCurrentTenant(slug);
+  const tenantId = tenant?.id ?? null;
 
   const accounts = useQuery({
-    queryKey: ["accounts", tenant?.id],
-    queryFn: () => fetchAccounts(tenant!.id),
-    enabled: !!tenant,
+    queryKey: ["accounts", tenantId],
+    queryFn: () => fetchAccounts(tenantId!),
+    enabled: !!tenantId,
   });
   const transactions = useQuery({
-    queryKey: ["transactions", tenant?.id, { limit: 8 }],
-    queryFn: () => fetchTransactions(tenant!.id, { limit: 8 }),
-    enabled: !!tenant,
+    queryKey: ["transactions", tenantId, { limit: 12 }],
+    queryFn: () => fetchTransactions(tenantId!, { limit: 12 }),
+    enabled: !!tenantId,
   });
 
   if (!tenant) return null;
 
+  const locale = tenant.locale;
+  const accountRows = accounts.data ?? [];
+  const transactionRows = transactions.data ?? [];
+  const balances = balanceByCurrency(accountRows);
+  const uncategorized = transactionRows.filter((t) => !t.categoryId).length;
+  const basePath = `/t/${tenant.slug}`;
+
   return (
-    <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-semibold">{tenant.name}</h1>
-      <p className="text-sm text-muted-foreground">
-        Base currency {tenant.baseCurrency} · cycle anchor day {tenant.cycleAnchorDay}
-      </p>
-      <section className="grid gap-4 md:grid-cols-2">
-        <Card title="Accounts">
-          <pre className="overflow-auto text-xs">
-            {accounts.isLoading ? "Loading..." : JSON.stringify(accounts.data, null, 2)}
-          </pre>
+    <div className="flex flex-col gap-8">
+      <PageHeader
+        eyebrow="Workspace"
+        title={tenant.name}
+        description={`Base currency ${tenant.baseCurrency}. Current cycle anchors on day ${tenant.cycleAnchorDay}.`}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="secondary">
+              <Link href={`${basePath}/accounts` as Route}>
+                <Plus className="h-4 w-4" />
+                Add account
+              </Link>
+            </Button>
+            <Button asChild>
+              <Link href={`${basePath}/transactions` as Route}>
+                <ReceiptText className="h-4 w-4" />
+                Record transaction
+              </Link>
+            </Button>
+          </div>
+        }
+      />
+
+      {accounts.isError || transactions.isError ? (
+        <ErrorBanner
+          title="Couldn't load the dashboard"
+          description="Check that the backend is running and your session is still valid."
+        />
+      ) : null}
+
+      <section className="grid gap-4 md:grid-cols-3">
+        <MetricCard
+          icon={<Banknote className="h-4 w-4" />}
+          label="Accounts"
+          value={accounts.isLoading ? "..." : String(accountRows.length)}
+          detail={
+            accountRows.length === 1
+              ? "1 active balance"
+              : `${accountRows.length} active balances`
+          }
+        />
+        <MetricCard
+          icon={<ReceiptText className="h-4 w-4" />}
+          label="Recent transactions"
+          value={
+            transactions.isLoading ? "..." : String(transactionRows.length)
+          }
+          detail="Latest ledger activity"
+        />
+        <MetricCard
+          icon={<Shapes className="h-4 w-4" />}
+          label="Uncategorized"
+          value={transactions.isLoading ? "..." : String(uncategorized)}
+          detail="Needs classification"
+          action={
+            <Link
+              href={`${basePath}/transactions` as Route}
+              className="text-[12px] font-medium text-[--color-accent] hover:underline"
+            >
+              Review
+            </Link>
+          }
+        />
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <Card>
+          <CardHeader className="flex-row items-center justify-between">
+            <CardTitle>Total balance</CardTitle>
+            <Button asChild variant="ghost" size="sm">
+              <Link href={`${basePath}/accounts` as Route}>
+                Accounts
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {accounts.isLoading ? (
+              <p className="text-[13px] text-[--color-fg-muted]">Loading...</p>
+            ) : balances.length > 0 ? (
+              <div className="flex flex-col divide-y divide-[--color-border]">
+                {balances.map(([currency, amount]) => (
+                  <div
+                    key={currency}
+                    className="flex items-center justify-between py-3"
+                  >
+                    <span className="text-[13px] text-[--color-fg-muted]">
+                      {currency.toUpperCase()}
+                    </span>
+                    <span className="tabular text-[18px] font-medium">
+                      {formatAmount(amount, currency, locale)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                title="No accounts yet"
+                description="Create the first account to start tracking balances."
+                action={
+                  <Button asChild>
+                    <Link href={`${basePath}/accounts` as Route}>
+                      <Plus className="h-4 w-4" />
+                      Add account
+                    </Link>
+                  </Button>
+                }
+                className="py-8"
+              />
+            )}
+          </CardContent>
         </Card>
-        <Card title="Recent transactions">
-          <pre className="overflow-auto text-xs">
-            {transactions.isLoading ? "Loading..." : JSON.stringify(transactions.data, null, 2)}
-          </pre>
+
+        <Card className="overflow-hidden">
+          <CardHeader className="flex-row items-center justify-between">
+            <CardTitle>Recent transactions</CardTitle>
+            <Button asChild variant="ghost" size="sm">
+              <Link href={`${basePath}/transactions` as Route}>
+                Ledger
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+          </CardHeader>
+          {transactions.isLoading ? (
+            <CardContent>
+              <p className="text-[13px] text-[--color-fg-muted]">Loading...</p>
+            </CardContent>
+          ) : transactionRows.length > 0 ? (
+            <RecentTransactions
+              transactions={transactionRows.slice(0, 8)}
+              accounts={accountRows}
+              locale={locale}
+            />
+          ) : (
+            <CardContent>
+              <EmptyState
+                title="No transactions yet"
+                description="Record a manual transaction once you have an account."
+                action={
+                  accountRows.length > 0 ? (
+                    <Button asChild>
+                      <Link href={`${basePath}/transactions` as Route}>
+                        <Plus className="h-4 w-4" />
+                        Record transaction
+                      </Link>
+                    </Button>
+                  ) : null
+                }
+                className="py-8"
+              />
+            </CardContent>
+          )}
         </Card>
       </section>
     </div>
   );
 }
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
+function MetricCard({
+  icon,
+  label,
+  value,
+  detail,
+  action,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  detail: string;
+  action?: React.ReactNode;
+}) {
   return (
-    <div className="rounded border p-4">
-      <h2 className="mb-2 text-sm font-semibold">{title}</h2>
-      {children}
-    </div>
+    <Card>
+      <CardContent className="flex items-start justify-between gap-4 pt-5">
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex items-center gap-2 text-[12px] font-medium text-[--color-fg-muted]">
+            {icon}
+            {label}
+          </div>
+          <div className="tabular text-[28px] leading-tight font-normal">
+            {value}
+          </div>
+          <div className="text-[12px] text-[--color-fg-faint]">{detail}</div>
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </CardContent>
+    </Card>
   );
+}
+
+function RecentTransactions({
+  transactions,
+  accounts,
+  locale,
+}: {
+  transactions: Transaction[];
+  accounts: Account[];
+  locale?: string;
+}) {
+  const accountById = new Map(accounts.map((a) => [a.id, a]));
+  return (
+    <ul className="divide-y divide-[--color-border]">
+      {transactions.map((t) => {
+        const account = accountById.get(t.accountId);
+        return (
+          <li
+            key={t.id}
+            className="grid grid-cols-[1fr_auto] gap-3 px-5 py-3 transition-colors hover:bg-[--color-surface-subtle]"
+          >
+            <div className="min-w-0">
+              <div className="truncate text-[14px] font-medium">
+                {t.description ?? t.counterpartyRaw ?? "Untitled transaction"}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-[12px] text-[--color-fg-muted]">
+                <span>{formatDate(t.bookedAt, locale)}</span>
+                <span>·</span>
+                <span className="truncate">
+                  {account ? account.name : t.accountId.slice(0, 8)}
+                </span>
+                {!t.categoryId ? <Badge variant="amber">Uncategorized</Badge> : null}
+              </div>
+            </div>
+            <div
+              className={`tabular text-right text-[14px] font-medium ${
+                t.amount.startsWith("-")
+                  ? "text-[--color-fg]"
+                  : "text-[--color-success]"
+              }`}
+            >
+              {formatAmount(t.amount, t.currency, locale)}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function balanceByCurrency(accounts: Account[]): [string, string][] {
+  const balances = new Map<string, string>();
+  for (const account of accounts) {
+    const currency = account.currency.toUpperCase();
+    balances.set(
+      currency,
+      addDecimalStrings(balances.get(currency) ?? "0", account.balance)
+    );
+  }
+  return [...balances.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+function addDecimalStrings(a: string, b: string): string {
+  const left = parseDecimal(a);
+  const right = parseDecimal(b);
+  const scale = Math.max(left.scale, right.scale);
+  const total =
+    left.units * 10n ** BigInt(scale - left.scale) +
+    right.units * 10n ** BigInt(scale - right.scale);
+  return formatDecimal(total, scale);
+}
+
+function parseDecimal(value: string): { units: bigint; scale: number } {
+  const match = value.trim().match(/^([+-]?)(\d+)(?:\.(\d+))?$/);
+  if (!match) return { units: 0n, scale: 0 };
+  const fraction = match[3] ?? "";
+  const units = BigInt(`${match[1] ?? ""}${match[2]}${fraction}`);
+  return { units, scale: fraction.length };
+}
+
+function formatDecimal(units: bigint, scale: number): string {
+  const sign = units < 0n ? "-" : "";
+  const raw = (units < 0n ? -units : units).toString().padStart(scale + 1, "0");
+  if (scale === 0) return `${sign}${raw}`;
+  const whole = raw.slice(0, -scale);
+  const fraction = raw.slice(-scale).replace(/0+$/, "");
+  return fraction ? `${sign}${whole}.${fraction}` : `${sign}${whole}`;
 }

@@ -1,0 +1,127 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  DEPLOY_PATH: /opt/folio
+  NGINX_PROJECT_CONF_DIR: /etc/nginx/sites-enabled
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set image owner
+        id: image-owner
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.image-owner.outputs.owner }}/folio-backend:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ steps.image-owner.outputs.owner }}/folio-backend:latest
+
+      - name: Build and push web image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./web
+          push: true
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.image-owner.outputs.owner }}/folio-web:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ steps.image-owner.outputs.owner }}/folio-web:latest
+
+      - name: Prepare deploy directory
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            mkdir -p ${{ env.DEPLOY_PATH }}/deploy/migrations
+            rm -f ${{ env.DEPLOY_PATH }}/deploy/migrations/*.sql ${{ env.DEPLOY_PATH }}/deploy/migrations/atlas.sum
+
+      - name: Upload deploy files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: deploy/docker-compose.yml,deploy/backup.sh
+          target: ${{ env.DEPLOY_PATH }}
+          overwrite: true
+
+      - name: Upload nginx project config
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: deploy/nginx/folio.conf
+          target: ${{ env.NGINX_PROJECT_CONF_DIR }}
+          strip_components: 2
+          overwrite: true
+
+      - name: Upload database migrations
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: backend/db/migrations/*
+          target: ${{ env.DEPLOY_PATH }}/deploy/migrations
+          strip_components: 3
+          overwrite: true
+
+      - name: Restart production stack
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -eu
+            cd ${{ env.DEPLOY_PATH }}
+            test -f .env
+            export GHCR_OWNER=${{ steps.image-owner.outputs.owner }}
+            export IMAGE_TAG=${{ github.sha }}
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            docker compose --env-file .env -f deploy/docker-compose.yml pull backend web
+            docker compose --env-file .env -f deploy/docker-compose.yml run --rm migrate
+            docker compose --env-file .env -f deploy/docker-compose.yml run --rm --entrypoint /app/folio-river-migrate backend -direction up
+            docker compose --env-file .env -f deploy/docker-compose.yml up -d --remove-orphans
+            nginx-reload
+            docker image prune -f

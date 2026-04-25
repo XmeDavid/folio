@@ -1,0 +1,17 @@
+.git
+.github
+.omc
+.claude
+.codex
+node_modules
+.next
+out
+.turbo
+coverage
+*.tsbuildinfo
+.env
+.env.*
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+Dockerfile

@@ -1,0 +1,13 @@
+.git
+.github
+.omc
+.claude
+.codex
+bin
+dist
+tmp
+*.out
+coverage.*
+.env
+.env.*
+Dockerfile

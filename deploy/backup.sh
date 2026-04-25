@@ -2,9 +2,9 @@
 # Nightly Postgres backup.
 #
 # Runs inside the db container via:
-#   docker compose exec db /backups/backup.sh
+#   docker compose exec db /usr/local/bin/backup.sh
 # or scheduled on the host via cron/systemd-timer:
-#   0 3 * * *  cd /opt/folio/deploy && docker compose exec -T db /backups/backup.sh
+#   0 3 * * *  cd /opt/folio && docker compose --env-file .env -f deploy/docker-compose.yml exec -T db /usr/local/bin/backup.sh
 #
 # Backups are written to /backups (mounted from ./backups on the host).
 # Rotate to object storage (e.g. Backblaze B2, Cloudflare R2) via rclone in a

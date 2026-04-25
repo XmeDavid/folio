@@ -1,9 +1,9 @@
 # Production compose file.
 # Expects .env at the repo root with production secrets.
 #
-# Caddy terminates TLS and reverse-proxies:
-#   folio.example.com          → web (Next.js)
-#   api.folio.example.com      → backend (Go)
+# A VPS-level reverse proxy terminates TLS and reverse-proxies to localhost:
+#   folio.davidsbatista.com      → 127.0.0.1:${WEB_PORT:-13000}
+#   api.folio.davidsbatista.com  → 127.0.0.1:${BACKEND_PORT:-13080}
 
 services:
   db:
@@ -16,6 +16,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backups:/backups
+      - ./backup.sh:/usr/local/bin/backup.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -24,11 +25,12 @@ services:
     networks: [internal]
 
   backend:
-    build:
-      context: ../backend
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/folio-backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       db: { condition: service_healthy }
+    ports:
+      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-13080}:8080"
     environment:
       APP_ENV:                  production
       APP_URL:                  ${APP_URL}
@@ -37,42 +39,49 @@ services:
       DATABASE_URL:             postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       SESSION_SECRET:           ${SESSION_SECRET}
       SECRET_ENCRYPTION_KEY:    ${SECRET_ENCRYPTION_KEY}
+      REGISTRATION_MODE:        ${REGISTRATION_MODE:-invite_only}
+      ADMIN_BOOTSTRAP_EMAIL:    ${ADMIN_BOOTSTRAP_EMAIL:-}
       WEBAUTHN_RP_ID:           ${WEBAUTHN_RP_ID}
       WEBAUTHN_RP_NAME:         ${WEBAUTHN_RP_NAME}
       WEBAUTHN_RP_ORIGIN:       ${WEBAUTHN_RP_ORIGIN}
-      GOCARDLESS_SECRET_ID:     ${GOCARDLESS_SECRET_ID}
-      GOCARDLESS_SECRET_KEY:    ${GOCARDLESS_SECRET_KEY}
-      SENTRY_DSN:               ${SENTRY_DSN}
+      MFA_CHALLENGE_TTL:        ${MFA_CHALLENGE_TTL:-5m}
+      REAUTH_WINDOW:            ${REAUTH_WINDOW:-5m}
+      RESEND_API_KEY:           ${RESEND_API_KEY:-}
+      EMAIL_FROM:               ${EMAIL_FROM:-Folio <onboarding@localhost>}
+      GOCARDLESS_SECRET_ID:     ${GOCARDLESS_SECRET_ID:-}
+      GOCARDLESS_SECRET_KEY:    ${GOCARDLESS_SECRET_KEY:-}
+      SENTRY_DSN:               ${SENTRY_DSN:-}
     networks: [internal]
 
+  migrate:
+    image: arigaio/atlas:latest
+    depends_on:
+      db: { condition: service_healthy }
+    command:
+      - migrate
+      - apply
+      - --url
+      - postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
+      - --dir
+      - file:///migrations
+    volumes:
+      - ./migrations:/migrations:ro
+    networks: [internal]
+    profiles: [tools]
+
   web:
-    build:
-      context: ../web
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/folio-web:${IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on: [backend]
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-13000}:3000"
     environment:
       NODE_ENV: production
       API_URL:  http://backend:8080
     networks: [internal]
 
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on: [backend, web]
-    networks: [internal]
-
 volumes:
   pgdata:
-  caddy_data:
-  caddy_config:
 
 networks:
   internal:

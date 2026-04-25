@@ -8,6 +8,7 @@ const withSerwist = withSerwistInit({
 });
 
 const config: NextConfig = {
+  output: "standalone",
   reactStrictMode: true,
   typedRoutes: true,
   async rewrites() {

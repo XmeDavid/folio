@@ -1,11 +1,20 @@
 "use client";
 
+import { Suspense } from "react";
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
 import { useQueryClient } from "@tanstack/react-query";
 
 export default function SignupPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignupForm />
+    </Suspense>
+  );
+}
+
+function SignupForm() {
   const sp = useSearchParams();
   const inviteToken = sp.get("inviteToken") ?? undefined;
   const inviteEmail = sp.get("email") ?? "";

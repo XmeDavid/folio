@@ -38,7 +38,7 @@ func Load() (*Config, error) {
 		DatabaseURL:         os.Getenv("DATABASE_URL"),
 		WebAuthnRPID:        env("WEBAUTHN_RP_ID", "localhost"),
 		WebAuthnRPName:      env("WEBAUTHN_RP_NAME", "Folio"),
-		WebAuthnRPOrigins:   splitCSV(env("WEBAUTHN_RP_ORIGINS", env("WEBAUTHN_RP_ORIGIN", "http://localhost:3000"))),
+		WebAuthnRPOrigins:   []string{env("WEBAUTHN_RP_ORIGIN", "http://localhost:3000")},
 		MFAChallengeTTL:     envDuration("MFA_CHALLENGE_TTL", 5*time.Minute),
 		ReauthWindow:        envDuration("REAUTH_WINDOW", 5*time.Minute),
 		GoCardlessSecretID:  os.Getenv("GOCARDLESS_SECRET_ID"),
@@ -86,18 +86,6 @@ func env(key, def string) string {
 		return v
 	}
 	return def
-}
-
-func splitCSV(s string) []string {
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 func envDuration(key string, def time.Duration) time.Duration {

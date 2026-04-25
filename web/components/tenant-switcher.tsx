@@ -10,7 +10,7 @@ export function TenantSwitcher({ currentSlug }: { currentSlug: string }) {
   if (id.status !== "authenticated") return null;
   return (
     <select
-      className="rounded border bg-background px-2 py-1 text-sm"
+      className="h-9 max-w-[52vw] rounded-[8px] border border-[--color-border-strong] bg-[--color-surface] px-2 text-[13px] text-[--color-fg]"
       value={currentSlug}
       onChange={(e) => router.push(`/t/${e.target.value}` as Route)}
     >
