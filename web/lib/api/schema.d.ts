@@ -88,8 +88,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Bootstrap a tenant and its first user
-         * @description Creates the first tenant/user pair. Password auth is intentionally not implemented yet.
+         * Bootstrap a workspace and its first user
+         * @description Creates the first workspace/user pair. Password auth is intentionally not implemented yet.
          */
         post: {
             parameters: {
@@ -242,7 +242,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Current tenant user */
+        /** Current workspace user */
         get: {
             parameters: {
                 query?: never;
@@ -252,7 +252,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Current user and tenant */
+                /** @description Current user and workspace */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -278,7 +278,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List accounts for current tenant */
+        /** List accounts for current workspace */
         get: {
             parameters: {
                 query?: {
@@ -378,7 +378,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List account groups for current tenant */
+        /** List account groups for current workspace */
         get: {
             parameters: {
                 query?: {
@@ -567,8 +567,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List transactions for current tenant
-         * @description Tenant is taken from the `X-Tenant-ID` context — never from the body.
+         * List transactions for current workspace
+         * @description Workspace is taken from the `X-Workspace-ID` context — never from the body.
          *     Results are ordered by `bookedAt DESC, id DESC`.
          */
         get: {
@@ -616,7 +616,7 @@ export interface paths {
         put?: never;
         /**
          * Create a manual transaction
-         * @description Manual ledger entry. `tenantId` is resolved from `X-Tenant-ID`.
+         * @description Manual ledger entry. `workspaceId` is resolved from `X-Workspace-ID`.
          *     `currency` must match the account currency (also enforced by a
          *     database trigger). Status defaults to `posted`.
          */
@@ -812,7 +812,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List categories for current tenant */
+        /** List categories for current workspace */
         get: {
             parameters: {
                 query?: {
@@ -963,7 +963,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List merchants for current tenant */
+        /** List merchants for current workspace */
         get: {
             parameters: {
                 query?: {
@@ -1109,7 +1109,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List tags for current tenant */
+        /** List tags for current workspace */
         get: {
             parameters: {
                 query?: {
@@ -1256,7 +1256,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List categorization rules for current tenant
+         * List categorization rules for current workspace
          * @description Rules are returned ordered by `priority` ascending, then `createdAt`
          *     ascending. All rules (enabled and disabled) are listed by default.
          */
@@ -1516,14 +1516,14 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
-            tenantId: string;
+            workspaceId: string;
             /** Format: email */
             email: string;
             displayName: string;
             /** Format: date-time */
             createdAt: string;
         };
-        Tenant: {
+        Workspace: {
             /** Format: uuid */
             id: string;
             name: string;
@@ -1538,7 +1538,7 @@ export interface components {
             createdAt: string;
         };
         BootstrapInput: {
-            tenantName: string;
+            workspaceName: string;
             /** @example CHF */
             baseCurrency: string;
             /** @default 1 */
@@ -1555,11 +1555,11 @@ export interface components {
             displayName: string;
         };
         BootstrapResult: {
-            tenant: components["schemas"]["Tenant"];
+            workspace: components["schemas"]["Workspace"];
             user: components["schemas"]["User"];
         };
         MeResult: {
-            tenant: components["schemas"]["Tenant"];
+            workspace: components["schemas"]["Workspace"];
             user: components["schemas"]["User"];
         };
         RegisterInput: {
@@ -1581,7 +1581,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
-            tenantId: string;
+            workspaceId: string;
             name: string;
             nickname?: string | null;
             kind: components["schemas"]["AccountKind"];
@@ -1656,7 +1656,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
-            tenantId: string;
+            workspaceId: string;
             name: string;
             sortOrder: number;
             /** Format: date-time */
@@ -1694,7 +1694,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
-            tenantId: string;
+            workspaceId: string;
             /** Format: uuid */
             accountId: string;
             status: components["schemas"]["TransactionStatus"];
@@ -1777,7 +1777,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
-            tenantId: string;
+            workspaceId: string;
             /** Format: uuid */
             parentId?: string | null;
             name: string;
@@ -1815,7 +1815,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
-            tenantId: string;
+            workspaceId: string;
             canonicalName: string;
             logoUrl?: string | null;
             /** Format: uuid */
@@ -1857,7 +1857,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
-            tenantId: string;
+            workspaceId: string;
             name: string;
             color?: string | null;
             /** Format: date-time */
@@ -1919,7 +1919,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
-            tenantId: string;
+            workspaceId: string;
             /** @description Lower numbers match first. */
             priority: number;
             when: components["schemas"]["CategorizationRuleWhen"];
