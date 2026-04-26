@@ -21,7 +21,7 @@ import {
   updateCategory,
   type Category,
 } from "@/lib/api/client";
-import { useCurrentTenant } from "@/lib/hooks/use-identity";
+import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 
 export default function CategoriesPage({
   params,
@@ -29,18 +29,18 @@ export default function CategoriesPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = use(params);
-  const tenant = useCurrentTenant(slug);
-  const tenantId = tenant?.id ?? null;
+  const workspace = useCurrentWorkspace(slug);
+  const workspaceId = workspace?.id ?? null;
   const [creating, setCreating] = React.useState(false);
   const [includeArchived, setIncludeArchived] = React.useState(false);
 
   const categoriesQuery = useQuery({
-    queryKey: ["categories", tenantId, includeArchived],
-    queryFn: () => fetchCategories(tenantId!, { includeArchived }),
-    enabled: !!tenantId,
+    queryKey: ["categories", workspaceId, includeArchived],
+    queryFn: () => fetchCategories(workspaceId!, { includeArchived }),
+    enabled: !!workspaceId,
   });
 
-  if (!tenant) return null;
+  if (!workspace) return null;
 
   const categories = categoriesQuery.data ?? [];
   const activeCategories = categories.filter(
@@ -61,14 +61,14 @@ export default function CategoriesPage({
         }
       />
 
-      {creating && tenantId ? (
+      {creating && workspaceId ? (
         <Card>
           <CardHeader>
             <CardTitle>New category</CardTitle>
           </CardHeader>
           <CardContent>
             <CategoryForm
-              tenantId={tenantId}
+              workspaceId={workspaceId}
               categories={activeCategories}
               onDone={() => setCreating(false)}
               onCancel={() => setCreating(false)}
@@ -97,7 +97,7 @@ export default function CategoriesPage({
             />
             Show archived
           </label>
-          <CategoryTree tenantId={tenant.id} categories={categories} />
+          <CategoryTree workspaceId={workspace.id} categories={categories} />
         </div>
       ) : (
         <EmptyState
@@ -116,10 +116,10 @@ export default function CategoriesPage({
 }
 
 function CategoryTree({
-  tenantId,
+  workspaceId,
   categories,
 }: {
-  tenantId: string;
+  workspaceId: string;
   categories: Category[];
 }) {
   const roots = categories
@@ -147,7 +147,7 @@ function CategoryTree({
         {roots.map((category) => (
           <CategoryRow
             key={category.id}
-            tenantId={tenantId}
+            workspaceId={workspaceId}
             category={category}
             categories={categories}
             childrenByParent={childrenByParent}
@@ -160,13 +160,13 @@ function CategoryTree({
 }
 
 function CategoryRow({
-  tenantId,
+  workspaceId,
   category,
   categories,
   childrenByParent,
   depth,
 }: {
-  tenantId: string;
+  workspaceId: string;
   category: Category;
   categories: Category[];
   childrenByParent: Map<string, Category[]>;
@@ -178,17 +178,17 @@ function CategoryRow({
   const archiveMutation = useMutation({
     mutationFn: async () => {
       if (category.archivedAt) {
-        await updateCategory(tenantId, category.id, { archived: false });
+        await updateCategory(workspaceId, category.id, { archived: false });
       } else {
-        await archiveCategory(tenantId, category.id);
+        await archiveCategory(workspaceId, category.id);
       }
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({
-        queryKey: ["categories", tenantId],
+        queryKey: ["categories", workspaceId],
       });
       await queryClient.invalidateQueries({
-        queryKey: ["transactions", tenantId],
+        queryKey: ["transactions", workspaceId],
       });
     },
   });
@@ -199,7 +199,7 @@ function CategoryRow({
         {editing ? (
           <div className="md:col-span-3">
             <CategoryForm
-              tenantId={tenantId}
+              workspaceId={workspaceId}
               categories={categories.filter(
                 (candidate) => candidate.id !== category.id
               )}
@@ -262,7 +262,7 @@ function CategoryRow({
       {children.map((child) => (
         <CategoryRow
           key={child.id}
-          tenantId={tenantId}
+          workspaceId={workspaceId}
           category={child}
           categories={categories}
           childrenByParent={childrenByParent}
@@ -274,13 +274,13 @@ function CategoryRow({
 }
 
 function CategoryForm({
-  tenantId,
+  workspaceId,
   categories,
   category,
   onDone,
   onCancel,
 }: {
-  tenantId: string;
+  workspaceId: string;
   categories: Category[];
   category?: Category;
   onDone: () => void;
@@ -301,12 +301,12 @@ function CategoryForm({
         sortOrder: Number.parseInt(sortOrder, 10) || 0,
       };
       return category
-        ? updateCategory(tenantId, category.id, body)
-        : createCategory(tenantId, body);
+        ? updateCategory(workspaceId, category.id, body)
+        : createCategory(workspaceId, body);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({
-        queryKey: ["categories", tenantId],
+        queryKey: ["categories", workspaceId],
       });
       onDone();
     },

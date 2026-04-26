@@ -16,35 +16,35 @@ import {
   type Account,
   type Transaction,
 } from "@/lib/api/client";
-import { useCurrentTenant } from "@/lib/hooks/use-identity";
+import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
 import { addDecimalStrings } from "@/lib/decimal";
 import { convertAmount, fetchLatestFxRates, type FxRate } from "@/lib/fx";
 
-export default function TenantDashboardPage({
+export default function WorkspaceDashboardPage({
   params,
 }: {
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = use(params);
-  const tenant = useCurrentTenant(slug);
-  const tenantId = tenant?.id ?? null;
+  const workspace = useCurrentWorkspace(slug);
+  const workspaceId = workspace?.id ?? null;
 
   const accounts = useQuery({
-    queryKey: ["accounts", tenantId],
-    queryFn: () => fetchAccounts(tenantId!),
-    enabled: !!tenantId,
+    queryKey: ["accounts", workspaceId],
+    queryFn: () => fetchAccounts(workspaceId!),
+    enabled: !!workspaceId,
   });
   const transactions = useQuery({
-    queryKey: ["transactions", tenantId, { limit: 12 }],
-    queryFn: () => fetchTransactions(tenantId!, { limit: 12 }),
-    enabled: !!tenantId,
+    queryKey: ["transactions", workspaceId, { limit: 12 }],
+    queryFn: () => fetchTransactions(workspaceId!, { limit: 12 }),
+    enabled: !!workspaceId,
   });
 
-  const locale = tenant?.locale;
+  const locale = workspace?.locale;
   const accountRows = accounts.data ?? [];
   const transactionRows = transactions.data ?? [];
-  const baseCurrency = tenant?.baseCurrency ?? "CHF";
+  const baseCurrency = workspace?.baseCurrency ?? "CHF";
   const networthAccounts = accountRows.filter(
     (account) => account.includeInNetworth
   );
@@ -58,7 +58,7 @@ export default function TenantDashboardPage({
     queryKey: ["fx-rates", baseCurrency, networthCurrencies],
     queryFn: () => fetchLatestFxRates(networthCurrencies, baseCurrency),
     enabled:
-      !!tenantId &&
+      !!workspaceId &&
       networthCurrencies.length > 0 &&
       networthCurrencies.some((currency) => currency !== baseCurrency),
     staleTime: 1000 * 60 * 60 * 6,
@@ -69,15 +69,15 @@ export default function TenantDashboardPage({
     fxRates.data ?? {}
   );
   const uncategorized = transactionRows.filter((t) => !t.categoryId).length;
-  if (!tenant) return null;
-  const basePath = `/t/${tenant.slug}`;
+  if (!workspace) return null;
+  const basePath = `/w/${workspace.slug}`;
 
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
         eyebrow="Workspace"
-        title={tenant.name}
-        description={`Base currency ${baseCurrency}. Current cycle anchors on day ${tenant.cycleAnchorDay}.`}
+        title={workspace.name}
+        description={`Base currency ${baseCurrency}. Current cycle anchors on day ${workspace.cycleAnchorDay}.`}
         actions={
           <div className="flex flex-wrap gap-2">
             <Button asChild variant="secondary">

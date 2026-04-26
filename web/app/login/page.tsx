@@ -58,12 +58,12 @@ export default function LoginPage() {
       });
       if (meRes.ok) {
         const me = (await meRes.json()) as {
-          tenants: Array<{ slug: string }>;
+          workspaces: Array<{ slug: string }>;
         };
-        const slug = me.tenants?.[0]?.slug;
-        router.push((slug ? `/t/${slug}` : "/tenants") as Route);
+        const slug = me.workspaces?.[0]?.slug;
+        router.push((slug ? `/w/${slug}` : "/workspaces") as Route);
       } else {
-        router.push("/tenants" as Route);
+        router.push("/workspaces" as Route);
       }
   }
 

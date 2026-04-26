@@ -62,9 +62,9 @@ function SignupForm() {
         return;
       }
       await qc.invalidateQueries({ queryKey: ["me"] });
-      const tenant = (body as { tenant?: { slug?: string } }).tenant;
+      const workspace = (body as { workspace?: { slug?: string } }).workspace;
       router.push(
-        (tenant?.slug ? `/t/${tenant.slug}` : "/tenants") as Route,
+        (workspace?.slug ? `/w/${workspace.slug}` : "/workspaces") as Route,
       );
     } catch (caught) {
       setErr((caught as Error).message ?? "Signup failed");

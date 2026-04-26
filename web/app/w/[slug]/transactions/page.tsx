@@ -32,7 +32,7 @@ import {
   type Transaction,
   type TransactionStatus,
 } from "@/lib/api/client";
-import { useCurrentTenant } from "@/lib/hooks/use-identity";
+import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
@@ -69,8 +69,8 @@ export default function TransactionsPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = use(params);
-  const tenant = useCurrentTenant(slug);
-  const tenantId = tenant?.id ?? null;
+  const workspace = useCurrentWorkspace(slug);
+  const workspaceId = workspace?.id ?? null;
   const [creating, setCreating] = React.useState(false);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [searchDraft, setSearchDraft] = React.useState("");
@@ -81,35 +81,35 @@ export default function TransactionsPage({
     React.useState<(typeof PAGE_SIZE_OPTIONS)[number]>(50);
 
   const accountsQuery = useQuery({
-    queryKey: ["accounts", tenantId],
-    queryFn: () => fetchAccounts(tenantId!),
-    enabled: !!tenantId,
+    queryKey: ["accounts", workspaceId],
+    queryFn: () => fetchAccounts(workspaceId!),
+    enabled: !!workspaceId,
   });
   const categoriesQuery = useQuery({
-    queryKey: ["categories", tenantId],
-    queryFn: () => fetchCategories(tenantId!),
-    enabled: !!tenantId,
+    queryKey: ["categories", workspaceId],
+    queryFn: () => fetchCategories(workspaceId!),
+    enabled: !!workspaceId,
   });
   const merchantsQuery = useQuery({
-    queryKey: ["merchants", tenantId],
-    queryFn: () => fetchMerchants(tenantId!),
-    enabled: !!tenantId,
+    queryKey: ["merchants", workspaceId],
+    queryFn: () => fetchMerchants(workspaceId!),
+    enabled: !!workspaceId,
   });
   const txQuery = useQuery({
-    queryKey: ["transactions", tenantId, { filters, page, pageSize }],
+    queryKey: ["transactions", workspaceId, { filters, page, pageSize }],
     queryFn: () =>
-      fetchTransactions(tenantId!, {
+      fetchTransactions(workspaceId!, {
         ...filters,
         status: filters.status || undefined,
         limit: pageSize + 1,
         offset: page * pageSize,
       }),
-    enabled: !!tenantId,
+    enabled: !!workspaceId,
   });
 
-  if (!tenant) return null;
+  if (!workspace) return null;
 
-  const locale = tenant.locale;
+  const locale = workspace.locale;
   const accounts = accountsQuery.data ?? [];
   const categories = categoriesQuery.data ?? [];
   const merchants = merchantsQuery.data ?? [];
@@ -140,14 +140,14 @@ export default function TransactionsPage({
         }
       />
 
-      {creating && tenantId && hasAccounts ? (
+      {creating && workspaceId && hasAccounts ? (
         <Card>
           <CardHeader>
             <CardTitle>Manual transaction</CardTitle>
           </CardHeader>
           <CardContent>
             <CreateTransactionForm
-              tenantId={tenantId}
+              workspaceId={workspaceId}
               accounts={accounts}
               onCreated={() => setCreating(false)}
               onCancel={() => setCreating(false)}
@@ -189,7 +189,7 @@ export default function TransactionsPage({
           categories={categories}
           merchants={merchants}
           locale={locale}
-          tenantId={tenantId!}
+          workspaceId={workspaceId!}
           selectedId={selected?.id ?? null}
           appliedFilters={filters}
           searchDraft={searchDraft}
@@ -258,7 +258,7 @@ function TransactionTable({
   categories,
   merchants,
   locale,
-  tenantId,
+  workspaceId,
   selectedId,
   appliedFilters,
   searchDraft,
@@ -279,7 +279,7 @@ function TransactionTable({
   categories: Category[];
   merchants: Merchant[];
   locale?: string;
-  tenantId: string;
+  workspaceId: string;
   selectedId: string | null;
   appliedFilters: TransactionFilters;
   searchDraft: string;
@@ -411,7 +411,7 @@ function TransactionTable({
                     </span>
                     <div onClick={(event) => event.stopPropagation()}>
                       <CategorySelect
-                        tenantId={tenantId}
+                        workspaceId={workspaceId}
                         transaction={t}
                         categories={categoryOptions}
                       />
@@ -466,7 +466,7 @@ function TransactionTable({
             selected.categoryId ? categoryById.get(selected.categoryId) : null
           }
           categoryOptions={categoryOptions}
-          tenantId={tenantId}
+          workspaceId={workspaceId}
           locale={locale}
         />
       ) : null}
@@ -703,23 +703,23 @@ function TransactionFiltersPanel({
 }
 
 function CategorySelect({
-  tenantId,
+  workspaceId,
   transaction,
   categories,
 }: {
-  tenantId: string;
+  workspaceId: string;
   transaction: Transaction;
   categories: { id: string; label: string }[];
 }) {
   const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: (categoryId: string) =>
-      updateTransaction(tenantId, transaction.id, {
+      updateTransaction(workspaceId, transaction.id, {
         categoryId: categoryId || null,
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({
-        queryKey: ["transactions", tenantId],
+        queryKey: ["transactions", workspaceId],
       });
     },
   });
@@ -747,14 +747,14 @@ function TransactionDetail({
   account,
   category,
   categoryOptions,
-  tenantId,
+  workspaceId,
   locale,
 }: {
   transaction: Transaction;
   account?: Account;
   category?: Category | null;
   categoryOptions: { id: string; label: string }[];
-  tenantId: string;
+  workspaceId: string;
   locale?: string;
 }) {
   const queryClient = useQueryClient();
@@ -764,12 +764,12 @@ function TransactionDetail({
     mutationFn: (patch: {
       notes?: string | null;
       countAsExpense?: boolean | null;
-    }) => updateTransaction(tenantId, transaction.id, patch),
+    }) => updateTransaction(workspaceId, transaction.id, patch),
     onSuccess: async () => {
       await queryClient.invalidateQueries({
-        queryKey: ["transactions", tenantId],
+        queryKey: ["transactions", workspaceId],
       });
-      await queryClient.invalidateQueries({ queryKey: ["accounts", tenantId] });
+      await queryClient.invalidateQueries({ queryKey: ["accounts", workspaceId] });
     },
   });
 
@@ -829,7 +829,7 @@ function TransactionDetail({
             Category
           </span>
           <CategorySelect
-            tenantId={tenantId}
+            workspaceId={workspaceId}
             transaction={transaction}
             categories={categoryOptions}
           />

@@ -7,22 +7,22 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataTable } from "@/components/ui/data-table";
 import { PageHeader } from "@/components/app/page-header";
-import { useAdminTenants } from "@/lib/admin/client";
+import { useAdminWorkspaces } from "@/lib/admin/client";
 import { formatDate } from "@/lib/format";
 
-type AdminTenant = NonNullable<
-  ReturnType<typeof useAdminTenants>["data"]
+type AdminWorkspace = NonNullable<
+  ReturnType<typeof useAdminWorkspaces>["data"]
 >["data"][number];
 
-export default function AdminTenantsPage() {
+export default function AdminWorkspacesPage() {
   const [search, setSearch] = useState("");
   const [includeDeleted, setIncludeDeleted] = useState(false);
-  const q = useAdminTenants({ search, includeDeleted });
+  const q = useAdminWorkspaces({ search, includeDeleted });
   return (
     <section className="flex flex-col gap-5">
       <PageHeader
-        title="Tenants"
-        description="Operational tenant metadata only."
+        title="Workspaces"
+        description="Operational workspace metadata only."
         actions={
           <label className="flex items-center gap-2 text-[13px] text-fg-muted">
             <input
@@ -40,12 +40,12 @@ export default function AdminTenantsPage() {
         placeholder="Search name, slug, or ID"
         className="max-w-md"
       />
-      <DataTable<AdminTenant>
+      <DataTable<AdminWorkspace>
         columns={[
           {
             header: "Name",
             cell: (t) => (
-              <Link href={`/admin/tenants/${t.id}`} className="font-medium">
+              <Link href={`/admin/workspaces/${t.id}`} className="font-medium">
                 {t.name}
               </Link>
             ),

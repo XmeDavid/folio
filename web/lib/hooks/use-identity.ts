@@ -8,11 +8,11 @@ export interface MeUser {
   displayName: string;
   emailVerifiedAt?: string;
   isAdmin: boolean;
-  lastTenantId?: string;
+  lastWorkspaceId?: string;
   createdAt: string;
 }
 
-export interface MeTenant {
+export interface MeWorkspace {
   id: string;
   name: string;
   slug: string;
@@ -27,7 +27,7 @@ export interface MeTenant {
 
 export interface Me {
   user: MeUser;
-  tenants: MeTenant[];
+  workspaces: MeWorkspace[];
 }
 
 export type IdentityState =
@@ -65,9 +65,9 @@ export function useIdentity(): IdentityState {
   return { status: "loading", data: null };
 }
 
-/** useCurrentTenant — resolve the tenant by slug from the /me cache. */
-export function useCurrentTenant(slug: string): MeTenant | undefined {
+/** useCurrentWorkspace — resolve the workspace by slug from the /me cache. */
+export function useCurrentWorkspace(slug: string): MeWorkspace | undefined {
   const id = useIdentity();
   if (id.status !== "authenticated") return undefined;
-  return id.data.tenants.find((t) => t.slug === slug);
+  return id.data.workspaces.find((t) => t.slug === slug);
 }

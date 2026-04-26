@@ -43,7 +43,7 @@ import {
   type ImportPlanGroup,
   type ImportPreview,
 } from "@/lib/api/client";
-import { useCurrentTenant } from "@/lib/hooks/use-identity";
+import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
 import { ACCOUNT_KINDS, accountKindLabel } from "@/lib/accounts";
 
@@ -53,27 +53,27 @@ export default function AccountsPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = use(params);
-  const tenant = useCurrentTenant(slug);
-  const tenantId = tenant?.id ?? null;
+  const workspace = useCurrentWorkspace(slug);
+  const workspaceId = workspace?.id ?? null;
   const [creating, setCreating] = React.useState(false);
   const [importing, setImporting] = React.useState(false);
   const [includeArchived, setIncludeArchived] = React.useState(false);
 
   const accountsQuery = useQuery({
-    queryKey: ["accounts", tenantId, includeArchived],
-    queryFn: () => fetchAccounts(tenantId!, { includeArchived }),
-    enabled: !!tenantId,
+    queryKey: ["accounts", workspaceId, includeArchived],
+    queryFn: () => fetchAccounts(workspaceId!, { includeArchived }),
+    enabled: !!workspaceId,
   });
   const groupsQuery = useQuery({
-    queryKey: ["account-groups", tenantId],
-    queryFn: () => fetchAccountGroups(tenantId!),
-    enabled: !!tenantId,
+    queryKey: ["account-groups", workspaceId],
+    queryFn: () => fetchAccountGroups(workspaceId!),
+    enabled: !!workspaceId,
   });
 
-  if (!tenant) return null;
+  if (!workspace) return null;
 
-  const locale = tenant.locale;
-  const baseCurrency = tenant.baseCurrency ?? "CHF";
+  const locale = workspace.locale;
+  const baseCurrency = workspace.baseCurrency ?? "CHF";
 
   return (
     <div className="flex flex-col gap-8">
@@ -95,14 +95,14 @@ export default function AccountsPage({
         }
       />
 
-      {creating && tenantId ? (
+      {creating && workspaceId ? (
         <Card>
           <CardHeader>
             <CardTitle>New account</CardTitle>
           </CardHeader>
           <CardContent>
             <CreateAccountForm
-              tenantId={tenantId}
+              workspaceId={workspaceId}
               defaultCurrency={baseCurrency}
               onCreated={() => setCreating(false)}
               onCancel={() => setCreating(false)}
@@ -118,7 +118,7 @@ export default function AccountsPage({
           </CardHeader>
           <CardContent>
             <SmartAccountImport
-              tenantId={tenantId!}
+              workspaceId={workspaceId!}
               onDone={() => setImporting(false)}
             />
           </CardContent>
@@ -149,7 +149,7 @@ export default function AccountsPage({
             accounts={accountsQuery.data}
             groups={groupsQuery.data ?? []}
             locale={locale}
-            tenantId={tenant.id}
+            workspaceId={workspace.id}
           />
         </div>
       ) : (
@@ -169,10 +169,10 @@ export default function AccountsPage({
 }
 
 function SmartAccountImport({
-  tenantId,
+  workspaceId,
   onDone,
 }: {
-  tenantId: string;
+  workspaceId: string;
   onDone: () => void;
 }) {
   const [preview, setPreview] = React.useState<ImportPreview | null>(null);
@@ -200,7 +200,7 @@ function SmartAccountImport({
       : [];
 
   const previewMutation = useMutation({
-    mutationFn: (file: File) => previewAccountImport(tenantId, file),
+    mutationFn: (file: File) => previewAccountImport(workspaceId, file),
     onSuccess: (p) => {
       setPreview(p);
       const next: Record<string, ImportPlanGroup> = {};
@@ -241,7 +241,7 @@ function SmartAccountImport({
     mutationFn: async () => {
       if (!preview) return;
       await applyAccountImportPlan(
-        tenantId,
+        workspaceId,
         preview.fileToken,
         groups
           .filter(
@@ -592,12 +592,12 @@ function AccountList({
   accounts,
   groups,
   locale,
-  tenantId,
+  workspaceId,
 }: {
   accounts: Account[];
   groups: AccountGroup[];
   locale?: string;
-  tenantId: string;
+  workspaceId: string;
 }) {
   const queryClient = useQueryClient();
   const [newGroupName, setNewGroupName] = React.useState("");
@@ -625,13 +625,13 @@ function AccountList({
 
   const invalidate = React.useCallback(async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["accounts", tenantId] }),
-      queryClient.invalidateQueries({ queryKey: ["account-groups", tenantId] }),
+      queryClient.invalidateQueries({ queryKey: ["accounts", workspaceId] }),
+      queryClient.invalidateQueries({ queryKey: ["account-groups", workspaceId] }),
     ]);
-  }, [queryClient, tenantId]);
+  }, [queryClient, workspaceId]);
 
   const createGroupMutation = useMutation({
-    mutationFn: (name: string) => createAccountGroup(tenantId, { name }),
+    mutationFn: (name: string) => createAccountGroup(workspaceId, { name }),
     onSuccess: async () => {
       setNewGroupName("");
       await invalidate();
@@ -639,19 +639,19 @@ function AccountList({
   });
   const updateGroupMutation = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) =>
-      updateAccountGroup(tenantId, id, { name }),
+      updateAccountGroup(workspaceId, id, { name }),
     onSuccess: async () => {
       setEditingGroupId(null);
       await invalidate();
     },
   });
   const deleteGroupMutation = useMutation({
-    mutationFn: (id: string) => deleteAccountGroup(tenantId, id),
+    mutationFn: (id: string) => deleteAccountGroup(workspaceId, id),
     onSuccess: invalidate,
   });
   const reorderMutation = useMutation({
     mutationFn: (next: ReturnType<typeof orderPayload>) =>
-      reorderAccounts(tenantId, next),
+      reorderAccounts(workspaceId, next),
     onSuccess: invalidate,
   });
 
@@ -933,7 +933,7 @@ function AccountList({
                     account={a}
                     groups={sortedGroups}
                     locale={locale}
-                    tenantId={tenantId}
+                    workspaceId={workspaceId}
                     dragDisabled={busy}
                     canMoveUp={accountIndex > 0}
                     canMoveDown={accountIndex < bucket.accounts.length - 1}
@@ -1048,7 +1048,7 @@ function AccountRow({
   account,
   groups,
   locale,
-  tenantId,
+  workspaceId,
   dragDisabled,
   canMoveUp,
   canMoveDown,
@@ -1063,7 +1063,7 @@ function AccountRow({
   account: Account;
   groups: AccountGroup[];
   locale?: string;
-  tenantId: string;
+  workspaceId: string;
   dragDisabled: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
@@ -1083,11 +1083,11 @@ function AccountRow({
   const [draftKind, setDraftKind] = React.useState<AccountKind>(account.kind);
 
   const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: ["accounts", tenantId] });
+    queryClient.invalidateQueries({ queryKey: ["accounts", workspaceId] });
 
   const editMutation = useMutation({
     mutationFn: (patch: { name?: string; kind?: AccountKind }) =>
-      updateAccount(tenantId, account.id, patch),
+      updateAccount(workspaceId, account.id, patch),
     onSuccess: async () => {
       await invalidate();
       setMode("view");
@@ -1096,12 +1096,12 @@ function AccountRow({
 
   const archiveMutation = useMutation({
     mutationFn: (archived: boolean) =>
-      updateAccount(tenantId, account.id, { archived }),
+      updateAccount(workspaceId, account.id, { archived }),
     onSuccess: invalidate,
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => deleteAccount(tenantId, account.id),
+    mutationFn: () => deleteAccount(workspaceId, account.id),
     onSuccess: invalidate,
   });
 

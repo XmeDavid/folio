@@ -56,12 +56,12 @@ const schema = z
 type FormValues = z.infer<typeof schema>;
 
 export function CreateAccountForm({
-  tenantId,
+  workspaceId,
   defaultCurrency,
   onCreated,
   onCancel,
 }: {
-  tenantId: string;
+  workspaceId: string;
   defaultCurrency: string;
   onCreated?: (a: Account) => void;
   onCancel?: () => void;
@@ -95,7 +95,7 @@ export function CreateAccountForm({
 
   const mutation = useMutation({
     mutationFn: (values: FormValues) =>
-      createAccount(tenantId, {
+      createAccount(workspaceId, {
         name: values.name,
         kind: values.kind as Account["kind"],
         currency: values.currency.toUpperCase(),
@@ -106,7 +106,7 @@ export function CreateAccountForm({
         openingBalanceDate: values.openingBalanceDate || values.openDate,
       }),
     onSuccess: (acc) => {
-      qc.invalidateQueries({ queryKey: ["accounts", tenantId] });
+      qc.invalidateQueries({ queryKey: ["accounts", workspaceId] });
       if (preview) {
         setCreatedAccount(acc);
         return;
@@ -123,7 +123,7 @@ export function CreateAccountForm({
   });
 
   const previewMutation = useMutation({
-    mutationFn: (file: File) => previewAccountImport(tenantId, file),
+    mutationFn: (file: File) => previewAccountImport(workspaceId, file),
     onSuccess: (p) => {
       setPreview(p);
       form.setValue("currency", p.suggestedCurrency ?? defaultCurrency, {
@@ -151,10 +151,10 @@ export function CreateAccountForm({
 
   const importMutation = useMutation({
     mutationFn: () =>
-      applyAccountImport(tenantId, createdAccount!.id, preview!.fileToken),
+      applyAccountImport(workspaceId, createdAccount!.id, preview!.fileToken),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ["accounts", tenantId] });
-      await qc.invalidateQueries({ queryKey: ["transactions", tenantId] });
+      await qc.invalidateQueries({ queryKey: ["accounts", workspaceId] });
+      await qc.invalidateQueries({ queryKey: ["transactions", workspaceId] });
       finish(createdAccount!);
     },
   });

@@ -4,7 +4,7 @@ import { use, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCurrentTenant, useIdentity } from "@/lib/hooks/use-identity";
+import { useCurrentWorkspace, useIdentity } from "@/lib/hooks/use-identity";
 import {
   ApiError,
   getMembers,
@@ -20,7 +20,7 @@ export default function MembersSettingsPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = use(params);
-  const tenant = useCurrentTenant(slug);
+  const workspace = useCurrentWorkspace(slug);
   const identity = useIdentity();
   const me = identity.status === "authenticated" ? identity.data.user : null;
   const router = useRouter();
@@ -32,17 +32,17 @@ export default function MembersSettingsPage({
   } | null>(null);
 
   const membersQuery = useQuery({
-    queryKey: ["members", tenant?.id],
-    queryFn: () => getMembers(tenant!.id),
-    enabled: !!tenant,
+    queryKey: ["members", workspace?.id],
+    queryFn: () => getMembers(workspace!.id),
+    enabled: !!workspace,
   });
 
   const patchRole = useMutation({
     mutationFn: (args: { userId: string; role: MemberRole }) =>
-      patchMember(tenant!.id, args.userId, args.role),
+      patchMember(workspace!.id, args.userId, args.role),
     onSuccess: async () => {
       setRowError(null);
-      await qc.invalidateQueries({ queryKey: ["members", tenant!.id] });
+      await qc.invalidateQueries({ queryKey: ["members", workspace!.id] });
       await qc.invalidateQueries({ queryKey: ["me"] });
     },
     onError: (err, vars) => {
@@ -51,24 +51,24 @@ export default function MembersSettingsPage({
   });
 
   const remove = useMutation({
-    mutationFn: (userId: string) => removeMember(tenant!.id, userId),
+    mutationFn: (userId: string) => removeMember(workspace!.id, userId),
     onSuccess: async (_data, userId) => {
       setRowError(null);
       if (me && userId === me.id) {
         await qc.invalidateQueries({ queryKey: ["me"] });
-        router.push("/tenants" as Route);
+        router.push("/workspaces" as Route);
         return;
       }
-      await qc.invalidateQueries({ queryKey: ["members", tenant!.id] });
+      await qc.invalidateQueries({ queryKey: ["members", workspace!.id] });
     },
     onError: (err, userId) => {
       setRowError({ userId, message: formatError(err) });
     },
   });
 
-  if (!tenant) return null;
+  if (!workspace) return null;
 
-  const isOwner = tenant.role === "owner";
+  const isOwner = workspace.role === "owner";
   const members = membersQuery.data?.members ?? [];
 
   return (
@@ -77,8 +77,8 @@ export default function MembersSettingsPage({
         <h1 className="text-2xl font-semibold">Members</h1>
         <p className="text-sm text-muted-foreground">
           {isOwner
-            ? "Change roles, remove members, or leave this tenant."
-            : "You can leave this tenant. Only owners can change roles."}
+            ? "Change roles, remove members, or leave this workspace."
+            : "You can leave this workspace. Only owners can change roles."}
         </p>
       </div>
 
@@ -219,7 +219,7 @@ function formatError(err: unknown): string {
       err.status === 422 &&
       (err.body?.code === "last_owner" || err.body?.code === "last_tenant")
     ) {
-      return err.body?.error ?? "Not allowed: this would leave the tenant in an invalid state.";
+      return err.body?.error ?? "Not allowed: this would leave the workspace in an invalid state.";
     }
     return err.body?.error ?? err.message;
   }

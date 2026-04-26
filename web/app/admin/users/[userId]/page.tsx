@@ -44,8 +44,8 @@ export default function AdminUserDetailPage() {
         <InfoPanel title="Memberships">
           {d.memberships.map((m) => (
             <MetaRow
-              key={`${m.tenantId}-${m.role}`}
-              label={m.tenantName}
+              key={`${m.workspaceId}-${m.role}`}
+              label={m.workspaceName}
               value={m.role}
             />
           ))}

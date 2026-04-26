@@ -7,12 +7,12 @@ import { use } from "react";
 import { cn } from "@/lib/utils";
 
 const settingsLinks = [
-  { label: "Tenant", href: "/settings/tenant" },
+  { label: "Workspace", href: "/settings/workspace" },
   { label: "Members", href: "/settings/members" },
   { label: "Invites", href: "/settings/invites" },
 ];
 
-export default function TenantSettingsLayout({
+export default function WorkspaceSettingsLayout({
   children,
   params,
 }: {
@@ -21,7 +21,7 @@ export default function TenantSettingsLayout({
 }) {
   const { slug } = use(params);
   const pathname = usePathname();
-  const base = `/t/${slug}`;
+  const base = `/w/${slug}`;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[180px_minmax(0,1fr)]">

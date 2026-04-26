@@ -35,12 +35,12 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 export function CreateTransactionForm({
-  tenantId,
+  workspaceId,
   accounts,
   onCreated,
   onCancel,
 }: {
-  tenantId: string;
+  workspaceId: string;
   accounts: Account[];
   onCreated?: (t: Transaction) => void;
   onCancel?: () => void;
@@ -72,7 +72,7 @@ export function CreateTransactionForm({
     mutationFn: (values: FormValues) => {
       const account = accounts.find((a) => a.id === values.accountId);
       if (!account) throw new Error("account not found");
-      return createTransaction(tenantId, {
+      return createTransaction(workspaceId, {
         accountId: values.accountId,
         status: "posted",
         bookedAt: values.bookedAt,
@@ -84,8 +84,8 @@ export function CreateTransactionForm({
       });
     },
     onSuccess: (tx) => {
-      qc.invalidateQueries({ queryKey: ["transactions", tenantId] });
-      qc.invalidateQueries({ queryKey: ["accounts", tenantId] });
+      qc.invalidateQueries({ queryKey: ["transactions", workspaceId] });
+      qc.invalidateQueries({ queryKey: ["accounts", workspaceId] });
       form.reset({
         ...form.getValues(),
         amount: "",

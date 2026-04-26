@@ -4,9 +4,9 @@
 //   - credentials: "include" so the session cookie is sent
 //   - X-Folio-Request: 1 to satisfy the backend CSRF header check
 //
-// Tenant-scoped resources live under /api/v1/t/{tenantId}/…. Each helper takes
-// an explicit tenantId as the first argument so callers can never fall back to
-// an ambient "current" tenant.
+// Workspace-scoped resources live under /api/v1/t/{workspaceId}/…. Each helper takes
+// an explicit workspaceId as the first argument so callers can never fall back to
+// an ambient "current" workspace.
 
 import type { components, paths } from "./schema";
 import type { Me } from "@/lib/hooks/use-identity";
@@ -155,17 +155,17 @@ export async function reauth(password: string, code?: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Tenant
+// Workspace
 // ---------------------------------------------------------------------------
 
-export type TenantPatchInput = {
+export type WorkspacePatchInput = {
   name?: string;
   slug?: string;
   baseCurrency?: string;
   cycleAnchorDay?: number;
 };
 
-export type TenantRow = {
+export type WorkspaceRow = {
   id: string;
   name: string;
   slug: string;
@@ -177,22 +177,22 @@ export type TenantRow = {
   createdAt: string;
 };
 
-export async function patchTenant(
-  tenantId: string,
-  body: TenantPatchInput
-): Promise<TenantRow> {
-  return request<TenantRow>(`/api/v1/t/${tenantId}`, {
+export async function patchWorkspace(
+  workspaceId: string,
+  body: WorkspacePatchInput
+): Promise<WorkspaceRow> {
+  return request<WorkspaceRow>(`/api/v1/t/${workspaceId}`, {
     method: "PATCH",
     json: body,
   });
 }
 
-export async function deleteTenant(tenantId: string): Promise<void> {
-  return request<void>(`/api/v1/t/${tenantId}`, { method: "DELETE" });
+export async function deleteWorkspace(workspaceId: string): Promise<void> {
+  return request<void>(`/api/v1/t/${workspaceId}`, { method: "DELETE" });
 }
 
-export async function restoreTenant(tenantId: string): Promise<TenantRow> {
-  return request<TenantRow>(`/api/v1/t/${tenantId}/restore`, {
+export async function restoreWorkspace(workspaceId: string): Promise<WorkspaceRow> {
+  return request<WorkspaceRow>(`/api/v1/t/${workspaceId}/restore`, {
     method: "POST",
   });
 }
@@ -212,7 +212,7 @@ export async function toApiError(res: Response): Promise<ApiError> {
 export type MemberRole = "owner" | "member";
 
 export type MemberWithUser = {
-  tenantId: string;
+  workspaceId: string;
   userId: string;
   role: MemberRole;
   createdAt: string;
@@ -234,28 +234,28 @@ export type MembersResponse = {
   pendingInvites: PendingInvite[];
 };
 
-export async function getMembers(tenantId: string): Promise<MembersResponse> {
-  return request<MembersResponse>(`/api/v1/t/${tenantId}/members`, {
+export async function getMembers(workspaceId: string): Promise<MembersResponse> {
+  return request<MembersResponse>(`/api/v1/t/${workspaceId}/members`, {
     method: "GET",
   });
 }
 
 export async function patchMember(
-  tenantId: string,
+  workspaceId: string,
   userId: string,
   role: MemberRole
 ): Promise<MemberWithUser> {
-  return request<MemberWithUser>(`/api/v1/t/${tenantId}/members/${userId}`, {
+  return request<MemberWithUser>(`/api/v1/t/${workspaceId}/members/${userId}`, {
     method: "PATCH",
     json: { role },
   });
 }
 
 export async function removeMember(
-  tenantId: string,
+  workspaceId: string,
   userId: string
 ): Promise<void> {
-  return request<void>(`/api/v1/t/${tenantId}/members/${userId}`, {
+  return request<void>(`/api/v1/t/${workspaceId}/members/${userId}`, {
     method: "DELETE",
   });
 }
@@ -266,28 +266,28 @@ export type InviteCreateInput = {
 };
 
 export async function createInvite(
-  tenantId: string,
+  workspaceId: string,
   body: InviteCreateInput
 ): Promise<PendingInvite> {
-  return request<PendingInvite>(`/api/v1/t/${tenantId}/invites`, {
+  return request<PendingInvite>(`/api/v1/t/${workspaceId}/invites`, {
     method: "POST",
     json: body,
   });
 }
 
 export async function revokeInvite(
-  tenantId: string,
+  workspaceId: string,
   inviteId: string
 ): Promise<void> {
-  return request<void>(`/api/v1/t/${tenantId}/invites/${inviteId}`, {
+  return request<void>(`/api/v1/t/${workspaceId}/invites/${inviteId}`, {
     method: "DELETE",
   });
 }
 
 export type InvitePreview = {
-  tenantId: string;
-  tenantName: string;
-  tenantSlug: string;
+  workspaceId: string;
+  workspaceName: string;
+  workspaceSlug: string;
   inviterDisplayName: string;
   email: string;
   role: MemberRole;
@@ -295,7 +295,7 @@ export type InvitePreview = {
 };
 
 export type InviteAcceptResponse = {
-  tenantId: string;
+  workspaceId: string;
   userId: string;
   role: MemberRole;
   createdAt: string;
@@ -322,20 +322,20 @@ export async function acceptInvite(
 // ---------------------------------------------------------------------------
 
 export async function fetchAccounts(
-  tenantId: string,
+  workspaceId: string,
   opts: { includeArchived?: boolean } = {}
 ): Promise<Account[]> {
   const qs = opts.includeArchived ? "?includeArchived=true" : "";
-  return request<Account[]>(`/api/v1/t/${tenantId}/accounts${qs}`, {
+  return request<Account[]>(`/api/v1/t/${workspaceId}/accounts${qs}`, {
     method: "GET",
   });
 }
 
 export async function createAccount(
-  tenantId: string,
+  workspaceId: string,
   body: AccountCreateInput
 ): Promise<Account> {
-  return request<Account>(`/api/v1/t/${tenantId}/accounts`, {
+  return request<Account>(`/api/v1/t/${workspaceId}/accounts`, {
     method: "POST",
     json: body,
   });
@@ -355,31 +355,31 @@ export type AccountPatchInput = {
 };
 
 export async function updateAccount(
-  tenantId: string,
+  workspaceId: string,
   accountId: string,
   body: AccountPatchInput
 ): Promise<Account> {
-  return request<Account>(`/api/v1/t/${tenantId}/accounts/${accountId}`, {
+  return request<Account>(`/api/v1/t/${workspaceId}/accounts/${accountId}`, {
     method: "PATCH",
     json: body,
   });
 }
 
 export async function deleteAccount(
-  tenantId: string,
+  workspaceId: string,
   accountId: string
 ): Promise<void> {
-  return request<void>(`/api/v1/t/${tenantId}/accounts/${accountId}`, {
+  return request<void>(`/api/v1/t/${workspaceId}/accounts/${accountId}`, {
     method: "DELETE",
   });
 }
 
 export async function fetchAccountGroups(
-  tenantId: string,
+  workspaceId: string,
   opts: { includeArchived?: boolean } = {}
 ): Promise<AccountGroup[]> {
   return request<AccountGroup[]>(
-    `/api/v1/t/${tenantId}/accounts/groups${buildQuery({
+    `/api/v1/t/${workspaceId}/accounts/groups${buildQuery({
       includeArchived: opts.includeArchived,
     })}`,
     { method: "GET" }
@@ -387,22 +387,22 @@ export async function fetchAccountGroups(
 }
 
 export async function createAccountGroup(
-  tenantId: string,
+  workspaceId: string,
   body: AccountGroupCreateInput
 ): Promise<AccountGroup> {
-  return request<AccountGroup>(`/api/v1/t/${tenantId}/accounts/groups`, {
+  return request<AccountGroup>(`/api/v1/t/${workspaceId}/accounts/groups`, {
     method: "POST",
     json: body,
   });
 }
 
 export async function updateAccountGroup(
-  tenantId: string,
+  workspaceId: string,
   groupId: string,
   body: AccountGroupUpdateInput
 ): Promise<AccountGroup> {
   return request<AccountGroup>(
-    `/api/v1/t/${tenantId}/accounts/groups/${groupId}`,
+    `/api/v1/t/${workspaceId}/accounts/groups/${groupId}`,
     {
       method: "PATCH",
       json: body,
@@ -411,19 +411,19 @@ export async function updateAccountGroup(
 }
 
 export async function deleteAccountGroup(
-  tenantId: string,
+  workspaceId: string,
   groupId: string
 ): Promise<void> {
-  return request<void>(`/api/v1/t/${tenantId}/accounts/groups/${groupId}`, {
+  return request<void>(`/api/v1/t/${workspaceId}/accounts/groups/${groupId}`, {
     method: "DELETE",
   });
 }
 
 export async function reorderAccounts(
-  tenantId: string,
+  workspaceId: string,
   body: AccountReorderInput
 ): Promise<void> {
-  return request<void>(`/api/v1/t/${tenantId}/accounts/order`, {
+  return request<void>(`/api/v1/t/${workspaceId}/accounts/order`, {
     method: "PUT",
     json: body,
   });
@@ -521,26 +521,26 @@ export type ImportApplyResult = {
 };
 
 export async function previewAccountImport(
-  tenantId: string,
+  workspaceId: string,
   file: File,
   accountId?: string
 ): Promise<ImportPreview> {
   const form = new FormData();
   form.append("file", file);
   const path = accountId
-    ? `/api/v1/t/${tenantId}/accounts/${accountId}/imports/preview`
-    : `/api/v1/t/${tenantId}/accounts/import-preview`;
+    ? `/api/v1/t/${workspaceId}/accounts/${accountId}/imports/preview`
+    : `/api/v1/t/${workspaceId}/accounts/import-preview`;
   return uploadRequest<ImportPreview>(path, form);
 }
 
 export async function applyAccountImport(
-  tenantId: string,
+  workspaceId: string,
   accountId: string,
   fileToken: string,
   currency?: string
 ): Promise<ImportApplyResult> {
   return request<ImportApplyResult>(
-    `/api/v1/t/${tenantId}/accounts/${accountId}/imports`,
+    `/api/v1/t/${workspaceId}/accounts/${accountId}/imports`,
     {
       method: "POST",
       json: { fileToken, currency },
@@ -549,12 +549,12 @@ export async function applyAccountImport(
 }
 
 export async function applyAccountImportPlan(
-  tenantId: string,
+  workspaceId: string,
   fileToken: string,
   groups: ImportPlanGroup[]
 ): Promise<ImportApplyResult> {
   return request<ImportApplyResult>(
-    `/api/v1/t/${tenantId}/accounts/imports/apply-plan`,
+    `/api/v1/t/${workspaceId}/accounts/imports/apply-plan`,
     {
       method: "POST",
       json: { fileToken, groups },
@@ -592,20 +592,20 @@ function buildQuery(q?: Record<string, unknown>): string {
 }
 
 export async function fetchTransactions(
-  tenantId: string,
+  workspaceId: string,
   query: TransactionsQuery = {}
 ): Promise<Transaction[]> {
   return request<Transaction[]>(
-    `/api/v1/t/${tenantId}/transactions${buildQuery(query)}`,
+    `/api/v1/t/${workspaceId}/transactions${buildQuery(query)}`,
     { method: "GET" }
   );
 }
 
 export async function createTransaction(
-  tenantId: string,
+  workspaceId: string,
   body: TransactionCreateInput
 ): Promise<Transaction> {
-  return request<Transaction>(`/api/v1/t/${tenantId}/transactions`, {
+  return request<Transaction>(`/api/v1/t/${workspaceId}/transactions`, {
     method: "POST",
     json: body,
   });
@@ -615,22 +615,22 @@ export type TransactionUpdateInput =
   components["schemas"]["TransactionUpdateInput"];
 
 export async function fetchTransaction(
-  tenantId: string,
+  workspaceId: string,
   transactionId: string
 ): Promise<Transaction> {
   return request<Transaction>(
-    `/api/v1/t/${tenantId}/transactions/${transactionId}`,
+    `/api/v1/t/${workspaceId}/transactions/${transactionId}`,
     { method: "GET" }
   );
 }
 
 export async function updateTransaction(
-  tenantId: string,
+  workspaceId: string,
   transactionId: string,
   body: TransactionUpdateInput
 ): Promise<Transaction> {
   return request<Transaction>(
-    `/api/v1/t/${tenantId}/transactions/${transactionId}`,
+    `/api/v1/t/${workspaceId}/transactions/${transactionId}`,
     {
       method: "PATCH",
       json: body,
@@ -639,10 +639,10 @@ export async function updateTransaction(
 }
 
 export async function deleteTransaction(
-  tenantId: string,
+  workspaceId: string,
   transactionId: string
 ): Promise<void> {
-  return request<void>(`/api/v1/t/${tenantId}/transactions/${transactionId}`, {
+  return request<void>(`/api/v1/t/${workspaceId}/transactions/${transactionId}`, {
     method: "DELETE",
   });
 }
@@ -653,7 +653,7 @@ export async function deleteTransaction(
 
 export type Category = {
   id: string;
-  tenantId: string;
+  workspaceId: string;
   parentId?: string | null;
   name: string;
   color?: string | null;
@@ -680,7 +680,7 @@ export type CategoryPatchInput = {
 
 export type Merchant = {
   id: string;
-  tenantId: string;
+  workspaceId: string;
   canonicalName: string;
   logoUrl?: string | null;
   defaultCategoryId?: string | null;
@@ -693,11 +693,11 @@ export type Merchant = {
 };
 
 export async function fetchCategories(
-  tenantId: string,
+  workspaceId: string,
   opts: { includeArchived?: boolean } = {}
 ): Promise<Category[]> {
   return request<Category[]>(
-    `/api/v1/t/${tenantId}/categories${buildQuery({
+    `/api/v1/t/${workspaceId}/categories${buildQuery({
       includeArchived: opts.includeArchived,
     })}`,
     { method: "GET" }
@@ -705,41 +705,41 @@ export async function fetchCategories(
 }
 
 export async function createCategory(
-  tenantId: string,
+  workspaceId: string,
   body: CategoryCreateInput
 ): Promise<Category> {
-  return request<Category>(`/api/v1/t/${tenantId}/categories`, {
+  return request<Category>(`/api/v1/t/${workspaceId}/categories`, {
     method: "POST",
     json: body,
   });
 }
 
 export async function updateCategory(
-  tenantId: string,
+  workspaceId: string,
   categoryId: string,
   body: CategoryPatchInput
 ): Promise<Category> {
-  return request<Category>(`/api/v1/t/${tenantId}/categories/${categoryId}`, {
+  return request<Category>(`/api/v1/t/${workspaceId}/categories/${categoryId}`, {
     method: "PATCH",
     json: body,
   });
 }
 
 export async function archiveCategory(
-  tenantId: string,
+  workspaceId: string,
   categoryId: string
 ): Promise<void> {
-  return request<void>(`/api/v1/t/${tenantId}/categories/${categoryId}`, {
+  return request<void>(`/api/v1/t/${workspaceId}/categories/${categoryId}`, {
     method: "DELETE",
   });
 }
 
 export async function fetchMerchants(
-  tenantId: string,
+  workspaceId: string,
   opts: { includeArchived?: boolean } = {}
 ): Promise<Merchant[]> {
   return request<Merchant[]>(
-    `/api/v1/t/${tenantId}/merchants${buildQuery({
+    `/api/v1/t/${workspaceId}/merchants${buildQuery({
       includeArchived: opts.includeArchived,
     })}`,
     { method: "GET" }

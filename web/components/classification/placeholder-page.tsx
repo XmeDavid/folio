@@ -24,7 +24,7 @@ export function ClassificationPlaceholderPage({
         description="The backend foundation exists. This page is wired into the workspace shell so the next slice can add the list and editing workflow in place."
         action={
           <Button asChild variant="secondary">
-            <Link href={`/t/${slug}/transactions` as Route}>
+            <Link href={`/w/${slug}/transactions` as Route}>
               Open transactions
               <ArrowRight className="h-4 w-4" />
             </Link>

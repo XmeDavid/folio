@@ -37,12 +37,12 @@ export default function AcceptInvitePage({
         queryKey: ["me"],
         queryFn: fetchMe,
       });
-      const tenantId = preview.data?.tenantId;
-      const target = fresh.tenants.find((t) => t.id === tenantId);
+      const workspaceId = preview.data?.workspaceId;
+      const target = fresh.workspaces.find((t) => t.id === workspaceId);
       if (target) {
-        router.push(`/t/${target.slug}` as Route);
+        router.push(`/w/${target.slug}` as Route);
       } else {
-        router.push("/tenants" as Route);
+        router.push("/workspaces" as Route);
       }
     },
   });
@@ -98,10 +98,10 @@ export default function AcceptInvitePage({
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-6 p-6">
       <div>
-        <h1 className="text-2xl font-semibold">Join {invite.tenantName}</h1>
+        <h1 className="text-2xl font-semibold">Join {invite.workspaceName}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {invite.inviterDisplayName} invited <strong>{invite.email}</strong>{" "}
-          to join <strong>{invite.tenantName}</strong> as{" "}
+          to join <strong>{invite.workspaceName}</strong> as{" "}
           <strong>{invite.role}</strong>.
         </p>
       </div>
@@ -119,7 +119,7 @@ export default function AcceptInvitePage({
             onClick={() => accept.mutate()}
             className="rounded bg-foreground px-3 py-2 text-background disabled:opacity-60"
           >
-            {accept.isPending ? "Joining…" : `Join ${invite.tenantName}`}
+            {accept.isPending ? "Joining…" : `Join ${invite.workspaceName}`}
           </button>
         </>
       ) : (

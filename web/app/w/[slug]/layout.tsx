@@ -3,10 +3,10 @@
 import { use, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
-import { useCurrentTenant, useIdentity } from "@/lib/hooks/use-identity";
-import { TenantShell } from "@/components/app/tenant-shell";
+import { useCurrentWorkspace, useIdentity } from "@/lib/hooks/use-identity";
+import { WorkspaceShell } from "@/components/app/workspace-shell";
 
-export default function TenantLayout({
+export default function WorkspaceLayout({
   children,
   params,
 }: {
@@ -15,7 +15,7 @@ export default function TenantLayout({
 }) {
   const { slug } = use(params);
   const id = useIdentity();
-  const tenant = useCurrentTenant(slug);
+  const workspace = useCurrentWorkspace(slug);
   const router = useRouter();
 
   useEffect(() => {
@@ -23,14 +23,14 @@ export default function TenantLayout({
       router.replace("/login" as Route);
       return;
     }
-    if (id.status === "authenticated" && !tenant) {
-      router.replace("/tenants" as Route);
+    if (id.status === "authenticated" && !workspace) {
+      router.replace("/workspaces" as Route);
     }
-  }, [id.status, tenant, router]);
+  }, [id.status, workspace, router]);
 
-  if (id.status !== "authenticated" || !tenant) {
+  if (id.status !== "authenticated" || !workspace) {
     return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   }
 
-  return <TenantShell tenant={tenant}>{children}</TenantShell>;
+  return <WorkspaceShell workspace={workspace}>{children}</WorkspaceShell>;
 }

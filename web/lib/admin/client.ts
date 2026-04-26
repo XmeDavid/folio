@@ -20,7 +20,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export type Pagination = { limit: number; nextCursor?: string };
 export type Envelope<T> = { data: T; pagination?: Pagination };
-export type Tenant = {
+export type Workspace = {
   id: string;
   name: string;
   slug: string;
@@ -39,22 +39,22 @@ export type User = {
   isAdmin: boolean;
   createdAt: string;
 };
-export type TenantDetail = {
-  tenant: Tenant;
+export type WorkspaceDetail = {
+  workspace: Workspace;
   memberCount: number;
   deletedAt?: string;
   lastActivityAt?: string;
 };
 export type UserDetail = {
   user: User;
-  memberships: { tenantId: string; tenantName: string; tenantSlug: string; role: string; joinedAt: string }[];
+  memberships: { workspaceId: string; workspaceName: string; workspaceSlug: string; role: string; joinedAt: string }[];
   activeSessions: { id: string; createdAt: string; lastSeenAt: string; userAgent: string; ip?: string }[];
   mfa: { passkeys: { id: string; label: string; createdAt: string }[]; totpEnabled: boolean; recoveryCodesRemaining: number };
   lastLoginAt?: string;
 };
 export type AuditEvent = {
   id: string;
-  tenantId?: string;
+  workspaceId?: string;
   actorUserId?: string;
   entityType: string;
   entityId: string;
@@ -79,12 +79,12 @@ const qs = (params: Record<string, string | number | boolean | undefined>) => {
   return out ? `?${out}` : "";
 };
 
-export function useAdminTenants(params: { search?: string; includeDeleted?: boolean; cursor?: string }) {
-  return useQuery({ queryKey: ["admin", "tenants", params], queryFn: () => api<Envelope<Tenant[]>>(`/api/v1/admin/tenants${qs(params)}`) });
+export function useAdminWorkspaces(params: { search?: string; includeDeleted?: boolean; cursor?: string }) {
+  return useQuery({ queryKey: ["admin", "workspaces", params], queryFn: () => api<Envelope<Workspace[]>>(`/api/v1/admin/workspaces${qs(params)}`) });
 }
 
-export function useAdminTenantDetail(tenantId: string) {
-  return useQuery({ queryKey: ["admin", "tenant", tenantId], queryFn: () => api<Envelope<TenantDetail>>(`/api/v1/admin/tenants/${tenantId}`), enabled: !!tenantId });
+export function useAdminWorkspaceDetail(workspaceId: string) {
+  return useQuery({ queryKey: ["admin", "workspace", workspaceId], queryFn: () => api<Envelope<WorkspaceDetail>>(`/api/v1/admin/workspaces/${workspaceId}`), enabled: !!workspaceId });
 }
 
 export function useAdminUsers(params: { search?: string; isAdminOnly?: boolean; cursor?: string }) {

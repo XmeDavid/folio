@@ -8,7 +8,7 @@ import { useAdminGuard } from "@/lib/hooks/use-admin-guard";
 import { cn } from "@/lib/utils";
 
 const nav = [
-  { href: "/admin/tenants", label: "Tenants" },
+  { href: "/admin/workspaces", label: "Workspaces" },
   { href: "/admin/users", label: "Users" },
   { href: "/admin/audit", label: "Audit" },
   { href: "/admin/jobs", label: "Jobs" },
@@ -21,7 +21,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <div className="min-h-dvh bg-page text-fg">
       <header className="flex h-16 items-center gap-3 border-b border-border bg-surface px-6">
-        <Link href="/tenants" className="text-[15px] font-semibold">Folio</Link>
+        <Link href="/workspaces" className="text-[15px] font-semibold">Folio</Link>
         <span className="text-fg-faint">/</span>
         <span className="text-[15px] font-medium">Admin</span>
         <Badge variant="danger">Admin</Badge>

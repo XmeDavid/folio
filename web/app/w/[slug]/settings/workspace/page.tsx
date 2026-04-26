@@ -4,21 +4,21 @@ import { use, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCurrentTenant } from "@/lib/hooks/use-identity";
+import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 import {
   ApiError,
-  deleteTenant,
-  patchTenant,
-  type TenantPatchInput,
+  deleteWorkspace,
+  patchWorkspace,
+  type WorkspacePatchInput,
 } from "@/lib/api/client";
 
-export default function TenantSettingsPage({
+export default function WorkspaceSettingsPage({
   params,
 }: {
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = use(params);
-  const tenant = useCurrentTenant(slug);
+  const workspace = useCurrentWorkspace(slug);
   const router = useRouter();
   const qc = useQueryClient();
 
@@ -30,18 +30,18 @@ export default function TenantSettingsPage({
     cycleAnchorDay: number;
   } | null>(null);
 
-  const tenantKey = tenant
-    ? `${tenant.id}:${tenant.name}:${tenant.slug}:${tenant.baseCurrency}:${tenant.cycleAnchorDay}`
+  const workspaceKey = workspace
+    ? `${workspace.id}:${workspace.name}:${workspace.slug}:${workspace.baseCurrency}:${workspace.cycleAnchorDay}`
     : "";
 
-  // Sync the local draft when the tenant snapshot we're editing changes.
-  if (tenant && draft?.key !== tenantKey) {
+  // Sync the local draft when the workspace snapshot we're editing changes.
+  if (workspace && draft?.key !== workspaceKey) {
     setDraft({
-      key: tenantKey,
-      name: tenant.name,
-      slug: tenant.slug,
-      baseCurrency: tenant.baseCurrency,
-      cycleAnchorDay: tenant.cycleAnchorDay,
+      key: workspaceKey,
+      name: workspace.name,
+      slug: workspace.slug,
+      baseCurrency: workspace.baseCurrency,
+      cycleAnchorDay: workspace.cycleAnchorDay,
     });
   }
 
@@ -52,16 +52,16 @@ export default function TenantSettingsPage({
   const [confirmSlug, setConfirmSlug] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const isOwner = tenant?.role === "owner";
+  const isOwner = workspace?.role === "owner";
 
   const patch = useMutation({
-    mutationFn: (body: TenantPatchInput) => patchTenant(tenant!.id, body),
+    mutationFn: (body: WorkspacePatchInput) => patchWorkspace(workspace!.id, body),
     onSuccess: async (updated) => {
       setFormError(null);
       setFormOk("Saved");
       await qc.invalidateQueries({ queryKey: ["me"] });
       if (updated.slug !== slug) {
-        router.replace(`/t/${updated.slug}/settings/tenant` as Route);
+        router.replace(`/w/${updated.slug}/settings/workspace` as Route);
       }
     },
     onError: (err) => {
@@ -71,27 +71,27 @@ export default function TenantSettingsPage({
   });
 
   const del = useMutation({
-    mutationFn: () => deleteTenant(tenant!.id),
+    mutationFn: () => deleteWorkspace(workspace!.id),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["me"] });
-      router.push("/tenants" as Route);
+      router.push("/workspaces" as Route);
     },
     onError: (err) => {
       setDeleteError(formatError(err));
     },
   });
 
-  if (!tenant || !draft) return null;
+  if (!workspace || !draft) return null;
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!tenant || !draft) return;
-    const body: TenantPatchInput = {};
-    if (draft.name !== tenant.name) body.name = draft.name;
-    if (draft.slug !== tenant.slug) body.slug = draft.slug;
-    if (draft.baseCurrency !== tenant.baseCurrency)
+    if (!workspace || !draft) return;
+    const body: WorkspacePatchInput = {};
+    if (draft.name !== workspace.name) body.name = draft.name;
+    if (draft.slug !== workspace.slug) body.slug = draft.slug;
+    if (draft.baseCurrency !== workspace.baseCurrency)
       body.baseCurrency = draft.baseCurrency.toUpperCase();
-    if (draft.cycleAnchorDay !== tenant.cycleAnchorDay)
+    if (draft.cycleAnchorDay !== workspace.cycleAnchorDay)
       body.cycleAnchorDay = draft.cycleAnchorDay;
     if (Object.keys(body).length === 0) {
       setFormError(null);
@@ -104,11 +104,11 @@ export default function TenantSettingsPage({
   return (
     <div className="flex max-w-xl flex-col gap-8">
       <div>
-        <h1 className="text-2xl font-semibold">Tenant settings</h1>
+        <h1 className="text-2xl font-semibold">Workspace settings</h1>
         <p className="text-sm text-muted-foreground">
           {isOwner
-            ? "Update the tenant's identity and financial defaults."
-            : "Only owners can change tenant settings."}
+            ? "Update the workspace's identity and financial defaults."
+            : "Only owners can change workspace settings."}
         </p>
       </div>
 
@@ -190,7 +190,7 @@ export default function TenantSettingsPage({
         <section className="rounded border border-red-300 p-4">
           <h2 className="text-lg font-semibold text-red-700">Danger zone</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Soft-delete this tenant. You can restore it later from the tenants
+            Soft-delete this workspace. You can restore it later from the workspaces
             list.
           </p>
           <button
@@ -202,7 +202,7 @@ export default function TenantSettingsPage({
             }}
             className="mt-3 rounded border border-red-400 px-3 py-2 text-sm text-red-700 hover:bg-red-50"
           >
-            Delete tenant
+            Delete workspace
           </button>
         </section>
       ) : null}
@@ -220,17 +220,17 @@ export default function TenantSettingsPage({
             className="w-full max-w-md rounded bg-background p-6 shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold">Delete tenant</h3>
+            <h3 className="text-lg font-semibold">Delete workspace</h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              This soft-deletes the tenant. Type{" "}
-              <code className="rounded bg-muted px-1">{tenant.slug}</code> to
+              This soft-deletes the workspace. Type{" "}
+              <code className="rounded bg-muted px-1">{workspace.slug}</code> to
               confirm.
             </p>
             <input
               type="text"
               value={confirmSlug}
               onChange={(e) => setConfirmSlug(e.target.value)}
-              placeholder="tenant slug"
+              placeholder="workspace slug"
               className="mt-3 w-full rounded border px-3 py-2"
               autoFocus
             />
@@ -248,11 +248,11 @@ export default function TenantSettingsPage({
               </button>
               <button
                 type="button"
-                disabled={confirmSlug !== tenant.slug || del.isPending}
+                disabled={confirmSlug !== workspace.slug || del.isPending}
                 onClick={() => del.mutate()}
                 className="rounded bg-red-600 px-3 py-2 text-sm text-white disabled:opacity-60"
               >
-                {del.isPending ? "Deleting…" : "Delete tenant"}
+                {del.isPending ? "Deleting…" : "Delete workspace"}
               </button>
             </div>
           </div>

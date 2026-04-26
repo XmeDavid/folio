@@ -13,8 +13,8 @@ export default function Root() {
       router.replace("/login" as Route);
     }
     if (id.status === "authenticated") {
-      const slug = id.data.tenants[0]?.slug;
-      router.replace((slug ? `/t/${slug}` : "/tenants") as Route);
+      const slug = id.data.workspaces[0]?.slug;
+      router.replace((slug ? `/w/${slug}` : "/workspaces") as Route);
     }
   }, [id.status, id.data, router]);
   return (

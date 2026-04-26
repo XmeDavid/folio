@@ -2,7 +2,7 @@
 
 import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCurrentTenant } from "@/lib/hooks/use-identity";
+import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 import {
   ApiError,
   getMembers,
@@ -17,7 +17,7 @@ export default function InvitesSettingsPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = use(params);
-  const tenant = useCurrentTenant(slug);
+  const workspace = useCurrentWorkspace(slug);
   const qc = useQueryClient();
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -27,25 +27,25 @@ export default function InvitesSettingsPage({
   } | null>(null);
 
   const query = useQuery({
-    queryKey: ["members", tenant?.id],
-    queryFn: () => getMembers(tenant!.id),
-    enabled: !!tenant,
+    queryKey: ["members", workspace?.id],
+    queryFn: () => getMembers(workspace!.id),
+    enabled: !!workspace,
   });
 
   const revoke = useMutation({
-    mutationFn: (inviteId: string) => revokeInvite(tenant!.id, inviteId),
+    mutationFn: (inviteId: string) => revokeInvite(workspace!.id, inviteId),
     onSuccess: async () => {
       setRowError(null);
-      await qc.invalidateQueries({ queryKey: ["members", tenant!.id] });
+      await qc.invalidateQueries({ queryKey: ["members", workspace!.id] });
     },
     onError: (err, inviteId) => {
       setRowError({ id: inviteId, message: formatError(err) });
     },
   });
 
-  if (!tenant) return null;
+  if (!workspace) return null;
 
-  const isOwner = tenant.role === "owner";
+  const isOwner = workspace.role === "owner";
   const invites = query.data?.pendingInvites ?? [];
 
   return (
@@ -54,7 +54,7 @@ export default function InvitesSettingsPage({
         <div>
           <h1 className="text-2xl font-semibold">Invites</h1>
           <p className="text-sm text-muted-foreground">
-            Pending invitations to join this tenant.
+            Pending invitations to join this workspace.
           </p>
         </div>
         <button
@@ -112,7 +112,7 @@ export default function InvitesSettingsPage({
       <NewInviteDialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
-        tenantId={tenant.id}
+        workspaceId={workspace.id}
         canInviteOwners={isOwner}
       />
     </div>

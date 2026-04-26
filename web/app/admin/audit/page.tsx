@@ -18,7 +18,7 @@ export default function AdminAuditPage() {
     <section className="flex flex-col gap-5">
       <PageHeader
         title="Audit"
-        description="Cross-tenant operational event feed."
+        description="Cross-workspace operational event feed."
       />
       <Input
         value={action}

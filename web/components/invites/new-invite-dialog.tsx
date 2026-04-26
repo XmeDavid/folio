@@ -11,12 +11,12 @@ import {
 export function NewInviteDialog({
   open,
   onClose,
-  tenantId,
+  workspaceId,
   canInviteOwners,
 }: {
   open: boolean;
   onClose: () => void;
-  tenantId: string;
+  workspaceId: string;
   canInviteOwners: boolean;
 }) {
   const qc = useQueryClient();
@@ -25,9 +25,9 @@ export function NewInviteDialog({
   const [error, setError] = useState<string | null>(null);
 
   const create = useMutation({
-    mutationFn: () => createInvite(tenantId, { email, role }),
+    mutationFn: () => createInvite(workspaceId, { email, role }),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ["members", tenantId] });
+      await qc.invalidateQueries({ queryKey: ["members", workspaceId] });
       setEmail("");
       setRole("member");
       setError(null);

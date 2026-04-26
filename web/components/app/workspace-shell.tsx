@@ -16,9 +16,9 @@ import {
   Tags,
   Wand2,
 } from "lucide-react";
-import { TenantSwitcher } from "@/components/tenant-switcher";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { Button } from "@/components/ui/button";
-import type { MeTenant } from "@/lib/hooks/use-identity";
+import type { MeWorkspace } from "@/lib/hooks/use-identity";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -29,18 +29,18 @@ const nav = [
   { label: "Merchants", href: "/merchants", icon: Store },
   { label: "Tags", href: "/tags", icon: Tags },
   { label: "Rules", href: "/rules", icon: Wand2 },
-  { label: "Settings", href: "/settings/tenant", icon: Settings },
+  { label: "Settings", href: "/settings/workspace", icon: Settings },
 ];
 
-export function TenantShell({
-  tenant,
+export function WorkspaceShell({
+  workspace,
   children,
 }: {
-  tenant: MeTenant;
+  workspace: MeWorkspace;
   children: ReactNode;
 }) {
   const pathname = usePathname();
-  const base = `/t/${tenant.slug}`;
+  const base = `/w/${workspace.slug}`;
 
   return (
     <div className="flex min-h-dvh bg-page text-fg">
@@ -52,11 +52,11 @@ export function TenantShell({
           <div className="min-w-0">
             <div className="text-[15px] font-medium leading-tight">Folio</div>
             <div className="truncate text-[12px] text-fg-muted">
-              {tenant.name}
+              {workspace.name}
             </div>
           </div>
         </div>
-        <TenantNav base={base} pathname={pathname} />
+        <WorkspaceNav base={base} pathname={pathname} />
         <div className="mt-auto flex flex-col gap-2 border-t border-border pt-4">
           <Button asChild variant="secondary" className="w-full justify-start">
             <Link href={`${base}/accounts` as Route}>
@@ -81,17 +81,17 @@ export function TenantShell({
               /
             </span>
             <div className="min-w-0">
-              <TenantSwitcher currentSlug={tenant.slug} />
+              <WorkspaceSwitcher currentSlug={workspace.slug} />
             </div>
           </div>
           <div className="hidden text-[12px] text-fg-muted sm:block">
-            {tenant.baseCurrency} · day {tenant.cycleAnchorDay}
+            {workspace.baseCurrency} · day {workspace.cycleAnchorDay}
           </div>
         </header>
 
         <div className="border-b border-border bg-surface px-3 py-2 lg:hidden">
           <div className="flex gap-1 overflow-x-auto">
-            <TenantNav base={base} pathname={pathname} compact />
+            <WorkspaceNav base={base} pathname={pathname} compact />
           </div>
         </div>
 
@@ -103,7 +103,7 @@ export function TenantShell({
   );
 }
 
-function TenantNav({
+function WorkspaceNav({
   base,
   pathname,
   compact = false,
