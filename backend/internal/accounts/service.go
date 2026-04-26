@@ -44,7 +44,7 @@ func defaultIncludeInSavingsRate(kind string) bool {
 // opening balance.
 type Account struct {
 	ID                   uuid.UUID  `json:"id"`
-	WorkspaceID             uuid.UUID  `json:"workspaceId"`
+	WorkspaceID          uuid.UUID  `json:"workspaceId"`
 	Name                 string     `json:"name"`
 	Nickname             *string    `json:"nickname,omitempty"`
 	Kind                 string     `json:"kind"`
@@ -163,23 +163,26 @@ func NewService(pool *pgxpool.Pool) *Service {
 }
 
 type AccountGroup struct {
-	ID         uuid.UUID  `json:"id"`
-	WorkspaceID   uuid.UUID  `json:"workspaceId"`
-	Name       string     `json:"name"`
-	SortOrder  int        `json:"sortOrder"`
-	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	UpdatedAt  time.Time  `json:"updatedAt"`
+	ID                uuid.UUID  `json:"id"`
+	WorkspaceID       uuid.UUID  `json:"workspaceId"`
+	Name              string     `json:"name"`
+	SortOrder         int        `json:"sortOrder"`
+	AggregateBalances bool       `json:"aggregateBalances"`
+	ArchivedAt        *time.Time `json:"archivedAt,omitempty"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
 }
 
 type CreateGroupInput struct {
-	Name string
+	Name              string
+	AggregateBalances bool
 }
 
 type PatchGroupInput struct {
-	Name      *string
-	SortOrder *int
-	Archived  *bool
+	Name              *string
+	SortOrder         *int
+	AggregateBalances *bool
+	Archived          *bool
 }
 
 type GroupOrderInput struct {
@@ -200,14 +203,14 @@ type ReorderInput struct {
 
 func scanAccountGroup(row interface{ Scan(...any) error }, g *AccountGroup) error {
 	return row.Scan(
-		&g.ID, &g.WorkspaceID, &g.Name, &g.SortOrder, &g.ArchivedAt,
+		&g.ID, &g.WorkspaceID, &g.Name, &g.SortOrder, &g.AggregateBalances, &g.ArchivedAt,
 		&g.CreatedAt, &g.UpdatedAt,
 	)
 }
 
 func (s *Service) ListGroups(ctx context.Context, workspaceID uuid.UUID, includeArchived bool) ([]AccountGroup, error) {
 	q := `
-		select id, workspace_id, name, sort_order, archived_at, created_at, updated_at
+		select id, workspace_id, name, sort_order, aggregate_balances, archived_at, created_at, updated_at
 		from account_groups
 		where workspace_id = $1
 	`
@@ -242,14 +245,14 @@ func (s *Service) CreateGroup(ctx context.Context, workspaceID uuid.UUID, raw Cr
 	groupID := uuidx.New()
 	var g AccountGroup
 	err := s.pool.QueryRow(ctx, `
-		insert into account_groups (id, workspace_id, name, sort_order)
+		insert into account_groups (id, workspace_id, name, aggregate_balances, sort_order)
 		values (
-			$1, $2, $3,
+			$1, $2, $3, $4,
 			coalesce((select max(sort_order) + 1000 from account_groups where workspace_id = $2), 1000)
 		)
-		returning id, workspace_id, name, sort_order, archived_at, created_at, updated_at
-	`, groupID, workspaceID, name).Scan(
-		&g.ID, &g.WorkspaceID, &g.Name, &g.SortOrder, &g.ArchivedAt, &g.CreatedAt, &g.UpdatedAt,
+		returning id, workspace_id, name, sort_order, aggregate_balances, archived_at, created_at, updated_at
+	`, groupID, workspaceID, name, raw.AggregateBalances).Scan(
+		&g.ID, &g.WorkspaceID, &g.Name, &g.SortOrder, &g.AggregateBalances, &g.ArchivedAt, &g.CreatedAt, &g.UpdatedAt,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -278,6 +281,9 @@ func (s *Service) UpdateGroup(ctx context.Context, workspaceID, groupID uuid.UUI
 	if in.SortOrder != nil {
 		sets = append(sets, "sort_order = "+next(*in.SortOrder))
 	}
+	if in.AggregateBalances != nil {
+		sets = append(sets, "aggregate_balances = "+next(*in.AggregateBalances))
+	}
 	if in.Archived != nil {
 		if *in.Archived {
 			sets = append(sets, "archived_at = "+next(s.now().UTC()))
@@ -293,9 +299,9 @@ func (s *Service) UpdateGroup(ctx context.Context, workspaceID, groupID uuid.UUI
 	err := s.pool.QueryRow(ctx, fmt.Sprintf(`
 		update account_groups set %s
 		where workspace_id = $1 and id = $2
-		returning id, workspace_id, name, sort_order, archived_at, created_at, updated_at
+		returning id, workspace_id, name, sort_order, aggregate_balances, archived_at, created_at, updated_at
 	`, strings.Join(sets, ", ")), args...).Scan(
-		&g.ID, &g.WorkspaceID, &g.Name, &g.SortOrder, &g.ArchivedAt, &g.CreatedAt, &g.UpdatedAt,
+		&g.ID, &g.WorkspaceID, &g.Name, &g.SortOrder, &g.AggregateBalances, &g.ArchivedAt, &g.CreatedAt, &g.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -312,7 +318,7 @@ func (s *Service) UpdateGroup(ctx context.Context, workspaceID, groupID uuid.UUI
 func (s *Service) GetGroup(ctx context.Context, workspaceID, groupID uuid.UUID) (*AccountGroup, error) {
 	var g AccountGroup
 	err := scanAccountGroup(s.pool.QueryRow(ctx, `
-		select id, workspace_id, name, sort_order, archived_at, created_at, updated_at
+		select id, workspace_id, name, sort_order, aggregate_balances, archived_at, created_at, updated_at
 		from account_groups
 		where workspace_id = $1 and id = $2
 	`, workspaceID, groupID), &g)

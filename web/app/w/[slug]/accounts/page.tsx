@@ -8,6 +8,7 @@ import {
   ArrowUp,
   Archive,
   ArchiveRestore,
+  Calculator,
   Check,
   ChevronDown,
   ChevronRight,
@@ -645,8 +646,13 @@ function AccountList({
     },
   });
   const updateGroupMutation = useMutation({
-    mutationFn: ({ id, name }: { id: string; name: string }) =>
-      updateAccountGroup(workspaceId, id, { name }),
+    mutationFn: ({
+      id,
+      patch,
+    }: {
+      id: string;
+      patch: { name?: string; aggregateBalances?: boolean };
+    }) => updateAccountGroup(workspaceId, id, patch),
     onSuccess: async () => {
       setEditingGroupId(null);
       await invalidate();
@@ -884,7 +890,7 @@ function AccountList({
                           if (bucket.group && name) {
                             updateGroupMutation.mutate({
                               id: bucket.group.id,
-                              name,
+                              patch: { name },
                             });
                           }
                         }}
@@ -909,11 +915,47 @@ function AccountList({
                         {bucket.name}
                       </h3>
                       <Badge variant="neutral">{bucket.accounts.length}</Badge>
+                      {bucket.group?.aggregateBalances ? (
+                        <Badge variant="accent">One balance</Badge>
+                      ) : null}
                     </>
                   )}
                 </div>
                 {bucket.group ? (
                   <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant={
+                        bucket.group.aggregateBalances ? "secondary" : "ghost"
+                      }
+                      size="sm"
+                      disabled={busy}
+                      onClick={() =>
+                        bucket.group &&
+                        updateGroupMutation.mutate({
+                          id: bucket.group.id,
+                          patch: {
+                            aggregateBalances: !bucket.group.aggregateBalances,
+                          },
+                        })
+                      }
+                      aria-pressed={bucket.group.aggregateBalances}
+                      aria-label={
+                        bucket.group.aggregateBalances
+                          ? "Count accounts individually"
+                          : "Count group as one balance"
+                      }
+                      title={
+                        bucket.group.aggregateBalances
+                          ? "Count accounts individually"
+                          : "Count group as one balance"
+                      }
+                    >
+                      <Calculator className="h-4 w-4" />
+                      <span className="hidden lg:inline">
+                        {bucket.group.aggregateBalances ? "Grouped" : "Stats"}
+                      </span>
+                    </Button>
                     <Button
                       type="button"
                       variant="ghost"

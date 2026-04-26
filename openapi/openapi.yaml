@@ -1023,12 +1023,15 @@ components:
 
     AccountGroup:
       type: object
-      required: [id, workspaceId, name, sortOrder, createdAt, updatedAt]
+      required: [id, workspaceId, name, sortOrder, aggregateBalances, createdAt, updatedAt]
       properties:
         id:          { type: string, format: uuid }
         workspaceId:    { type: string, format: uuid }
         name:        { type: string }
         sortOrder:   { type: integer }
+        aggregateBalances:
+          type: boolean
+          description: Count this group as one reporting balance while keeping member accounts intact.
         archivedAt:  { type: string, format: date-time, nullable: true }
         createdAt:   { type: string, format: date-time }
         updatedAt:   { type: string, format: date-time }
@@ -1038,12 +1041,18 @@ components:
       required: [name]
       properties:
         name: { type: string }
+        aggregateBalances:
+          type: boolean
+          description: Count this group as one reporting balance while keeping member accounts intact.
 
     AccountGroupUpdateInput:
       type: object
       properties:
         name:      { type: string }
         sortOrder: { type: integer }
+        aggregateBalances:
+          type: boolean
+          description: Count this group as one reporting balance while keeping member accounts intact.
         archived:  { type: boolean }
 
     AccountReorderInput:

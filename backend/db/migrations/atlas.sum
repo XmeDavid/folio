@@ -1,4 +1,4 @@
-h1:jaPyj++UaAqsaY0XrC1xNPTvuIzTRyZAT+GGaWu5P2Y=
+h1:WDZl7Qo1ZrNyuNVpoOrS8N4lbz/xRHU0eJcSUofBsIY=
 20260424000001_identity.sql h1:E15kzwENCYU0arOCkkmB6tXFHMOpx/F1OceLzVjvvPo=
 20260424000002_accounts.sql h1:1ZK5n078oekkHi0qSKyVDpzblN9RKxYvpZqwkNE7Cso=
 20260424000003_classification.sql h1:VYffZsTA/skoiEhOX6bJNk28Gd8CYuM7csOrs24rvx4=
@@ -16,3 +16,4 @@ h1:jaPyj++UaAqsaY0XrC1xNPTvuIzTRyZAT+GGaWu5P2Y=
 20260424000015_mfa_challenges.sql h1:rM1+A4J0MQcpZ5Dh64cfHOi84i5KRj0pZ6LwcixUMzs=
 20260424000016_auth_hardening.sql h1:hCfFVfnlthqkZTSC5qX1ZVIJRW4yBH2DDxX9Du7Cfo4=
 20260424000017_account_groups.sql h1:81W+f511vwA4AxgyJFxFs0wSfwq2lWy9vZPEAHuoZsY=
+20260426000001_account_group_balance_aggregation.sql h1:jCW3GWKxU2DJ6ELeRrVRwZKxgqPMlH6+PAu92ZI9mYY=

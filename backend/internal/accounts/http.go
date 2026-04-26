@@ -40,13 +40,15 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 type groupReq struct {
-	Name string `json:"name"`
+	Name              string `json:"name"`
+	AggregateBalances bool   `json:"aggregateBalances"`
 }
 
 type groupPatchReq struct {
-	Name      *string `json:"name"`
-	SortOrder *int    `json:"sortOrder"`
-	Archived  *bool   `json:"archived"`
+	Name              *string `json:"name"`
+	SortOrder         *int    `json:"sortOrder"`
+	AggregateBalances *bool   `json:"aggregateBalances"`
+	Archived          *bool   `json:"archived"`
 }
 
 type createReq struct {
@@ -106,7 +108,10 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
 		return
 	}
-	group, err := h.svc.CreateGroup(r.Context(), workspaceID, CreateGroupInput{Name: req.Name})
+	group, err := h.svc.CreateGroup(r.Context(), workspaceID, CreateGroupInput{
+		Name:              req.Name,
+		AggregateBalances: req.AggregateBalances,
+	})
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -127,7 +132,10 @@ func (h *Handler) updateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	group, err := h.svc.UpdateGroup(r.Context(), workspaceID, id, PatchGroupInput{
-		Name: req.Name, SortOrder: req.SortOrder, Archived: req.Archived,
+		Name:              req.Name,
+		SortOrder:         req.SortOrder,
+		AggregateBalances: req.AggregateBalances,
+		Archived:          req.Archived,
 	})
 	if err != nil {
 		httpx.WriteServiceError(w, err)

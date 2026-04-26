@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  fetchAccountGroups,
   fetchAccounts,
   fetchTransactions,
   type Account,
@@ -18,8 +19,8 @@ import {
 } from "@/lib/api/client";
 import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
-import { addDecimalStrings } from "@/lib/decimal";
-import { convertAmount, fetchLatestFxRates, type FxRate } from "@/lib/fx";
+import { fetchLatestFxRates, type FxRate } from "@/lib/fx";
+import { buildBalanceUnits, netWorthFromBalanceUnits } from "@/lib/accounts";
 
 export default function WorkspaceDashboardPage({
   params,
@@ -35,6 +36,11 @@ export default function WorkspaceDashboardPage({
     queryFn: () => fetchAccounts(workspaceId!),
     enabled: !!workspaceId,
   });
+  const groups = useQuery({
+    queryKey: ["account-groups", workspaceId],
+    queryFn: () => fetchAccountGroups(workspaceId!),
+    enabled: !!workspaceId,
+  });
   const transactions = useQuery({
     queryKey: ["transactions", workspaceId, { limit: 12 }],
     queryFn: () => fetchTransactions(workspaceId!, { limit: 12 }),
@@ -43,12 +49,12 @@ export default function WorkspaceDashboardPage({
 
   const locale = workspace?.locale;
   const accountRows = accounts.data ?? [];
+  const groupRows = groups.data ?? [];
   const transactionRows = transactions.data ?? [];
   const baseCurrency = workspace?.baseCurrency ?? "CHF";
   const networthAccounts = accountRows.filter(
     (account) => account.includeInNetworth
   );
-  const balances = balanceByCurrency(networthAccounts);
   const networthCurrencies = [
     ...new Set(
       networthAccounts.map((account) => account.currency.toUpperCase())
@@ -63,8 +69,20 @@ export default function WorkspaceDashboardPage({
       networthCurrencies.some((currency) => currency !== baseCurrency),
     staleTime: 1000 * 60 * 60 * 6,
   });
-  const networth = netWorthInBase(
-    networthAccounts,
+  const activeBalanceUnits = buildBalanceUnits({
+    accounts: accountRows,
+    groups: groupRows,
+    baseCurrency,
+    rates: fxRates.data ?? {},
+  });
+  const networthBalanceUnits = buildBalanceUnits({
+    accounts: networthAccounts,
+    groups: groupRows,
+    baseCurrency,
+    rates: fxRates.data ?? {},
+  });
+  const networth = netWorthFromBalanceUnits(
+    networthBalanceUnits,
     baseCurrency,
     fxRates.data ?? {}
   );
@@ -96,7 +114,7 @@ export default function WorkspaceDashboardPage({
         }
       />
 
-      {accounts.isError || transactions.isError ? (
+      {accounts.isError || groups.isError || transactions.isError ? (
         <ErrorBanner
           title="Couldn't load the dashboard"
           description="Check that the backend is running and your session is still valid."
@@ -108,9 +126,9 @@ export default function WorkspaceDashboardPage({
           icon={<Banknote className="h-4 w-4" />}
           label="Net worth"
           value={
-            accounts.isLoading || fxRates.isLoading
+            accounts.isLoading || groups.isLoading || fxRates.isLoading
               ? "..."
-              : networthAccounts.length === 0
+              : networthBalanceUnits.length === 0
                 ? "-"
                 : formatAmount(networth.total, baseCurrency, locale)
           }
@@ -122,12 +140,16 @@ export default function WorkspaceDashboardPage({
         />
         <MetricCard
           icon={<Banknote className="h-4 w-4" />}
-          label="Accounts"
-          value={accounts.isLoading ? "..." : String(accountRows.length)}
+          label="Balances"
+          value={
+            accounts.isLoading || groups.isLoading
+              ? "..."
+              : String(activeBalanceUnits.length)
+          }
           detail={
-            accountRows.length === 1
+            activeBalanceUnits.length === 1
               ? "1 active balance"
-              : `${accountRows.length} active balances`
+              : `${activeBalanceUnits.length} active balances`
           }
         />
         <MetricCard
@@ -166,9 +188,9 @@ export default function WorkspaceDashboardPage({
             </Button>
           </CardHeader>
           <CardContent>
-            {accounts.isLoading ? (
+            {accounts.isLoading || groups.isLoading ? (
               <LoadingText />
-            ) : balances.length > 0 ? (
+            ) : networthBalanceUnits.length > 0 ? (
               <div className="flex flex-col gap-5">
                 <div>
                   <div className="text-fg-muted text-[12px] font-medium">
@@ -186,17 +208,29 @@ export default function WorkspaceDashboardPage({
                   </div>
                 </div>
                 <div className="divide-border flex flex-col divide-y">
-                  {balances.map(([currency, amount]) => (
+                  {networthBalanceUnits.map((unit) => (
                     <div
-                      key={currency}
-                      className="flex items-center justify-between py-3"
+                      key={unit.id}
+                      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 py-3"
                     >
-                      <span className="text-fg-muted text-[13px]">
-                        {currency.toUpperCase()}
-                      </span>
-                      <span className="tabular text-[18px] font-medium">
-                        {formatAmount(amount, currency, locale)}
-                      </span>
+                      <div className="min-w-0">
+                        <div className="text-fg text-[13px] font-medium">
+                          {unit.label}
+                        </div>
+                        <div className="text-fg-faint mt-0.5 text-[11px]">
+                          {unit.type === "group"
+                            ? unit.convertedToBase
+                              ? `${unit.accountCount} accounts, converted to ${baseCurrency}`
+                              : `${unit.accountCount} accounts`
+                            : unit.currency}
+                          {unit.missingCurrencies.length > 0
+                            ? `; excludes ${unit.missingCurrencies.join(", ")}`
+                            : ""}
+                        </div>
+                      </div>
+                      <div className="tabular text-right text-[18px] font-medium">
+                        {formatAmount(unit.amount, unit.currency, locale)}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -350,41 +384,6 @@ function RecentTransactions({
       })}
     </ul>
   );
-}
-
-function balanceByCurrency(accounts: Account[]): [string, string][] {
-  const balances = new Map<string, string>();
-  for (const account of accounts) {
-    const currency = account.currency.toUpperCase();
-    balances.set(
-      currency,
-      addDecimalStrings(balances.get(currency) ?? "0", account.balance)
-    );
-  }
-  return [...balances.entries()].sort(([a], [b]) => a.localeCompare(b));
-}
-
-function netWorthInBase(
-  accounts: Account[],
-  baseCurrency: string,
-  rates: Record<string, FxRate>
-): { total: string; missingCurrencies: string[] } {
-  let total = "0";
-  const missing = new Set<string>();
-  for (const account of accounts) {
-    const converted = convertAmount(
-      account.balance,
-      account.currency,
-      baseCurrency,
-      rates
-    );
-    if (converted == null) {
-      missing.add(account.currency.toUpperCase());
-      continue;
-    }
-    total = addDecimalStrings(total, converted);
-  }
-  return { total, missingCurrencies: [...missing].sort() };
 }
 
 function latestFxDate(rates: Record<string, FxRate>): string {

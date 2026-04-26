@@ -159,3 +159,10 @@ func TestPatchInput_normalize(t *testing.T) {
 		}
 	})
 }
+
+func TestCreateGroupInput_AllowsAggregateBalances(t *testing.T) {
+	in := CreateGroupInput{Name: "Crypto", AggregateBalances: true}
+	if !in.AggregateBalances {
+		t.Fatal("aggregate balance flag should round-trip through service input")
+	}
+}

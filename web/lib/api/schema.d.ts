@@ -1659,6 +1659,8 @@ export interface components {
             workspaceId: string;
             name: string;
             sortOrder: number;
+            /** @description Count this group as one reporting balance while keeping member accounts intact. */
+            aggregateBalances: boolean;
             /** Format: date-time */
             archivedAt?: string | null;
             /** Format: date-time */
@@ -1668,10 +1670,14 @@ export interface components {
         };
         AccountGroupCreateInput: {
             name: string;
+            /** @description Count this group as one reporting balance while keeping member accounts intact. */
+            aggregateBalances?: boolean;
         };
         AccountGroupUpdateInput: {
             name?: string;
             sortOrder?: number;
+            /** @description Count this group as one reporting balance while keeping member accounts intact. */
+            aggregateBalances?: boolean;
             archived?: boolean;
         };
         AccountReorderInput: {
