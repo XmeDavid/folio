@@ -1,16 +1,16 @@
-# Folio Invites & Tenant Lifecycle Implementation Plan
+# Folio Invites & Workspace Lifecycle Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land tenant administration — settings edits, soft-delete/restore, member role changes, leave/remove, invite create/revoke/accept — plus the `/accept-invite` flow, the soft-delete sweeper, and the `mailer.Mailer` interface used by all transactional email from plan 3 onwards.
+**Goal:** Land workspace administration — settings edits, soft-delete/restore, member role changes, leave/remove, invite create/revoke/accept — plus the `/accept-invite` flow, the soft-delete sweeper, and the `mailer.Mailer` interface used by all transactional email from plan 3 onwards.
 
-**Architecture:** Extends `backend/internal/identity` with tenant-lifecycle and member-management methods, adds an `InviteService` for the invite lifecycle, and introduces `backend/internal/mailer` (interface + log-only stub). Tenant-scoped routes mount under `/api/v1/t/{tenantId}` behind the plan-1 middleware chain (`RequireSession` → `RequireMembership` → `RequireRole`). `RequireFreshReauth` is deliberately deferred to Plan 4 (see §0.2). Soft-delete cleanup ships as a standalone `backend/cmd/folio-sweeper` binary that plan 3 re-uses inside a River periodic job.
+**Architecture:** Extends `backend/internal/identity` with workspace-lifecycle and member-management methods, adds an `InviteService` for the invite lifecycle, and introduces `backend/internal/mailer` (interface + log-only stub). Workspace-scoped routes mount under `/api/v1/t/{workspaceId}` behind the plan-1 middleware chain (`RequireSession` → `RequireMembership` → `RequireRole`). `RequireFreshReauth` is deliberately deferred to Plan 4 (see §0.2). Soft-delete cleanup ships as a standalone `backend/cmd/folio-sweeper` binary that plan 3 re-uses inside a River periodic job.
 
 **Tech Stack:** Go 1.25, pgx/v5, chi v5, go-chi routing; Next.js 16, React Query, Tailwind.
 
-**Spec:** `docs/superpowers/specs/2026-04-24-folio-auth-and-tenancy-design.md` — §3.4 invariants, §4.2 invite routes, §4.4 tenant-scoped routes, §8.3 audit events, §10 soft-delete sweeper, §13 web pages.
+**Spec:** `docs/superpowers/specs/2026-04-24-folio-auth-and-workspace-design.md` — §3.4 invariants, §4.2 invite routes, §4.4 workspace-scoped routes, §8.3 audit events, §10 soft-delete sweeper, §13 web pages.
 
-**Prior plans in series:** `docs/superpowers/plans/2026-04-24-folio-auth-foundation.md` (plan 1) — ships schema, `auth.Service`, `auth.RequireSession`, `auth.RequireMembership`, `auth.RequireRole`, `auth.RequireFreshReauth` (stub), `auth.UserFromCtx`, `auth.TenantFromCtx`, `auth.RoleFromCtx`, signup/login/logout, `GET /me`, `POST /tenants`, `GET /t/{id}/members` (list-only), and the frontend shell (login/signup/switcher/`/t/[slug]`).
+**Prior plans in series:** `docs/superpowers/plans/2026-04-24-folio-auth-foundation.md` (plan 1) — ships schema, `auth.Service`, `auth.RequireSession`, `auth.RequireMembership`, `auth.RequireRole`, `auth.RequireFreshReauth` (stub), `auth.UserFromCtx`, `auth.WorkspaceFromCtx`, `auth.RoleFromCtx`, signup/login/logout, `GET /me`, `POST /workspaces`, `GET /t/{id}/members` (list-only), and the frontend shell (login/signup/switcher/`/t/[slug]`).
 
 ---
 
@@ -18,13 +18,13 @@
 
 ### 0.0 Pre-flight fixes (Plan 2 prerequisites)
 
-Plan 1 shipped the logout-audit fix (`fix(auth): logout always writes user.logout audit`) and the tenant-shell consolidation (`refactor(web): consolidate tenant shell before Plan 2 settings pages`) as pre-flight. **Plan 2 assumes those have landed.**
+Plan 1 shipped the logout-audit fix (`fix(auth): logout always writes user.logout audit`) and the workspace-shell consolidation (`refactor(web): consolidate workspace shell before Plan 2 settings pages`) as pre-flight. **Plan 2 assumes those have landed.**
 
 Before Task 1, run the following pre-flight task to unblock signup/login/audit INSERTs that currently pass `""` into `inet` columns:
 
 - [ ] **Task 0.P1: nullable IP for sessions + audit inserts** *(run before Task 1)*
 
-Plan 1 ships `auth.ipString(ip net.IP) string` that returns `""` for nil IP. The DB columns are `inet` and `pgx` rejects `""` when inserting into `inet`. Symptom: any signup/login without a client IP (unit tests without `RemoteAddr`, or proxy-stripped requests) fails at INSERT. Plan 2 expands audit writes (`member.*`, `tenant.*`) and will hit the same issue.
+Plan 1 ships `auth.ipString(ip net.IP) string` that returns `""` for nil IP. The DB columns are `inet` and `pgx` rejects `""` when inserting into `inet`. Symptom: any signup/login without a client IP (unit tests without `RemoteAddr`, or proxy-stripped requests) fails at INSERT. Plan 2 expands audit writes (`member.*`, `workspace.*`) and will hit the same issue.
 
 In `backend/internal/auth/service_signup.go`, `service_login.go`, `audit.go`, and anywhere else that writes `inet` columns, replace `ipString(ip)` calls with a helper that returns `any` — the `ip.String()` for non-nil, and **nil** (not `""`) when the IP is nil. Typical shape:
 
@@ -83,10 +83,10 @@ cd /Users/xmedavid/dev/folio/web
 
 ### 0.2 Conventions
 
-- **Naming.** Go packages: `backend/internal/identity` (extended), `backend/internal/mailer` (new). Frontend paths: `web/app/t/[slug]/settings/{tenant,members,invites}/page.tsx`, `web/app/accept-invite/[token]/page.tsx`. See canonical list in the plan-series overview.
-- **Commit style.** Conventional Commits. Feature scopes: `feat(tenants): …`, `feat(invites): …`, `feat(mailer): …`, `feat(jobs): …`, `feat(web): …`, `test(…): …`.
+- **Naming.** Go packages: `backend/internal/identity` (extended), `backend/internal/mailer` (new). Frontend paths: `web/app/t/[slug]/settings/{workspace,members,invites}/page.tsx`, `web/app/accept-invite/[token]/page.tsx`. See canonical list in the plan-series overview.
+- **Commit style.** Conventional Commits. Feature scopes: `feat(workspaces): …`, `feat(invites): …`, `feat(mailer): …`, `feat(jobs): …`, `feat(web): …`, `test(…): …`.
 - **TDD.** Every task writes service-layer tests first (`_test.go` alongside the implementation file), then the handler, then (where applicable) the frontend page.
-- **Tenant-scope rule.** Every service method takes `tenantID uuid.UUID` as the first argument after `ctx`. Handlers read tenant and user from `auth.TenantFromCtx` / `auth.UserFromCtx`, never from the request body.
+- **Workspace-scope rule.** Every service method takes `workspaceID uuid.UUID` as the first argument after `ctx`. Handlers read workspace and user from `auth.WorkspaceFromCtx` / `auth.UserFromCtx`, never from the request body.
 - **Step-up re-auth (`RequireFreshReauth`) is deliberately NOT mounted in Plan 2.** The spec §5.6 step-up list applies to every sensitive route Plan 2 introduces (`PATCH /t/{id}`, `DELETE /t/{id}`, `POST /t/{id}/restore`, `PATCH /t/{id}/members/{userId}`, `DELETE /t/{id}/members/{userId}`, `POST /t/{id}/invites`, `DELETE /t/{id}/invites/{id}`), but without Plan 4's `/auth/reauth` endpoint there is no way to satisfy freshness, so mounting the middleware here would 403 every call. Plan 2's owner-only routes use `RequireRole(identity.RoleOwner)` as the authorization barrier — that is sufficient for v1 until step-up exists. Plan 4 re-mounts `RequireFreshReauth` across these routes when the real implementation and `/auth/reauth` endpoint land. The `testdb.SetSessionReauth` helper in §0.4 is retained for Plan 4's tests; Plan 2 tests do not need it.
 
 ### 0.3 Mailer interface (defined in this plan, implemented in plan 3)
@@ -109,7 +109,7 @@ type Message struct {
     Subject  string
     Template string            // template name; mailer looks it up
     Data     map[string]any    // template data
-    TenantID string            // optional — for audit / inbound routing
+    WorkspaceID string            // optional — for audit / inbound routing
 }
 
 // Mailer sends transactional email. Implementations MUST be safe for
@@ -189,18 +189,18 @@ import (
     "github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
-// CreateTestTenant inserts a tenant row and returns it. name is used both
+// CreateTestWorkspace inserts a workspace row and returns it. name is used both
 // for the display name and as the slug (via slugify).
-func CreateTestTenant(t *testing.T, pool *pgxpool.Pool, name string) (id uuid.UUID, slug string) {
+func CreateTestWorkspace(t *testing.T, pool *pgxpool.Pool, name string) (id uuid.UUID, slug string) {
     t.Helper()
     id = uuidx.New()
     slug = Slugify(name)
     _, err := pool.Exec(context.Background(), `
-        insert into tenants (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
+        insert into workspaces (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
         values ($1, $2, $3, 'CHF', 1, 'en', 'UTC')
     `, id, name, slug)
     if err != nil {
-        t.Fatalf("CreateTestTenant: %v", err)
+        t.Fatalf("CreateTestWorkspace: %v", err)
     }
     return id, slug
 }
@@ -224,12 +224,12 @@ func CreateTestUser(t *testing.T, pool *pgxpool.Pool, email string, verified boo
     return id
 }
 
-// CreateTestMembership inserts a tenant_memberships row with the given role.
-func CreateTestMembership(t *testing.T, pool *pgxpool.Pool, tenantID, userID uuid.UUID, role string) {
+// CreateTestMembership inserts a workspace_memberships row with the given role.
+func CreateTestMembership(t *testing.T, pool *pgxpool.Pool, workspaceID, userID uuid.UUID, role string) {
     t.Helper()
     _, err := pool.Exec(context.Background(), `
-        insert into tenant_memberships (tenant_id, user_id, role) values ($1, $2, $3::tenant_role)
-    `, tenantID, userID, role)
+        insert into workspace_memberships (workspace_id, user_id, role) values ($1, $2, $3::workspace_role)
+    `, workspaceID, userID, role)
     if err != nil {
         t.Fatalf("CreateTestMembership: %v", err)
     }
@@ -249,7 +249,7 @@ func SetSessionReauth(t *testing.T, pool *pgxpool.Pool, sessionID string, ts tim
 }
 
 // HashInviteToken matches the production hashing rule: SHA-256 over the
-// base64url plaintext, stored raw in tenant_invites.token_hash.
+// base64url plaintext, stored raw in workspace_invites.token_hash.
 func HashInviteToken(plaintext string) []byte {
     h := sha256.Sum256([]byte(plaintext))
     return h[:]
@@ -290,22 +290,22 @@ Expected: all commands exit 0. Tests added by the task pass; no new vet warnings
 
 ---
 
-## Task 1: Extend identity.Service with tenant-update / soft-delete / restore
+## Task 1: Extend identity.Service with workspace-update / soft-delete / restore
 
-**Spec:** §4.4 (`PATCH /api/v1/t/{id}`, `DELETE`, `POST …/restore`), §3.4 invariant #4 (soft-deleted tenants invisible), §8.3 (`tenant.settings_changed`, `tenant.deleted`, `tenant.restored`).
+**Spec:** §4.4 (`PATCH /api/v1/t/{id}`, `DELETE`, `POST …/restore`), §3.4 invariant #4 (soft-deleted workspaces invisible), §8.3 (`workspace.settings_changed`, `workspace.deleted`, `workspace.restored`).
 
 **Files:**
 - Modify: `backend/internal/identity/service.go`
-- Create: `backend/internal/identity/tenants_test.go`
+- Create: `backend/internal/identity/workspaces_test.go`
 
-- [ ] **Step 1: Define the `UpdateTenantInput` shape and validation**
+- [ ] **Step 1: Define the `UpdateWorkspaceInput` shape and validation**
 
 Prepend to `service.go`:
 
 ```go
-// UpdateTenantInput is the PATCH body for a tenant settings update. Pointer
+// UpdateWorkspaceInput is the PATCH body for a workspace settings update. Pointer
 // fields mean "absent"; a non-nil pointer to the zero value means "clear".
-type UpdateTenantInput struct {
+type UpdateWorkspaceInput struct {
     Name           *string
     Slug           *string
     BaseCurrency   *string
@@ -315,7 +315,7 @@ type UpdateTenantInput struct {
 }
 
 // normalize validates provided fields and canonicalises strings. Pure.
-func (in UpdateTenantInput) normalize() (UpdateTenantInput, error) {
+func (in UpdateWorkspaceInput) normalize() (UpdateWorkspaceInput, error) {
     if in.Name != nil {
         n := strings.TrimSpace(*in.Name)
         if n == "" {
@@ -367,7 +367,7 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
 
 Add the `regexp` import.
 
-- [ ] **Step 2: Write `tenants_test.go` (red)**
+- [ ] **Step 2: Write `workspaces_test.go` (red)**
 
 ```go
 package identity_test
@@ -381,69 +381,69 @@ import (
     "github.com/xmedavid/folio/backend/internal/testdb"
 )
 
-func TestService_UpdateTenant_RenamesAndChangesSlug(t *testing.T) {
+func TestService_UpdateWorkspace_RenamesAndChangesSlug(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
 
     newName := "Alice Home"
     newSlug := "alice-home"
-    updated, err := svc.UpdateTenant(context.Background(), tenantID, identity.UpdateTenantInput{
+    updated, err := svc.UpdateWorkspace(context.Background(), workspaceID, identity.UpdateWorkspaceInput{
         Name: &newName,
         Slug: &newSlug,
     })
     if err != nil {
-        t.Fatalf("UpdateTenant: %v", err)
+        t.Fatalf("UpdateWorkspace: %v", err)
     }
     if updated.Name != newName || updated.Slug != newSlug {
-        t.Fatalf("tenant not updated: %+v", updated)
+        t.Fatalf("workspace not updated: %+v", updated)
     }
 }
 
-func TestService_UpdateTenant_RejectsBadSlug(t *testing.T) {
+func TestService_UpdateWorkspace_RejectsBadSlug(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
 
     bad := "Not a Slug!"
-    _, err := svc.UpdateTenant(context.Background(), tenantID, identity.UpdateTenantInput{Slug: &bad})
+    _, err := svc.UpdateWorkspace(context.Background(), workspaceID, identity.UpdateWorkspaceInput{Slug: &bad})
     if err == nil {
         t.Fatal("expected validation error for bad slug")
     }
 }
 
-func TestService_UpdateTenant_SlugCollision(t *testing.T) {
+func TestService_UpdateWorkspace_SlugCollision(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewService(pool)
-    _, existingSlug := testdb.CreateTestTenant(t, pool, "Shared")
-    targetID, _ := testdb.CreateTestTenant(t, pool, "Other")
+    _, existingSlug := testdb.CreateTestWorkspace(t, pool, "Shared")
+    targetID, _ := testdb.CreateTestWorkspace(t, pool, "Other")
 
-    _, err := svc.UpdateTenant(context.Background(), targetID, identity.UpdateTenantInput{Slug: &existingSlug})
+    _, err := svc.UpdateWorkspace(context.Background(), targetID, identity.UpdateWorkspaceInput{Slug: &existingSlug})
     if err == nil {
         t.Fatal("expected slug-collision error")
     }
 }
 
-func TestService_SoftDeleteAndRestoreTenant(t *testing.T) {
+func TestService_SoftDeleteAndRestoreWorkspace(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
 
-    if err := svc.SoftDeleteTenant(context.Background(), tenantID); err != nil {
-        t.Fatalf("SoftDeleteTenant: %v", err)
+    if err := svc.SoftDeleteWorkspace(context.Background(), workspaceID); err != nil {
+        t.Fatalf("SoftDeleteWorkspace: %v", err)
     }
 
     // Reads must filter deleted_at.
-    if _, err := svc.GetTenant(context.Background(), tenantID); err == nil {
-        t.Fatal("expected GetTenant to miss soft-deleted tenant")
+    if _, err := svc.GetWorkspace(context.Background(), workspaceID); err == nil {
+        t.Fatal("expected GetWorkspace to miss soft-deleted workspace")
     }
 
-    if err := svc.RestoreTenant(context.Background(), tenantID); err != nil {
-        t.Fatalf("RestoreTenant: %v", err)
+    if err := svc.RestoreWorkspace(context.Background(), workspaceID); err != nil {
+        t.Fatalf("RestoreWorkspace: %v", err)
     }
-    got, err := svc.GetTenant(context.Background(), tenantID)
+    got, err := svc.GetWorkspace(context.Background(), workspaceID)
     if err != nil {
-        t.Fatalf("GetTenant after restore: %v", err)
+        t.Fatalf("GetWorkspace after restore: %v", err)
     }
     if got.DeletedAt != nil {
         t.Fatalf("expected deleted_at cleared, got %v", got.DeletedAt)
@@ -452,44 +452,44 @@ func TestService_SoftDeleteAndRestoreTenant(t *testing.T) {
 }
 ```
 
-Run `go test ./internal/identity/...` — all four fail (no `UpdateTenant`, `SoftDeleteTenant`, `RestoreTenant`, `GetTenant` yet).
+Run `go test ./internal/identity/...` — all four fail (no `UpdateWorkspace`, `SoftDeleteWorkspace`, `RestoreWorkspace`, `GetWorkspace` yet).
 
 - [ ] **Step 3: Implement the four methods (green)**
 
 Add to `backend/internal/identity/service.go`:
 
 ```go
-// Tenant is the read model. Extend it here: add DeletedAt and Slug.
-// (Plan 1 already added Slug to Tenant; add DeletedAt now.)
-// type Tenant struct {
+// Workspace is the read model. Extend it here: add DeletedAt and Slug.
+// (Plan 1 already added Slug to Workspace; add DeletedAt now.)
+// type Workspace struct {
 //     ...
 //     Slug      string     `json:"slug"`
 //     DeletedAt *time.Time `json:"deletedAt,omitempty"`
 // }
 
-// GetTenant returns a tenant by id, skipping soft-deleted rows.
-func (s *Service) GetTenant(ctx context.Context, tenantID uuid.UUID) (*Tenant, error) {
-    var t Tenant
+// GetWorkspace returns a workspace by id, skipping soft-deleted rows.
+func (s *Service) GetWorkspace(ctx context.Context, workspaceID uuid.UUID) (*Workspace, error) {
+    var t Workspace
     err := s.pool.QueryRow(ctx, `
         select id, name, slug, base_currency, cycle_anchor_day, locale, timezone,
                created_at, deleted_at
-        from tenants where id = $1 and deleted_at is null
-    `, tenantID).Scan(
+        from workspaces where id = $1 and deleted_at is null
+    `, workspaceID).Scan(
         &t.ID, &t.Name, &t.Slug, &t.BaseCurrency, &t.CycleAnchorDay,
         &t.Locale, &t.Timezone, &t.CreatedAt, &t.DeletedAt,
     )
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
-            return nil, httpx.NewNotFoundError("tenant")
+            return nil, httpx.NewNotFoundError("workspace")
         }
         return nil, err
     }
     return &t, nil
 }
 
-// UpdateTenant applies the PATCH and returns the updated tenant. Soft-deleted
-// tenants are NOT updatable — callers should restore first.
-func (s *Service) UpdateTenant(ctx context.Context, tenantID uuid.UUID, raw UpdateTenantInput) (*Tenant, error) {
+// UpdateWorkspace applies the PATCH and returns the updated workspace. Soft-deleted
+// workspaces are NOT updatable — callers should restore first.
+func (s *Service) UpdateWorkspace(ctx context.Context, workspaceID uuid.UUID, raw UpdateWorkspaceInput) (*Workspace, error) {
     in, err := raw.normalize()
     if err != nil {
         return nil, err
@@ -497,7 +497,7 @@ func (s *Service) UpdateTenant(ctx context.Context, tenantID uuid.UUID, raw Upda
 
     sets := make([]string, 0, 6)
     args := make([]any, 0, 8)
-    args = append(args, tenantID) // $1 in WHERE
+    args = append(args, workspaceID) // $1 in WHERE
 
     next := func(val any) string {
         args = append(args, val)
@@ -524,52 +524,52 @@ func (s *Service) UpdateTenant(ctx context.Context, tenantID uuid.UUID, raw Upda
     }
 
     if len(sets) == 0 {
-        return s.GetTenant(ctx, tenantID)
+        return s.GetWorkspace(ctx, workspaceID)
     }
 
     q := fmt.Sprintf(
-        `update tenants set %s where id = $1 and deleted_at is null returning id`,
+        `update workspaces set %s where id = $1 and deleted_at is null returning id`,
         strings.Join(sets, ", "),
     )
     var gotID uuid.UUID
     err = s.pool.QueryRow(ctx, q, args...).Scan(&gotID)
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
-            return nil, httpx.NewNotFoundError("tenant")
+            return nil, httpx.NewNotFoundError("workspace")
         }
         // Slug collision: unique index violation.
-        if isUniqueViolation(err, "tenants_slug_key") {
+        if isUniqueViolation(err, "workspaces_slug_key") {
             return nil, httpx.NewValidationError("slug is already in use")
         }
-        return nil, fmt.Errorf("update tenant: %w", err)
+        return nil, fmt.Errorf("update workspace: %w", err)
     }
-    return s.GetTenant(ctx, tenantID)
+    return s.GetWorkspace(ctx, workspaceID)
 }
 
-// SoftDeleteTenant sets deleted_at = now(). A tenant cannot be soft-deleted
+// SoftDeleteWorkspace sets deleted_at = now(). A workspace cannot be soft-deleted
 // if it is already deleted (idempotent — returns the existing timestamp).
-func (s *Service) SoftDeleteTenant(ctx context.Context, tenantID uuid.UUID) error {
+func (s *Service) SoftDeleteWorkspace(ctx context.Context, workspaceID uuid.UUID) error {
     ct, err := s.pool.Exec(ctx,
-        `update tenants set deleted_at = coalesce(deleted_at, now()) where id = $1`, tenantID)
+        `update workspaces set deleted_at = coalesce(deleted_at, now()) where id = $1`, workspaceID)
     if err != nil {
-        return fmt.Errorf("soft-delete tenant: %w", err)
+        return fmt.Errorf("soft-delete workspace: %w", err)
     }
     if ct.RowsAffected() == 0 {
-        return httpx.NewNotFoundError("tenant")
+        return httpx.NewNotFoundError("workspace")
     }
     return nil
 }
 
-// RestoreTenant clears deleted_at. Idempotent — restoring a non-deleted
-// tenant is a no-op (not an error).
-func (s *Service) RestoreTenant(ctx context.Context, tenantID uuid.UUID) error {
+// RestoreWorkspace clears deleted_at. Idempotent — restoring a non-deleted
+// workspace is a no-op (not an error).
+func (s *Service) RestoreWorkspace(ctx context.Context, workspaceID uuid.UUID) error {
     ct, err := s.pool.Exec(ctx,
-        `update tenants set deleted_at = null where id = $1`, tenantID)
+        `update workspaces set deleted_at = null where id = $1`, workspaceID)
     if err != nil {
-        return fmt.Errorf("restore tenant: %w", err)
+        return fmt.Errorf("restore workspace: %w", err)
     }
     if ct.RowsAffected() == 0 {
-        return httpx.NewNotFoundError("tenant")
+        return httpx.NewNotFoundError("workspace")
     }
     return nil
 }
@@ -607,12 +607,12 @@ Expected: all four tests pass.
 
 ```bash
 cd /Users/xmedavid/dev/folio
-git add backend/internal/identity/service.go backend/internal/identity/tenants_test.go
+git add backend/internal/identity/service.go backend/internal/identity/workspaces_test.go
 git commit -m "$(cat <<'EOF'
-feat(tenants): add UpdateTenant / SoftDelete / Restore
+feat(workspaces): add UpdateWorkspace / SoftDelete / Restore
 
 Extends identity.Service with settings-update, soft-delete, and restore
-methods. Soft-deleted tenants are filtered from reads; restore is
+methods. Soft-deleted workspaces are filtered from reads; restore is
 idempotent. Slug uniqueness surfaces as a validation error.
 EOF
 )"
@@ -652,16 +652,16 @@ import (
     "github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
-func CreateTestTenant(t *testing.T, pool *pgxpool.Pool, name string) (uuid.UUID, string) {
+func CreateTestWorkspace(t *testing.T, pool *pgxpool.Pool, name string) (uuid.UUID, string) {
     t.Helper()
     id := uuidx.New()
     slug := identity.Slugify(name)
     _, err := pool.Exec(context.Background(), `
-        insert into tenants (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
+        insert into workspaces (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
         values ($1, $2, $3, 'CHF', 1, 'en', 'UTC')
     `, id, name, slug)
     if err != nil {
-        t.Fatalf("CreateTestTenant: %v", err)
+        t.Fatalf("CreateTestWorkspace: %v", err)
     }
     return id, slug
 }
@@ -683,11 +683,11 @@ func CreateTestUser(t *testing.T, pool *pgxpool.Pool, email string, verified boo
     return id
 }
 
-func CreateTestMembership(t *testing.T, pool *pgxpool.Pool, tenantID, userID uuid.UUID, role string) {
+func CreateTestMembership(t *testing.T, pool *pgxpool.Pool, workspaceID, userID uuid.UUID, role string) {
     t.Helper()
     _, err := pool.Exec(context.Background(), `
-        insert into tenant_memberships (tenant_id, user_id, role) values ($1, $2, $3::tenant_role)
-    `, tenantID, userID, role)
+        insert into workspace_memberships (workspace_id, user_id, role) values ($1, $2, $3::workspace_role)
+    `, workspaceID, userID, role)
     if err != nil {
         t.Fatalf("CreateTestMembership: %v", err)
     }
@@ -767,12 +767,12 @@ Expected: identity tests still green; `go build ./internal/testdb/...` succeeds.
 cd /Users/xmedavid/dev/folio
 git add backend/internal/testdb/
 git commit -m "$(cat <<'EOF'
-test: add shared testdb fixtures for tenants, users, sessions
+test: add shared testdb fixtures for workspaces, users, sessions
 
-Introduces CreateTestTenant / CreateTestUser / CreateTestMembership /
+Introduces CreateTestWorkspace / CreateTestUser / CreateTestMembership /
 CreateTestSession and the SetSessionReauth helper that simulates
 completed step-up re-auth until plan 4 lands. Reuses identity.Slugify
-(already public from plan 1 Task 5.2) for tenant fixtures.
+(already public from plan 1 Task 5.2) for workspace fixtures.
 EOF
 )"
 ```
@@ -916,9 +916,9 @@ EOF
 
 ---
 
-## Task 5: identity.Service member management — ChangeRole / RemoveMember / LeaveTenant
+## Task 5: identity.Service member management — ChangeRole / RemoveMember / LeaveWorkspace
 
-**Spec:** §4.4 member routes; §3.4 invariants #1 (last-owner guard) and #2 (can't leave last tenant); §8.3 (`member.role_changed`, `member.removed`, `member.left`).
+**Spec:** §4.4 member routes; §3.4 invariants #1 (last-owner guard) and #2 (can't leave last workspace); §8.3 (`member.role_changed`, `member.removed`, `member.left`).
 
 **Files:**
 - Modify: `backend/internal/identity/service.go`
@@ -942,11 +942,11 @@ import (
 func TestService_ChangeRole_DemotionBlockedOnLastOwner(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     userID := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    testdb.CreateTestMembership(t, pool, tenantID, userID, "owner")
+    testdb.CreateTestMembership(t, pool, workspaceID, userID, "owner")
 
-    err := svc.ChangeRole(context.Background(), tenantID, userID, identity.RoleMember)
+    err := svc.ChangeRole(context.Background(), workspaceID, userID, identity.RoleMember)
     if !errors.Is(err, identity.ErrLastOwner) {
         t.Fatalf("expected ErrLastOwner, got %v", err)
     }
@@ -955,13 +955,13 @@ func TestService_ChangeRole_DemotionBlockedOnLastOwner(t *testing.T) {
 func TestService_ChangeRole_AllowsDemotionWhenOtherOwnerPresent(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     a := testdb.CreateTestUser(t, pool, "alice@example.com", true)
     b := testdb.CreateTestUser(t, pool, "bob@example.com", true)
-    testdb.CreateTestMembership(t, pool, tenantID, a, "owner")
-    testdb.CreateTestMembership(t, pool, tenantID, b, "owner")
+    testdb.CreateTestMembership(t, pool, workspaceID, a, "owner")
+    testdb.CreateTestMembership(t, pool, workspaceID, b, "owner")
 
-    if err := svc.ChangeRole(context.Background(), tenantID, a, identity.RoleMember); err != nil {
+    if err := svc.ChangeRole(context.Background(), workspaceID, a, identity.RoleMember); err != nil {
         t.Fatalf("ChangeRole: %v", err)
     }
 }
@@ -969,40 +969,40 @@ func TestService_ChangeRole_AllowsDemotionWhenOtherOwnerPresent(t *testing.T) {
 func TestService_RemoveMember_BlockedOnLastOwner(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     a := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    testdb.CreateTestMembership(t, pool, tenantID, a, "owner")
+    testdb.CreateTestMembership(t, pool, workspaceID, a, "owner")
 
-    err := svc.RemoveMember(context.Background(), tenantID, a)
+    err := svc.RemoveMember(context.Background(), workspaceID, a)
     if !errors.Is(err, identity.ErrLastOwner) {
         t.Fatalf("expected ErrLastOwner, got %v", err)
     }
 }
 
-func TestService_LeaveTenant_BlockedWhenOnlyMembership(t *testing.T) {
+func TestService_LeaveWorkspace_BlockedWhenOnlyMembership(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     a := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    testdb.CreateTestMembership(t, pool, tenantID, a, "member")
+    testdb.CreateTestMembership(t, pool, workspaceID, a, "member")
 
-    err := svc.LeaveTenant(context.Background(), tenantID, a)
-    if !errors.Is(err, identity.ErrLastTenant) {
-        t.Fatalf("expected ErrLastTenant, got %v", err)
+    err := svc.LeaveWorkspace(context.Background(), workspaceID, a)
+    if !errors.Is(err, identity.ErrLastWorkspace) {
+        t.Fatalf("expected ErrLastWorkspace, got %v", err)
     }
 }
 
-func TestService_LeaveTenant_Succeeds_WhenOtherTenantExists(t *testing.T) {
+func TestService_LeaveWorkspace_Succeeds_WhenOtherWorkspaceExists(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewService(pool)
-    t1, _ := testdb.CreateTestTenant(t, pool, "Personal")
-    t2, _ := testdb.CreateTestTenant(t, pool, "Household")
+    t1, _ := testdb.CreateTestWorkspace(t, pool, "Personal")
+    t2, _ := testdb.CreateTestWorkspace(t, pool, "Household")
     a := testdb.CreateTestUser(t, pool, "alice@example.com", true)
     testdb.CreateTestMembership(t, pool, t1, a, "member")
     testdb.CreateTestMembership(t, pool, t2, a, "owner")
 
-    if err := svc.LeaveTenant(context.Background(), t1, a); err != nil {
-        t.Fatalf("LeaveTenant: %v", err)
+    if err := svc.LeaveWorkspace(context.Background(), t1, a); err != nil {
+        t.Fatalf("LeaveWorkspace: %v", err)
     }
 }
 ```
@@ -1022,14 +1022,14 @@ const (
 // Plan 1 Task 5 introduces this type; Plan 2 keeps the shape unchanged
 // and adds MemberWithUser (see types.go) for the enriched members page.
 type Membership struct {
-    TenantID  uuid.UUID `json:"tenantId"`
+    WorkspaceID  uuid.UUID `json:"workspaceId"`
     UserID    uuid.UUID `json:"userId"`
     Role      Role      `json:"role"`
     CreatedAt time.Time `json:"createdAt"`
 }
 
 // MemberWithUser is a Membership enriched with the user's display fields.
-// Returned by Service.ListMembers so the tenant members page in Plan 2
+// Returned by Service.ListMembers so the workspace members page in Plan 2
 // renders email + name in one round-trip. Lives in
 // `backend/internal/identity/types.go`.
 type MemberWithUser struct {
@@ -1040,14 +1040,14 @@ type MemberWithUser struct {
 
 // Sentinel errors surfaced by the member-management methods.
 var (
-    ErrLastOwner     = errors.New("identity: operation would leave tenant without an owner")
-    ErrLastTenant    = errors.New("identity: user cannot leave their last tenant")
-    ErrNotAMember    = errors.New("identity: user is not a member of the tenant")
+    ErrLastOwner     = errors.New("identity: operation would leave workspace without an owner")
+    ErrLastWorkspace    = errors.New("identity: user cannot leave their last workspace")
+    ErrNotAMember    = errors.New("identity: user is not a member of the workspace")
 )
 
-// ChangeRole updates (tenantID, userID)'s role. Blocks demotion that would
+// ChangeRole updates (workspaceID, userID)'s role. Blocks demotion that would
 // remove the last owner.
-func (s *Service) ChangeRole(ctx context.Context, tenantID, userID uuid.UUID, newRole Role) error {
+func (s *Service) ChangeRole(ctx context.Context, workspaceID, userID uuid.UUID, newRole Role) error {
     if newRole != RoleOwner && newRole != RoleMember {
         return httpx.NewValidationError("role must be 'owner' or 'member'")
     }
@@ -1061,9 +1061,9 @@ func (s *Service) ChangeRole(ctx context.Context, tenantID, userID uuid.UUID, ne
     // Lock the membership row to serialise concurrent role changes.
     var current Role
     err = tx.QueryRow(ctx, `
-        select role from tenant_memberships
-        where tenant_id = $1 and user_id = $2 for update
-    `, tenantID, userID).Scan(&current)
+        select role from workspace_memberships
+        where workspace_id = $1 and user_id = $2 for update
+    `, workspaceID, userID).Scan(&current)
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
             return ErrNotAMember
@@ -1078,9 +1078,9 @@ func (s *Service) ChangeRole(ctx context.Context, tenantID, userID uuid.UUID, ne
     if current == RoleOwner && newRole == RoleMember {
         var ownerCount int
         if err := tx.QueryRow(ctx, `
-            select count(*) from tenant_memberships
-            where tenant_id = $1 and role = 'owner'
-        `, tenantID).Scan(&ownerCount); err != nil {
+            select count(*) from workspace_memberships
+            where workspace_id = $1 and role = 'owner'
+        `, workspaceID).Scan(&ownerCount); err != nil {
             return fmt.Errorf("count owners: %w", err)
         }
         if ownerCount <= 1 {
@@ -1089,17 +1089,17 @@ func (s *Service) ChangeRole(ctx context.Context, tenantID, userID uuid.UUID, ne
     }
 
     if _, err := tx.Exec(ctx, `
-        update tenant_memberships set role = $3, updated_at = now()
-        where tenant_id = $1 and user_id = $2
-    `, tenantID, userID, newRole); err != nil {
+        update workspace_memberships set role = $3, updated_at = now()
+        where workspace_id = $1 and user_id = $2
+    `, workspaceID, userID, newRole); err != nil {
         return fmt.Errorf("update role: %w", err)
     }
     return tx.Commit(ctx)
 }
 
-// RemoveMember deletes the (tenantID, userID) membership. Blocks removing
+// RemoveMember deletes the (workspaceID, userID) membership. Blocks removing
 // the last owner. Does NOT revoke the user's sessions (§6.3).
-func (s *Service) RemoveMember(ctx context.Context, tenantID, userID uuid.UUID) error {
+func (s *Service) RemoveMember(ctx context.Context, workspaceID, userID uuid.UUID) error {
     tx, err := s.pool.Begin(ctx)
     if err != nil {
         return fmt.Errorf("begin: %w", err)
@@ -1108,9 +1108,9 @@ func (s *Service) RemoveMember(ctx context.Context, tenantID, userID uuid.UUID) 
 
     var role Role
     err = tx.QueryRow(ctx, `
-        select role from tenant_memberships
-        where tenant_id = $1 and user_id = $2 for update
-    `, tenantID, userID).Scan(&role)
+        select role from workspace_memberships
+        where workspace_id = $1 and user_id = $2 for update
+    `, workspaceID, userID).Scan(&role)
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
             return ErrNotAMember
@@ -1121,9 +1121,9 @@ func (s *Service) RemoveMember(ctx context.Context, tenantID, userID uuid.UUID) 
     if role == RoleOwner {
         var ownerCount int
         if err := tx.QueryRow(ctx, `
-            select count(*) from tenant_memberships
-            where tenant_id = $1 and role = 'owner'
-        `, tenantID).Scan(&ownerCount); err != nil {
+            select count(*) from workspace_memberships
+            where workspace_id = $1 and role = 'owner'
+        `, workspaceID).Scan(&ownerCount); err != nil {
             return err
         }
         if ownerCount <= 1 {
@@ -1132,17 +1132,17 @@ func (s *Service) RemoveMember(ctx context.Context, tenantID, userID uuid.UUID) 
     }
 
     if _, err := tx.Exec(ctx, `
-        delete from tenant_memberships where tenant_id = $1 and user_id = $2
-    `, tenantID, userID); err != nil {
+        delete from workspace_memberships where workspace_id = $1 and user_id = $2
+    `, workspaceID, userID); err != nil {
         return err
     }
     return tx.Commit(ctx)
 }
 
-// LeaveTenant is the self-serve variant of RemoveMember. Blocks if it would
-// leave the tenant without an owner OR if it would leave the user with zero
+// LeaveWorkspace is the self-serve variant of RemoveMember. Blocks if it would
+// leave the workspace without an owner OR if it would leave the user with zero
 // memberships.
-func (s *Service) LeaveTenant(ctx context.Context, tenantID, userID uuid.UUID) error {
+func (s *Service) LeaveWorkspace(ctx context.Context, workspaceID, userID uuid.UUID) error {
     tx, err := s.pool.Begin(ctx)
     if err != nil {
         return err
@@ -1151,9 +1151,9 @@ func (s *Service) LeaveTenant(ctx context.Context, tenantID, userID uuid.UUID) e
 
     var role Role
     err = tx.QueryRow(ctx, `
-        select role from tenant_memberships
-        where tenant_id = $1 and user_id = $2 for update
-    `, tenantID, userID).Scan(&role)
+        select role from workspace_memberships
+        where workspace_id = $1 and user_id = $2 for update
+    `, workspaceID, userID).Scan(&role)
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
             return ErrNotAMember
@@ -1161,24 +1161,24 @@ func (s *Service) LeaveTenant(ctx context.Context, tenantID, userID uuid.UUID) e
         return err
     }
 
-    // Last-tenant guard.
+    // Last-workspace guard.
     var membershipCount int
     if err := tx.QueryRow(ctx, `
-        select count(*) from tenant_memberships where user_id = $1
+        select count(*) from workspace_memberships where user_id = $1
     `, userID).Scan(&membershipCount); err != nil {
         return err
     }
     if membershipCount <= 1 {
-        return ErrLastTenant
+        return ErrLastWorkspace
     }
 
     // Last-owner guard.
     if role == RoleOwner {
         var ownerCount int
         if err := tx.QueryRow(ctx, `
-            select count(*) from tenant_memberships
-            where tenant_id = $1 and role = 'owner'
-        `, tenantID).Scan(&ownerCount); err != nil {
+            select count(*) from workspace_memberships
+            where workspace_id = $1 and role = 'owner'
+        `, workspaceID).Scan(&ownerCount); err != nil {
             return err
         }
         if ownerCount <= 1 {
@@ -1187,8 +1187,8 @@ func (s *Service) LeaveTenant(ctx context.Context, tenantID, userID uuid.UUID) e
     }
 
     if _, err := tx.Exec(ctx, `
-        delete from tenant_memberships where tenant_id = $1 and user_id = $2
-    `, tenantID, userID); err != nil {
+        delete from workspace_memberships where workspace_id = $1 and user_id = $2
+    `, workspaceID, userID); err != nil {
         return err
     }
     return tx.Commit(ctx)
@@ -1199,7 +1199,7 @@ func (s *Service) LeaveTenant(ctx context.Context, tenantID, userID uuid.UUID) e
 
 ```bash
 cd /Users/xmedavid/dev/folio/backend
-go test ./internal/identity/... -run 'TestService_ChangeRole|TestService_RemoveMember|TestService_LeaveTenant'
+go test ./internal/identity/... -run 'TestService_ChangeRole|TestService_RemoveMember|TestService_LeaveWorkspace'
 go vet ./...
 go build ./...
 ```
@@ -1214,10 +1214,10 @@ git add backend/internal/identity/service.go \
         backend/internal/identity/types.go \
         backend/internal/identity/members_test.go
 git commit -m "$(cat <<'EOF'
-feat(tenants): add ChangeRole / RemoveMember / LeaveTenant
+feat(workspaces): add ChangeRole / RemoveMember / LeaveWorkspace
 
 Service-layer methods with row-level locking and the last-owner +
-last-tenant guards from spec §3.4. Sentinel errors surface the guard
+last-workspace guards from spec §3.4. Sentinel errors surface the guard
 name so handlers can map 422 with stable codes. Also declares
 MemberWithUser in types.go (consumed by Task 6's ListMembers rewrite).
 EOF
@@ -1233,7 +1233,7 @@ EOF
 **Files:**
 - Create: `backend/internal/identity/types.go` — add `MemberWithUser`
 - Modify: `backend/internal/identity/service.go` — widen `ListMembers` return shape and JOIN users
-- Modify: `backend/internal/identity/tenants_test.go` — add a test
+- Modify: `backend/internal/identity/workspaces_test.go` — add a test
 
 - [ ] **Step 1: Update the read model**
 
@@ -1263,26 +1263,26 @@ Plan 1 shipped `ListMembers` returning `[]Membership` (no user fields). Plan 2 w
 
 ```go
 // ListMembers returns memberships (enriched with user display fields)
-// plus currently-pending invites for tenantID. "Pending" means
+// plus currently-pending invites for workspaceID. "Pending" means
 // accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now().
-func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) (*MembersResponse, error) {
+func (s *Service) ListMembers(ctx context.Context, workspaceID uuid.UUID) (*MembersResponse, error) {
     out := &MembersResponse{Members: []MemberWithUser{}, PendingInvites: []PendingInvite{}}
 
     rows, err := s.pool.Query(ctx, `
-        select m.tenant_id, m.user_id, m.role::text, m.created_at,
+        select m.workspace_id, m.user_id, m.role::text, m.created_at,
                u.email, u.display_name
-        from tenant_memberships m
+        from workspace_memberships m
         join users u on u.id = m.user_id
-        where m.tenant_id = $1
+        where m.workspace_id = $1
         order by m.created_at
-    `, tenantID)
+    `, workspaceID)
     if err != nil {
         return nil, fmt.Errorf("list memberships: %w", err)
     }
     for rows.Next() {
         var m MemberWithUser
         var role string
-        if err := rows.Scan(&m.TenantID, &m.UserID, &role, &m.CreatedAt, &m.Email, &m.DisplayName); err != nil {
+        if err := rows.Scan(&m.WorkspaceID, &m.UserID, &role, &m.CreatedAt, &m.Email, &m.DisplayName); err != nil {
             rows.Close()
             return nil, err
         }
@@ -1296,13 +1296,13 @@ func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) (*Members
 
     iRows, err := s.pool.Query(ctx, `
         select id, email, role::text, invited_by_user_id, created_at, expires_at
-        from tenant_invites
-        where tenant_id = $1
+        from workspace_invites
+        where workspace_id = $1
           and accepted_at is null
           and revoked_at is null
           and expires_at > now()
         order by created_at desc
-    `, tenantID)
+    `, workspaceID)
     if err != nil {
         return nil, fmt.Errorf("list invites: %w", err)
     }
@@ -1326,21 +1326,21 @@ func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) (*Members
 func TestService_ListMembers_IncludesPendingInvite(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     owner := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    testdb.CreateTestMembership(t, pool, tenantID, owner, "owner")
+    testdb.CreateTestMembership(t, pool, workspaceID, owner, "owner")
 
     // Seed a pending invite directly (InviteService is task 7).
     _, err := pool.Exec(context.Background(), `
-        insert into tenant_invites (id, tenant_id, email, role, token_hash,
+        insert into workspace_invites (id, workspace_id, email, role, token_hash,
                                     invited_by_user_id, expires_at)
         values ($1, $2, 'bob@example.com', 'member', $3, $4, now() + interval '7 days')
-    `, uuidx.New(), tenantID, testdb.HashInviteToken("raw"), owner)
+    `, uuidx.New(), workspaceID, testdb.HashInviteToken("raw"), owner)
     if err != nil {
         t.Fatalf("seed invite: %v", err)
     }
 
-    res, err := svc.ListMembers(context.Background(), tenantID)
+    res, err := svc.ListMembers(context.Background(), workspaceID)
     if err != nil {
         t.Fatalf("ListMembers: %v", err)
     }
@@ -1365,9 +1365,9 @@ go vet ./...
 cd /Users/xmedavid/dev/folio
 git add backend/internal/identity/types.go \
         backend/internal/identity/service.go \
-        backend/internal/identity/tenants_test.go
+        backend/internal/identity/workspaces_test.go
 git commit -m "$(cat <<'EOF'
-feat(tenants): extend ListMembers with user fields + pending invites
+feat(workspaces): extend ListMembers with user fields + pending invites
 
 Adds MemberWithUser (Membership + Email + DisplayName) and rewires
 ListMembers to JOIN users, returning MembersResponse with enriched
@@ -1406,10 +1406,10 @@ import (
 func TestInviteService_Create_ReturnsPlaintextTokenOnce(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewInviteService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     inviter := testdb.CreateTestUser(t, pool, "alice@example.com", true)
 
-    inv, plaintext, err := svc.Create(context.Background(), tenantID, inviter, "bob@example.com", identity.RoleMember)
+    inv, plaintext, err := svc.Create(context.Background(), workspaceID, inviter, "bob@example.com", identity.RoleMember)
     if err != nil {
         t.Fatalf("Create: %v", err)
     }
@@ -1422,7 +1422,7 @@ func TestInviteService_Create_ReturnsPlaintextTokenOnce(t *testing.T) {
     // Plaintext must NOT match what's in the DB.
     var dbHash []byte
     if err := pool.QueryRow(context.Background(),
-        `select token_hash from tenant_invites where id = $1`, inv.ID).Scan(&dbHash); err != nil {
+        `select token_hash from workspace_invites where id = $1`, inv.ID).Scan(&dbHash); err != nil {
         t.Fatalf("read hash: %v", err)
     }
     if string(dbHash) == plaintext {
@@ -1433,9 +1433,9 @@ func TestInviteService_Create_ReturnsPlaintextTokenOnce(t *testing.T) {
 func TestInviteService_Preview_NoAuth_ReturnsSanitizedShape(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewInviteService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     inviter := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    _, plaintext, err := svc.Create(context.Background(), tenantID, inviter, "bob@example.com", identity.RoleMember)
+    _, plaintext, err := svc.Create(context.Background(), workspaceID, inviter, "bob@example.com", identity.RoleMember)
     if err != nil {
         t.Fatal(err)
     }
@@ -1444,7 +1444,7 @@ func TestInviteService_Preview_NoAuth_ReturnsSanitizedShape(t *testing.T) {
     if err != nil {
         t.Fatalf("Preview: %v", err)
     }
-    if prev.TenantName != "Alice" || prev.InviterDisplayName != "alice@example.com" {
+    if prev.WorkspaceName != "Alice" || prev.InviterDisplayName != "alice@example.com" {
         t.Fatalf("preview: %+v", prev)
     }
     if prev.Email != "bob@example.com" {
@@ -1455,15 +1455,15 @@ func TestInviteService_Preview_NoAuth_ReturnsSanitizedShape(t *testing.T) {
 func TestInviteService_Preview_ExpiredReturnsError(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewInviteService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     inviter := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    _, plaintext, err := svc.Create(context.Background(), tenantID, inviter, "bob@example.com", identity.RoleMember)
+    _, plaintext, err := svc.Create(context.Background(), workspaceID, inviter, "bob@example.com", identity.RoleMember)
     if err != nil {
         t.Fatal(err)
     }
     // Force-expire.
     if _, err := pool.Exec(context.Background(),
-        `update tenant_invites set expires_at = now() - interval '1 hour' where tenant_id = $1`, tenantID); err != nil {
+        `update workspace_invites set expires_at = now() - interval '1 hour' where workspace_id = $1`, workspaceID); err != nil {
         t.Fatal(err)
     }
 
@@ -1475,9 +1475,9 @@ func TestInviteService_Preview_ExpiredReturnsError(t *testing.T) {
 func TestInviteService_Accept_MatchesEmailAndCreatesMembership(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewInviteService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     inviter := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    _, plaintext, err := svc.Create(context.Background(), tenantID, inviter, "bob@example.com", identity.RoleMember)
+    _, plaintext, err := svc.Create(context.Background(), workspaceID, inviter, "bob@example.com", identity.RoleMember)
     if err != nil {
         t.Fatal(err)
     }
@@ -1494,7 +1494,7 @@ func TestInviteService_Accept_MatchesEmailAndCreatesMembership(t *testing.T) {
     // Invite now accepted_at is not null.
     var acceptedAt *time.Time
     _ = pool.QueryRow(context.Background(),
-        `select accepted_at from tenant_invites where tenant_id = $1`, tenantID).Scan(&acceptedAt)
+        `select accepted_at from workspace_invites where workspace_id = $1`, workspaceID).Scan(&acceptedAt)
     if acceptedAt == nil {
         t.Fatal("expected accepted_at set")
     }
@@ -1503,9 +1503,9 @@ func TestInviteService_Accept_MatchesEmailAndCreatesMembership(t *testing.T) {
 func TestInviteService_Accept_MismatchedEmailRejected(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewInviteService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     inviter := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    _, plaintext, err := svc.Create(context.Background(), tenantID, inviter, "bob@example.com", identity.RoleMember)
+    _, plaintext, err := svc.Create(context.Background(), workspaceID, inviter, "bob@example.com", identity.RoleMember)
     if err != nil {
         t.Fatal(err)
     }
@@ -1520,9 +1520,9 @@ func TestInviteService_Accept_MismatchedEmailRejected(t *testing.T) {
 func TestInviteService_Accept_UnverifiedEmailRejected(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewInviteService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     inviter := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    _, plaintext, err := svc.Create(context.Background(), tenantID, inviter, "bob@example.com", identity.RoleMember)
+    _, plaintext, err := svc.Create(context.Background(), workspaceID, inviter, "bob@example.com", identity.RoleMember)
     if err != nil {
         t.Fatal(err)
     }
@@ -1537,9 +1537,9 @@ func TestInviteService_Accept_UnverifiedEmailRejected(t *testing.T) {
 func TestInviteService_Revoke_BlockedForUnrelatedRequester(t *testing.T) {
     pool := testdb.Pool(t)
     svc := identity.NewInviteService(pool)
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     inviter := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    inv, _, err := svc.Create(context.Background(), tenantID, inviter, "bob@example.com", identity.RoleMember)
+    inv, _, err := svc.Create(context.Background(), workspaceID, inviter, "bob@example.com", identity.RoleMember)
     if err != nil {
         t.Fatal(err)
     }
@@ -1575,7 +1575,7 @@ import (
     "github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
-// InviteLifetime is the validity window for a tenant invite token.
+// InviteLifetime is the validity window for a workspace invite token.
 const InviteLifetime = 7 * 24 * time.Hour
 
 // Sentinel errors for the invite flow.
@@ -1593,7 +1593,7 @@ var (
 // Invite is the read-model row.
 type Invite struct {
     ID        uuid.UUID `json:"id"`
-    TenantID  uuid.UUID `json:"tenantId"`
+    WorkspaceID  uuid.UUID `json:"workspaceId"`
     Email     string    `json:"email"`
     Role      Role      `json:"role"`
     InvitedBy uuid.UUID `json:"invitedByUserId"`
@@ -1603,16 +1603,16 @@ type Invite struct {
 
 // InvitePreview is the payload returned by the no-auth preview endpoint.
 type InvitePreview struct {
-    TenantID           uuid.UUID `json:"tenantId"`
-    TenantName         string    `json:"tenantName"`
-    TenantSlug         string    `json:"tenantSlug"`
+    WorkspaceID           uuid.UUID `json:"workspaceId"`
+    WorkspaceName         string    `json:"workspaceName"`
+    WorkspaceSlug         string    `json:"workspaceSlug"`
     InviterDisplayName string    `json:"inviterDisplayName"`
     Email              string    `json:"email"`
     Role               Role      `json:"role"`
     ExpiresAt          time.Time `json:"expiresAt"`
 }
 
-// InviteService owns writes to tenant_invites.
+// InviteService owns writes to workspace_invites.
 type InviteService struct {
     pool *pgxpool.Pool
     now  func() time.Time
@@ -1635,12 +1635,12 @@ func generateInviteToken() (string, error) {
     return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// Create issues a new invite. inviterRole (fetched from tenant_memberships)
+// Create issues a new invite. inviterRole (fetched from workspace_memberships)
 // gates "members can only invite members"; callers pass role after checking.
 // Returns the row and the plaintext token (shown only once — the caller
 // emails it to the invitee via mailer.Mailer).
 func (s *InviteService) Create(
-    ctx context.Context, tenantID, inviterID uuid.UUID, email string, role Role,
+    ctx context.Context, workspaceID, inviterID uuid.UUID, email string, role Role,
 ) (*Invite, string, error) {
     email = strings.ToLower(strings.TrimSpace(email))
     if email == "" || !strings.Contains(email, "@") {
@@ -1650,16 +1650,16 @@ func (s *InviteService) Create(
         return nil, "", httpx.NewValidationError("role must be 'owner' or 'member'")
     }
 
-    // Block duplicate pending invites to the same email in the same tenant.
+    // Block duplicate pending invites to the same email in the same workspace.
     var pendingExists bool
     if err := s.pool.QueryRow(ctx, `
         select exists(
-            select 1 from tenant_invites
-            where tenant_id = $1 and email = $2
+            select 1 from workspace_invites
+            where workspace_id = $1 and email = $2
               and accepted_at is null and revoked_at is null
               and expires_at > now()
         )
-    `, tenantID, email).Scan(&pendingExists); err != nil {
+    `, workspaceID, email).Scan(&pendingExists); err != nil {
         return nil, "", fmt.Errorf("check pending: %w", err)
     }
     if pendingExists {
@@ -1675,13 +1675,13 @@ func (s *InviteService) Create(
 
     var inv Invite
     err = s.pool.QueryRow(ctx, `
-        insert into tenant_invites (id, tenant_id, email, role, token_hash,
+        insert into workspace_invites (id, workspace_id, email, role, token_hash,
                                     invited_by_user_id, expires_at)
-        values ($1, $2, $3, $4::tenant_role, $5, $6, $7)
-        returning id, tenant_id, email, role::text, invited_by_user_id,
+        values ($1, $2, $3, $4::workspace_role, $5, $6, $7)
+        returning id, workspace_id, email, role::text, invited_by_user_id,
                   created_at, expires_at
-    `, id, tenantID, email, role, hashToken(plaintext), inviterID, expiresAt).Scan(
-        &inv.ID, &inv.TenantID, &inv.Email, new(string), &inv.InvitedBy,
+    `, id, workspaceID, email, role, hashToken(plaintext), inviterID, expiresAt).Scan(
+        &inv.ID, &inv.WorkspaceID, &inv.Email, new(string), &inv.InvitedBy,
         &inv.CreatedAt, &inv.ExpiresAt,
     )
     if err != nil {
@@ -1691,20 +1691,20 @@ func (s *InviteService) Create(
     return &inv, plaintext, nil
 }
 
-// Preview is a no-auth endpoint. Returns tenant name, inviter display name,
+// Preview is a no-auth endpoint. Returns workspace name, inviter display name,
 // role, and expiry; omits token/hash and any sensitive fields.
 func (s *InviteService) Preview(ctx context.Context, plaintext string) (*InvitePreview, error) {
     var p InvitePreview
     var revokedAt, acceptedAt *time.Time
     err := s.pool.QueryRow(ctx, `
-        select i.tenant_id, t.name, t.slug, u.display_name,
+        select i.workspace_id, t.name, t.slug, u.display_name,
                i.email, i.role::text, i.expires_at, i.revoked_at, i.accepted_at
-        from tenant_invites i
-        join tenants t on t.id = i.tenant_id
+        from workspace_invites i
+        join workspaces t on t.id = i.workspace_id
         join users   u on u.id = i.invited_by_user_id
         where i.token_hash = $1 and t.deleted_at is null
     `, hashToken(plaintext)).Scan(
-        &p.TenantID, &p.TenantName, &p.TenantSlug, &p.InviterDisplayName,
+        &p.WorkspaceID, &p.WorkspaceName, &p.WorkspaceSlug, &p.InviterDisplayName,
         &p.Email, new(string), &p.ExpiresAt, &revokedAt, &acceptedAt,
     )
     if err != nil {
@@ -1725,7 +1725,7 @@ func (s *InviteService) Preview(ctx context.Context, plaintext string) (*InviteP
     // Fill role using a second, cheaper read rather than double-scan.
     var role string
     _ = s.pool.QueryRow(ctx,
-        `select role::text from tenant_invites where token_hash = $1`,
+        `select role::text from workspace_invites where token_hash = $1`,
         hashToken(plaintext)).Scan(&role)
     p.Role = Role(role)
     return &p, nil
@@ -1743,7 +1743,7 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
 
     var (
         inviteID   uuid.UUID
-        tenantID   uuid.UUID
+        workspaceID   uuid.UUID
         inviteEmail string
         role       string
         expiresAt  time.Time
@@ -1751,11 +1751,11 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
         acceptedAt *time.Time
     )
     err = tx.QueryRow(ctx, `
-        select id, tenant_id, email, role::text, expires_at, revoked_at, accepted_at
-        from tenant_invites
+        select id, workspace_id, email, role::text, expires_at, revoked_at, accepted_at
+        from workspace_invites
         where token_hash = $1
         for update
-    `, hashToken(plaintext)).Scan(&inviteID, &tenantID, &inviteEmail, &role,
+    `, hashToken(plaintext)).Scan(&inviteID, &workspaceID, &inviteEmail, &role,
         &expiresAt, &revokedAt, &acceptedAt)
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
@@ -1788,20 +1788,20 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
         return nil, ErrEmailUnverified
     }
 
-    // Insert membership (unique on (tenant_id, user_id); if they're already
+    // Insert membership (unique on (workspace_id, user_id); if they're already
     // a member, treat this as an upsert and just consume the invite).
     _, err = tx.Exec(ctx, `
-        insert into tenant_memberships (tenant_id, user_id, role)
-        values ($1, $2, $3::tenant_role)
-        on conflict (tenant_id, user_id) do nothing
-    `, tenantID, userID, role)
+        insert into workspace_memberships (workspace_id, user_id, role)
+        values ($1, $2, $3::workspace_role)
+        on conflict (workspace_id, user_id) do nothing
+    `, workspaceID, userID, role)
     if err != nil {
         return nil, fmt.Errorf("insert membership: %w", err)
     }
 
     // Mark invite consumed.
     if _, err := tx.Exec(ctx,
-        `update tenant_invites set accepted_at = now() where id = $1`, inviteID); err != nil {
+        `update workspace_invites set accepted_at = now() where id = $1`, inviteID); err != nil {
         return nil, err
     }
 
@@ -1810,13 +1810,13 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
     }
 
     return &Membership{
-        TenantID: tenantID, UserID: userID,
+        WorkspaceID: workspaceID, UserID: userID,
         Role: Role(role), CreatedAt: s.now(),
     }, nil
 }
 
 // Revoke marks an invite revoked. Allowed for the original inviter or any
-// owner of the tenant — the handler enforces the latter via RequireRole.
+// owner of the workspace — the handler enforces the latter via RequireRole.
 // This method checks the former and returns ErrNotAuthorized if neither.
 func (s *InviteService) Revoke(ctx context.Context, inviteID, requesterUserID uuid.UUID) error {
     tx, err := s.pool.Begin(ctx)
@@ -1825,12 +1825,12 @@ func (s *InviteService) Revoke(ctx context.Context, inviteID, requesterUserID uu
     }
     defer func() { _ = tx.Rollback(ctx) }()
 
-    var tenantID, invitedBy uuid.UUID
+    var workspaceID, invitedBy uuid.UUID
     var revokedAt, acceptedAt *time.Time
     err = tx.QueryRow(ctx, `
-        select tenant_id, invited_by_user_id, revoked_at, accepted_at
-        from tenant_invites where id = $1 for update
-    `, inviteID).Scan(&tenantID, &invitedBy, &revokedAt, &acceptedAt)
+        select workspace_id, invited_by_user_id, revoked_at, accepted_at
+        from workspace_invites where id = $1 for update
+    `, inviteID).Scan(&workspaceID, &invitedBy, &revokedAt, &acceptedAt)
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
             return ErrInviteNotFound
@@ -1841,15 +1841,15 @@ func (s *InviteService) Revoke(ctx context.Context, inviteID, requesterUserID uu
         return nil // idempotent
     }
 
-    // Authorisation: requester is the inviter OR an owner of the tenant.
+    // Authorisation: requester is the inviter OR an owner of the workspace.
     if invitedBy != requesterUserID {
         var isOwner bool
         if err := tx.QueryRow(ctx, `
             select exists(
-                select 1 from tenant_memberships
-                where tenant_id = $1 and user_id = $2 and role = 'owner'
+                select 1 from workspace_memberships
+                where workspace_id = $1 and user_id = $2 and role = 'owner'
             )
-        `, tenantID, requesterUserID).Scan(&isOwner); err != nil {
+        `, workspaceID, requesterUserID).Scan(&isOwner); err != nil {
             return err
         }
         if !isOwner {
@@ -1858,7 +1858,7 @@ func (s *InviteService) Revoke(ctx context.Context, inviteID, requesterUserID uu
     }
 
     if _, err := tx.Exec(ctx,
-        `update tenant_invites set revoked_at = now() where id = $1`, inviteID); err != nil {
+        `update workspace_invites set revoked_at = now() where id = $1`, inviteID); err != nil {
         return err
     }
     return tx.Commit(ctx)
@@ -1896,7 +1896,7 @@ EOF
 
 ## Task 8: Extend auth.Service.Signup to consume an optional invite token
 
-**Spec:** §4.2 (signup accepts `inviteToken`; when present and email matches, also creates membership in invited tenant in addition to the Personal tenant).
+**Spec:** §4.2 (signup accepts `inviteToken`; when present and email matches, also creates membership in invited workspace in addition to the Personal workspace).
 
 **Files:**
 - Modify: `backend/internal/auth/service.go` (from plan 1) — add optional `InviteToken` field to `SignupInput`
@@ -1911,7 +1911,7 @@ type SignupInput struct {
     Email        string
     DisplayName  string
     Password     string
-    TenantName   string        // default "Personal" if blank
+    WorkspaceName   string        // default "Personal" if blank
     InviteToken  string        // optional; empty means no invite
 }
 ```
@@ -1919,16 +1919,16 @@ type SignupInput struct {
 - [ ] **Step 2: Test first (red)**
 
 ```go
-func TestAuth_Signup_WithInviteToken_JoinsInvitedTenant(t *testing.T) {
+func TestAuth_Signup_WithInviteToken_JoinsInvitedWorkspace(t *testing.T) {
     pool := testdb.Pool(t)
     authSvc := auth.NewService(pool, testLogger(t))
     inviteSvc := identity.NewInviteService(pool)
 
-    // Alice has a tenant; she invites bob.
-    aliceTenant, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    // Alice has a workspace; she invites bob.
+    aliceWorkspace, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     alice := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    testdb.CreateTestMembership(t, pool, aliceTenant, alice, "owner")
-    _, plaintext, err := inviteSvc.Create(context.Background(), aliceTenant, alice, "bob@example.com", identity.RoleMember)
+    testdb.CreateTestMembership(t, pool, aliceWorkspace, alice, "owner")
+    _, plaintext, err := inviteSvc.Create(context.Background(), aliceWorkspace, alice, "bob@example.com", identity.RoleMember)
     if err != nil {
         t.Fatal(err)
     }
@@ -1943,10 +1943,10 @@ func TestAuth_Signup_WithInviteToken_JoinsInvitedTenant(t *testing.T) {
     if err != nil {
         t.Fatalf("Signup: %v", err)
     }
-    // Bob has TWO memberships: his Personal tenant + Alice's tenant.
+    // Bob has TWO memberships: his Personal workspace + Alice's workspace.
     var count int
     _ = pool.QueryRow(context.Background(),
-        `select count(*) from tenant_memberships where user_id = $1`, res.User.ID).Scan(&count)
+        `select count(*) from workspace_memberships where user_id = $1`, res.User.ID).Scan(&count)
     if count != 2 {
         t.Fatalf("want 2 memberships, got %d", count)
     }
@@ -1954,21 +1954,21 @@ func TestAuth_Signup_WithInviteToken_JoinsInvitedTenant(t *testing.T) {
     // Invite is consumed.
     var acceptedAt *time.Time
     _ = pool.QueryRow(context.Background(),
-        `select accepted_at from tenant_invites where tenant_id = $1`, aliceTenant).Scan(&acceptedAt)
+        `select accepted_at from workspace_invites where workspace_id = $1`, aliceWorkspace).Scan(&acceptedAt)
     if acceptedAt == nil {
         t.Fatal("invite not consumed")
     }
 }
 
-func TestAuth_Signup_WithInviteToken_EmailMismatchStillCreatesPersonalTenant(t *testing.T) {
+func TestAuth_Signup_WithInviteToken_EmailMismatchStillCreatesPersonalWorkspace(t *testing.T) {
     pool := testdb.Pool(t)
     authSvc := auth.NewService(pool, testLogger(t))
     inviteSvc := identity.NewInviteService(pool)
 
-    aliceTenant, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    aliceWorkspace, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     alice := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    testdb.CreateTestMembership(t, pool, aliceTenant, alice, "owner")
-    _, plaintext, _ := inviteSvc.Create(context.Background(), aliceTenant, alice, "bob@example.com", identity.RoleMember)
+    testdb.CreateTestMembership(t, pool, aliceWorkspace, alice, "owner")
+    _, plaintext, _ := inviteSvc.Create(context.Background(), aliceWorkspace, alice, "bob@example.com", identity.RoleMember)
 
     // Someone else tries to sign up with Bob's token.
     _, err := authSvc.Signup(context.Background(), auth.SignupInput{
@@ -1985,20 +1985,20 @@ func TestAuth_Signup_WithInviteToken_EmailMismatchStillCreatesPersonalTenant(t *
 
 - [ ] **Step 3: Implement (green)**
 
-Add to `auth.Service.Signup`, immediately after user creation and Personal-tenant creation, inside the same transaction:
+Add to `auth.Service.Signup`, immediately after user creation and Personal-workspace creation, inside the same transaction:
 
 ```go
 // Consume an invite if one was supplied. The invite MUST match the
 // authoritative user email (normalized to lowercase) and the user must
 // be email-verified — but since we just signed up, we bypass the
 // verified check here: signup IS the verification in the invite flow.
-// Spec §7: "Accepting a tenant invite" requires verification; the
+// Spec §7: "Accepting a workspace invite" requires verification; the
 // spec-deferred pragma for signup-with-invite is that the signup email
 // IS the email the invite was sent to, so verification is implicit.
 if in.InviteToken != "" {
     var (
         inviteID   uuid.UUID
-        tenantID   uuid.UUID
+        workspaceID   uuid.UUID
         inviteEmail string
         role       string
         expiresAt  time.Time
@@ -2006,9 +2006,9 @@ if in.InviteToken != "" {
         acceptedAt *time.Time
     )
     err := tx.QueryRow(ctx, `
-        select id, tenant_id, email, role::text, expires_at, revoked_at, accepted_at
-        from tenant_invites where token_hash = $1 for update
-    `, hashInviteToken(in.InviteToken)).Scan(&inviteID, &tenantID, &inviteEmail,
+        select id, workspace_id, email, role::text, expires_at, revoked_at, accepted_at
+        from workspace_invites where token_hash = $1 for update
+    `, hashInviteToken(in.InviteToken)).Scan(&inviteID, &workspaceID, &inviteEmail,
         &role, &expiresAt, &revokedAt, &acceptedAt)
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
@@ -2031,18 +2031,18 @@ if in.InviteToken != "" {
 
     // Add membership and consume invite.
     if _, err := tx.Exec(ctx, `
-        insert into tenant_memberships (tenant_id, user_id, role)
-        values ($1, $2, $3::tenant_role)
-    `, tenantID, user.ID, role); err != nil {
+        insert into workspace_memberships (workspace_id, user_id, role)
+        values ($1, $2, $3::workspace_role)
+    `, workspaceID, user.ID, role); err != nil {
         return nil, fmt.Errorf("insert invited membership: %w", err)
     }
     if _, err := tx.Exec(ctx,
-        `update tenant_invites set accepted_at = now() where id = $1`, inviteID); err != nil {
+        `update workspace_invites set accepted_at = now() where id = $1`, inviteID); err != nil {
         return nil, err
     }
 
     // Audit event — member.invite_accepted.
-    if err := writeAuditEvent(ctx, tx, tenantID, user.ID, "member.invite_accepted",
+    if err := writeAuditEvent(ctx, tx, workspaceID, user.ID, "member.invite_accepted",
         "invite", inviteID, nil, map[string]any{"role": role, "email": inviteEmail}); err != nil {
         return nil, err
     }
@@ -2058,7 +2058,7 @@ type signupReq struct {
     Email       string `json:"email"`
     DisplayName string `json:"displayName"`
     Password    string `json:"password"`
-    TenantName  string `json:"tenantName"`
+    WorkspaceName  string `json:"workspaceName"`
     InviteToken string `json:"inviteToken"`
 }
 ```
@@ -2084,27 +2084,27 @@ git commit -m "$(cat <<'EOF'
 feat(invites): extend auth.Signup to consume invite tokens
 
 When inviteToken is supplied and matches the signup email, the signup
-transaction also creates a membership in the invited tenant and marks
-the invite accepted. Personal tenant creation is unaffected.
+transaction also creates a membership in the invited workspace and marks
+the invite accepted. Personal workspace creation is unaffected.
 EOF
 )"
 ```
 
 ---
 
-## Task 9: Tenant-scoped HTTP — PATCH / DELETE / restore
+## Task 9: Workspace-scoped HTTP — PATCH / DELETE / restore
 
-**Spec:** §4.4 (`PATCH /t/{id}`, `DELETE /t/{id}`, `POST /t/{id}/restore`), §4.5 (middleware chain), §8.3 (`tenant.*` audit events).
+**Spec:** §4.4 (`PATCH /t/{id}`, `DELETE /t/{id}`, `POST /t/{id}/restore`), §4.5 (middleware chain), §8.3 (`workspace.*` audit events).
 
 **Files:**
-- Create: `backend/internal/identity/http_tenants.go`
-- Modify: `backend/internal/http/router.go` — mount new routes under `/api/v1/t/{tenantId}`
-- Create: `backend/internal/identity/http_tenants_test.go`
+- Create: `backend/internal/identity/http_workspaces.go`
+- Modify: `backend/internal/http/router.go` — mount new routes under `/api/v1/t/{workspaceId}`
+- Create: `backend/internal/identity/http_workspaces_test.go`
 
 - [ ] **Step 1: Define the handlers**
 
 ```go
-// http_tenants.go
+// http_workspaces.go
 package identity
 
 import (
@@ -2119,18 +2119,18 @@ import (
     "github.com/xmedavid/folio/backend/internal/httpx"
 )
 
-// TenantHandler owns tenant-scoped administration routes.
-type TenantHandler struct{ svc *Service }
+// WorkspaceHandler owns workspace-scoped administration routes.
+type WorkspaceHandler struct{ svc *Service }
 
-func NewTenantHandler(svc *Service) *TenantHandler { return &TenantHandler{svc: svc} }
+func NewWorkspaceHandler(svc *Service) *WorkspaceHandler { return &WorkspaceHandler{svc: svc} }
 
-// Mount installs tenant-admin routes behind the plan-1 middleware chain.
+// Mount installs workspace-admin routes behind the plan-1 middleware chain.
 // The caller is responsible for wrapping with RequireSession +
 // RequireMembership before this Mount; this function only adds the role
 // gate. RequireFreshReauth is deliberately NOT mounted here — Plan 4
 // adds the /auth/reauth endpoint and re-mounts the step-up middleware
 // across these routes at that point (see §0.2).
-func (h *TenantHandler) Mount(r chi.Router) {
+func (h *WorkspaceHandler) Mount(r chi.Router) {
     // PATCH /t/{id} — owner.
     r.With(auth.RequireRole(RoleOwner)).Patch("/", h.update)
     // DELETE /t/{id} — owner.
@@ -2139,7 +2139,7 @@ func (h *TenantHandler) Mount(r chi.Router) {
     r.With(auth.RequireRole(RoleOwner)).Post("/restore", h.restore)
 }
 
-type patchTenantReq struct {
+type patchWorkspaceReq struct {
     Name           *string `json:"name"`
     Slug           *string `json:"slug"`
     BaseCurrency   *string `json:"baseCurrency"`
@@ -2148,66 +2148,66 @@ type patchTenantReq struct {
     Timezone       *string `json:"timezone"`
 }
 
-func (h *TenantHandler) update(w http.ResponseWriter, r *http.Request) {
-    tenantID, ok := auth.TenantFromCtx(r.Context())
+func (h *WorkspaceHandler) update(w http.ResponseWriter, r *http.Request) {
+    workspaceID, ok := auth.WorkspaceFromCtx(r.Context())
     if !ok {
-        httpx.WriteError(w, http.StatusInternalServerError, "tenant_missing", "tenant context absent")
+        httpx.WriteError(w, http.StatusInternalServerError, "workspace_missing", "workspace context absent")
         return
     }
-    var req patchTenantReq
+    var req patchWorkspaceReq
     if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
         httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "body must be valid JSON")
         return
     }
-    in := UpdateTenantInput{
+    in := UpdateWorkspaceInput{
         Name: req.Name, Slug: req.Slug, BaseCurrency: req.BaseCurrency,
         CycleAnchorDay: req.CycleAnchorDay, Locale: req.Locale, Timezone: req.Timezone,
     }
-    before, _ := h.svc.GetTenant(r.Context(), tenantID)
-    updated, err := h.svc.UpdateTenant(r.Context(), tenantID, in)
+    before, _ := h.svc.GetWorkspace(r.Context(), workspaceID)
+    updated, err := h.svc.UpdateWorkspace(r.Context(), workspaceID, in)
     if err != nil {
         httpx.WriteServiceError(w, err)
         return
     }
     userID, _ := auth.UserFromCtx(r.Context())
-    h.svc.WriteAudit(r.Context(), tenantID, userID,
-        "tenant.settings_changed", "tenant", tenantID,
+    h.svc.WriteAudit(r.Context(), workspaceID, userID,
+        "workspace.settings_changed", "workspace", workspaceID,
         before, updated)
     httpx.WriteJSON(w, http.StatusOK, updated)
 }
 
-func (h *TenantHandler) softDelete(w http.ResponseWriter, r *http.Request) {
-    tenantID, _ := auth.TenantFromCtx(r.Context())
+func (h *WorkspaceHandler) softDelete(w http.ResponseWriter, r *http.Request) {
+    workspaceID, _ := auth.WorkspaceFromCtx(r.Context())
     userID, _ := auth.UserFromCtx(r.Context())
 
-    if err := h.svc.SoftDeleteTenant(r.Context(), tenantID); err != nil {
+    if err := h.svc.SoftDeleteWorkspace(r.Context(), workspaceID); err != nil {
         httpx.WriteServiceError(w, err)
         return
     }
-    h.svc.WriteAudit(r.Context(), tenantID, userID,
-        "tenant.deleted", "tenant", tenantID, nil, map[string]any{"deletedAt": "now"})
+    h.svc.WriteAudit(r.Context(), workspaceID, userID,
+        "workspace.deleted", "workspace", workspaceID, nil, map[string]any{"deletedAt": "now"})
     w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *TenantHandler) restore(w http.ResponseWriter, r *http.Request) {
-    tenantID, _ := auth.TenantFromCtx(r.Context())
+func (h *WorkspaceHandler) restore(w http.ResponseWriter, r *http.Request) {
+    workspaceID, _ := auth.WorkspaceFromCtx(r.Context())
     userID, _ := auth.UserFromCtx(r.Context())
 
-    if err := h.svc.RestoreTenant(r.Context(), tenantID); err != nil {
+    if err := h.svc.RestoreWorkspace(r.Context(), workspaceID); err != nil {
         httpx.WriteServiceError(w, err)
         return
     }
-    h.svc.WriteAudit(r.Context(), tenantID, userID,
-        "tenant.restored", "tenant", tenantID, nil, nil)
+    h.svc.WriteAudit(r.Context(), workspaceID, userID,
+        "workspace.restored", "workspace", workspaceID, nil, nil)
 
-    tenant, err := h.svc.GetTenant(r.Context(), tenantID)
+    workspace, err := h.svc.GetWorkspace(r.Context(), workspaceID)
     if err != nil {
         httpx.WriteServiceError(w, err)
         return
     }
     _ = uuid.Nil // unused import linter guard
     _ = chi.URLParam
-    httpx.WriteJSON(w, http.StatusOK, tenant)
+    httpx.WriteJSON(w, http.StatusOK, workspace)
 }
 ```
 
@@ -2219,17 +2219,17 @@ func (h *TenantHandler) restore(w http.ResponseWriter, r *http.Request) {
 // bring down the foreground request.
 func (s *Service) WriteAudit(
     ctx context.Context,
-    tenantID, actorID uuid.UUID,
+    workspaceID, actorID uuid.UUID,
     action, entityType string, entityID uuid.UUID,
     before, after any,
 ) {
     beforeJSON, _ := json.Marshal(before)
     afterJSON, _ := json.Marshal(after)
     _, err := s.pool.Exec(ctx, `
-        insert into audit_events (tenant_id, actor_user_id, action,
+        insert into audit_events (workspace_id, actor_user_id, action,
                                   entity_type, entity_id, before_jsonb, after_jsonb, occurred_at)
         values ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, now())
-    `, nullUUID(tenantID), nullUUID(actorID), action, entityType, entityID,
+    `, nullUUID(workspaceID), nullUUID(actorID), action, entityType, entityID,
         beforeJSON, afterJSON)
     if err != nil {
         slog.Default().Warn("audit.write_failed", "action", action, "err", err)
@@ -2246,17 +2246,17 @@ func nullUUID(u uuid.UUID) any {
 
 - [ ] **Step 3: Wire into router**
 
-In `backend/internal/http/router.go`, inside the `/api/v1` block, after plan 1's tenant-scoped group:
+In `backend/internal/http/router.go`, inside the `/api/v1` block, after plan 1's workspace-scoped group:
 
 ```go
-tenantH := identity.NewTenantHandler(identitySvc)
+workspaceH := identity.NewWorkspaceHandler(identitySvc)
 
-r.Route("/t/{tenantId}", func(r chi.Router) {
+r.Route("/t/{workspaceId}", func(r chi.Router) {
     r.Use(auth.RequireSession(authSvc))
     r.Use(auth.RequireMembership(identitySvc))
-    // Plan 1 already mounts GET /t/{tenantId}/members under this prefix;
-    // plan 2 extends it with invites routes and tenantH.Mount below.
-    tenantH.Mount(r)
+    // Plan 1 already mounts GET /t/{workspaceId}/members under this prefix;
+    // plan 2 extends it with invites routes and workspaceH.Mount below.
+    workspaceH.Mount(r)
     // Members + invites come in tasks 10 and 11.
 })
 ```
@@ -2266,16 +2266,16 @@ r.Route("/t/{tenantId}", func(r chi.Router) {
 `RequireFreshReauth` is not mounted in Plan 2 (see §0.2). The owner-only gate is sufficient: a non-owner gets 403, an owner succeeds.
 
 ```go
-func TestTenantHandler_Patch_RequiresOwnerRole(t *testing.T) {
+func TestWorkspaceHandler_Patch_RequiresOwnerRole(t *testing.T) {
     pool := testdb.Pool(t)
     srv := newTestServer(t, pool)
 
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     alice := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    testdb.CreateTestMembership(t, pool, tenantID, alice, "owner")
+    testdb.CreateTestMembership(t, pool, workspaceID, alice, "owner")
     _, rawToken := testdb.CreateTestSession(t, pool, alice)
 
-    req := httptest.NewRequest("PATCH", "/api/v1/t/"+tenantID.String(),
+    req := httptest.NewRequest("PATCH", "/api/v1/t/"+workspaceID.String(),
         bytes.NewBufferString(`{"name":"Renamed"}`))
     req.Header.Set("Cookie", "folio_session="+rawToken)
     req.Header.Set("X-Folio-Request", "1")
@@ -2287,9 +2287,9 @@ func TestTenantHandler_Patch_RequiresOwnerRole(t *testing.T) {
 
     // A non-owner member is rejected.
     bob := testdb.CreateTestUser(t, pool, "bob@example.com", true)
-    testdb.CreateTestMembership(t, pool, tenantID, bob, "member")
+    testdb.CreateTestMembership(t, pool, workspaceID, bob, "member")
     _, bobToken := testdb.CreateTestSession(t, pool, bob)
-    req2 := httptest.NewRequest("PATCH", "/api/v1/t/"+tenantID.String(),
+    req2 := httptest.NewRequest("PATCH", "/api/v1/t/"+workspaceID.String(),
         bytes.NewBufferString(`{"name":"NopeFromBob"}`))
     req2.Header.Set("Cookie", "folio_session="+bobToken)
     req2.Header.Set("X-Folio-Request", "1")
@@ -2316,35 +2316,35 @@ go build ./...
 
 ```bash
 cd /Users/xmedavid/dev/folio
-git add backend/internal/identity/http_tenants.go \
-        backend/internal/identity/http_tenants_test.go \
+git add backend/internal/identity/http_workspaces.go \
+        backend/internal/identity/http_workspaces_test.go \
         backend/internal/identity/service.go \
         backend/internal/http/router.go
 git commit -m "$(cat <<'EOF'
-feat(tenants): add PATCH /t/{id}, DELETE /t/{id}, POST /t/{id}/restore
+feat(workspaces): add PATCH /t/{id}, DELETE /t/{id}, POST /t/{id}/restore
 
 Gated behind RequireSession + RequireMembership + RequireRole(owner).
 RequireFreshReauth is deliberately deferred to Plan 4 — no /auth/reauth
 endpoint yet, so mounting step-up here would 403 every call. Audit
-events: tenant.settings_changed / tenant.deleted / tenant.restored.
+events: workspace.settings_changed / workspace.deleted / workspace.restored.
 EOF
 )"
 ```
 
 ---
 
-## Task 10: Tenant-scoped HTTP — members list + role change + remove/leave
+## Task 10: Workspace-scoped HTTP — members list + role change + remove/leave
 
 **Spec:** §4.4 members routes; §8.3 member audit events.
 
 **Files:**
-- Modify: `backend/internal/identity/http_tenants.go` — extend `Mount`
+- Modify: `backend/internal/identity/http_workspaces.go` — extend `Mount`
 - Create: `backend/internal/identity/http_members_test.go`
 
 - [ ] **Step 1: Extend `Mount`**
 
 ```go
-func (h *TenantHandler) Mount(r chi.Router) {
+func (h *WorkspaceHandler) Mount(r chi.Router) {
     // (existing PATCH/DELETE/restore routes unchanged) ...
 
     // Any-member: list members + pending invites.
@@ -2354,15 +2354,15 @@ func (h *TenantHandler) Mount(r chi.Router) {
     r.With(auth.RequireRole(RoleOwner)).
         Patch("/members/{userId}", h.changeRole)
     // DELETE /members/{userId} has split semantics:
-    //   userId == self → LeaveTenant (any member)
+    //   userId == self → LeaveWorkspace (any member)
     //   userId != self → RemoveMember (owner; enforced inside handler)
     // RequireFreshReauth is deliberately deferred to Plan 4 (see §0.2).
     r.Delete("/members/{userId}", h.removeOrLeave)
 }
 
-func (h *TenantHandler) listMembers(w http.ResponseWriter, r *http.Request) {
-    tenantID, _ := auth.TenantFromCtx(r.Context())
-    res, err := h.svc.ListMembers(r.Context(), tenantID)
+func (h *WorkspaceHandler) listMembers(w http.ResponseWriter, r *http.Request) {
+    workspaceID, _ := auth.WorkspaceFromCtx(r.Context())
+    res, err := h.svc.ListMembers(r.Context(), workspaceID)
     if err != nil {
         httpx.WriteServiceError(w, err)
         return
@@ -2374,8 +2374,8 @@ type patchMemberReq struct {
     Role string `json:"role"`
 }
 
-func (h *TenantHandler) changeRole(w http.ResponseWriter, r *http.Request) {
-    tenantID, _ := auth.TenantFromCtx(r.Context())
+func (h *WorkspaceHandler) changeRole(w http.ResponseWriter, r *http.Request) {
+    workspaceID, _ := auth.WorkspaceFromCtx(r.Context())
     actor, _ := auth.UserFromCtx(r.Context())
     userID, err := uuid.Parse(chi.URLParam(r, "userId"))
     if err != nil {
@@ -2388,11 +2388,11 @@ func (h *TenantHandler) changeRole(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    err = h.svc.ChangeRole(r.Context(), tenantID, userID, Role(req.Role))
+    err = h.svc.ChangeRole(r.Context(), workspaceID, userID, Role(req.Role))
     switch {
     case errors.Is(err, ErrLastOwner):
         httpx.WriteError(w, http.StatusUnprocessableEntity, "last_owner",
-            "cannot demote the last owner of this tenant")
+            "cannot demote the last owner of this workspace")
         return
     case errors.Is(err, ErrNotAMember):
         httpx.WriteError(w, http.StatusNotFound, "not_a_member", "membership not found")
@@ -2401,14 +2401,14 @@ func (h *TenantHandler) changeRole(w http.ResponseWriter, r *http.Request) {
         httpx.WriteServiceError(w, err)
         return
     }
-    h.svc.WriteAudit(r.Context(), tenantID, actor,
+    h.svc.WriteAudit(r.Context(), workspaceID, actor,
         "member.role_changed", "membership", userID, nil,
         map[string]any{"role": req.Role})
     w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *TenantHandler) removeOrLeave(w http.ResponseWriter, r *http.Request) {
-    tenantID, _ := auth.TenantFromCtx(r.Context())
+func (h *WorkspaceHandler) removeOrLeave(w http.ResponseWriter, r *http.Request) {
+    workspaceID, _ := auth.WorkspaceFromCtx(r.Context())
     actor, _ := auth.UserFromCtx(r.Context())
     userID, err := uuid.Parse(chi.URLParam(r, "userId"))
     if err != nil {
@@ -2420,7 +2420,7 @@ func (h *TenantHandler) removeOrLeave(w http.ResponseWriter, r *http.Request) {
     var action string
     if userID == actor {
         // self-leave — any member.
-        err = h.svc.LeaveTenant(r.Context(), tenantID, userID)
+        err = h.svc.LeaveWorkspace(r.Context(), workspaceID, userID)
         action = "member.left"
     } else {
         // remove-other — owner only.
@@ -2429,17 +2429,17 @@ func (h *TenantHandler) removeOrLeave(w http.ResponseWriter, r *http.Request) {
                 "only owners can remove other members")
             return
         }
-        err = h.svc.RemoveMember(r.Context(), tenantID, userID)
+        err = h.svc.RemoveMember(r.Context(), workspaceID, userID)
         action = "member.removed"
     }
     switch {
     case errors.Is(err, ErrLastOwner):
         httpx.WriteError(w, http.StatusUnprocessableEntity, "last_owner",
-            "cannot remove the last owner of this tenant")
+            "cannot remove the last owner of this workspace")
         return
-    case errors.Is(err, ErrLastTenant):
-        httpx.WriteError(w, http.StatusUnprocessableEntity, "last_tenant",
-            "cannot leave your last tenant — create another or delete the account")
+    case errors.Is(err, ErrLastWorkspace):
+        httpx.WriteError(w, http.StatusUnprocessableEntity, "last_workspace",
+            "cannot leave your last workspace — create another or delete the account")
         return
     case errors.Is(err, ErrNotAMember):
         httpx.WriteError(w, http.StatusNotFound, "not_a_member", "membership not found")
@@ -2448,7 +2448,7 @@ func (h *TenantHandler) removeOrLeave(w http.ResponseWriter, r *http.Request) {
         httpx.WriteServiceError(w, err)
         return
     }
-    h.svc.WriteAudit(r.Context(), tenantID, actor, action,
+    h.svc.WriteAudit(r.Context(), workspaceID, actor, action,
         "membership", userID, nil, nil)
     w.WriteHeader(http.StatusNoContent)
 }
@@ -2461,30 +2461,30 @@ func (h *TenantHandler) removeOrLeave(w http.ResponseWriter, r *http.Request) {
 1. `GET /members` returns members + pending invites (seeded via `pool.Exec`).
 2. `PATCH /members/{userId}` promotes a member to owner (204). RequireFreshReauth is not mounted in Plan 2 (§0.2), so no reauth setup is needed.
 3. `PATCH /members/{userId}` demoting the last owner returns 422 `last_owner`.
-4. `DELETE /members/{userId}` where `userId == actor.ID` calls LeaveTenant; succeeds when the actor has a second tenant.
+4. `DELETE /members/{userId}` where `userId == actor.ID` calls LeaveWorkspace; succeeds when the actor has a second workspace.
 5. `DELETE /members/{userId}` where `userId != actor.ID` returns 403 unless actor is owner.
 
 Template for test 1 (others follow the same pattern as Task 9):
 
 ```go
-func TestTenantHandler_ListMembers_IncludesPendingInvites(t *testing.T) {
+func TestWorkspaceHandler_ListMembers_IncludesPendingInvites(t *testing.T) {
     pool := testdb.Pool(t)
     srv := newTestServer(t, pool)
 
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     alice := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    testdb.CreateTestMembership(t, pool, tenantID, alice, "owner")
+    testdb.CreateTestMembership(t, pool, workspaceID, alice, "owner")
     _, rawToken := testdb.CreateTestSession(t, pool, alice)
 
     // Seed a pending invite.
     _, err := pool.Exec(context.Background(), `
-        insert into tenant_invites (id, tenant_id, email, role, token_hash,
+        insert into workspace_invites (id, workspace_id, email, role, token_hash,
                                     invited_by_user_id, expires_at)
         values ($1, $2, 'bob@example.com', 'member', $3, $4, now() + interval '7 days')
-    `, uuidx.New(), tenantID, testdb.HashInviteToken("raw"), alice)
+    `, uuidx.New(), workspaceID, testdb.HashInviteToken("raw"), alice)
     if err != nil { t.Fatal(err) }
 
-    req := httptest.NewRequest("GET", "/api/v1/t/"+tenantID.String()+"/members", nil)
+    req := httptest.NewRequest("GET", "/api/v1/t/"+workspaceID.String()+"/members", nil)
     req.Header.Set("Cookie", "folio_session="+rawToken)
     w := httptest.NewRecorder()
     srv.ServeHTTP(w, req)
@@ -2512,14 +2512,14 @@ go vet ./...
 
 ```bash
 cd /Users/xmedavid/dev/folio
-git add backend/internal/identity/http_tenants.go \
+git add backend/internal/identity/http_workspaces.go \
         backend/internal/identity/http_members_test.go
 git commit -m "$(cat <<'EOF'
-feat(tenants): add GET/PATCH/DELETE /t/{id}/members routes
+feat(workspaces): add GET/PATCH/DELETE /t/{id}/members routes
 
 List returns memberships + pending invites. Role change and remove
 share the last-owner guard; DELETE /members/{userId} dispatches
-between LeaveTenant (userId == self, any member) and RemoveMember
+between LeaveWorkspace (userId == self, any member) and RemoveMember
 (userId != self, owner). Audit events: member.role_changed /
 member.removed / member.left.
 EOF
@@ -2528,7 +2528,7 @@ EOF
 
 ---
 
-## Task 11: Tenant-scoped HTTP — invite create, list implicit (via members), revoke
+## Task 11: Workspace-scoped HTTP — invite create, list implicit (via members), revoke
 
 **Spec:** §4.4 (`POST /t/{id}/invites`, `DELETE /t/{id}/invites/{inviteId}`), §8.3 (`member.invited`, `member.invite_revoked`).
 
@@ -2536,7 +2536,7 @@ EOF
 - Create: `backend/internal/identity/http_invites.go`
 - Create: `backend/internal/identity/http_invites_test.go`
 - Modify: `backend/internal/http/router.go` — mount invite routes
-- Modify: `backend/internal/identity/http_tenants.go` — remove any duplicate invite mount if present
+- Modify: `backend/internal/identity/http_workspaces.go` — remove any duplicate invite mount if present
 
 - [ ] **Step 1: Handler definition**
 
@@ -2583,7 +2583,7 @@ type createInviteReq struct {
 }
 
 func (h *InviteHandler) create(w http.ResponseWriter, r *http.Request) {
-    tenantID, _ := auth.TenantFromCtx(r.Context())
+    workspaceID, _ := auth.WorkspaceFromCtx(r.Context())
     inviter, _ := auth.UserFromCtx(r.Context())
     callerRole, _ := auth.RoleFromCtx(r.Context())
 
@@ -2600,7 +2600,7 @@ func (h *InviteHandler) create(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    inv, plaintext, err := h.invites.Create(r.Context(), tenantID, inviter, req.Email, role)
+    inv, plaintext, err := h.invites.Create(r.Context(), workspaceID, inviter, req.Email, role)
     if err != nil {
         httpx.WriteServiceError(w, err)
         return
@@ -2614,17 +2614,17 @@ func (h *InviteHandler) create(w http.ResponseWriter, r *http.Request) {
         Template: "invite",
         Data: map[string]any{
             "inviteURL": inviteURL(plaintext),
-            "tenantID":  tenantID,
+            "workspaceID":  workspaceID,
             "role":      role,
         },
-        TenantID: tenantID.String(),
+        WorkspaceID: workspaceID.String(),
     }); err != nil {
         // Non-fatal: log but return 201 with the invite row. The admin
         // console has an email-resend action for bounced messages.
         slog.Default().Warn("mailer.send_failed", "err", err, "invite_id", inv.ID)
     }
 
-    h.svc.WriteAudit(r.Context(), tenantID, inviter,
+    h.svc.WriteAudit(r.Context(), workspaceID, inviter,
         "member.invited", "invite", inv.ID, nil,
         map[string]any{"email": inv.Email, "role": inv.Role})
 
@@ -2632,7 +2632,7 @@ func (h *InviteHandler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *InviteHandler) revoke(w http.ResponseWriter, r *http.Request) {
-    tenantID, _ := auth.TenantFromCtx(r.Context())
+    workspaceID, _ := auth.WorkspaceFromCtx(r.Context())
     requester, _ := auth.UserFromCtx(r.Context())
     inviteID, err := uuid.Parse(chi.URLParam(r, "inviteId"))
     if err != nil {
@@ -2647,13 +2647,13 @@ func (h *InviteHandler) revoke(w http.ResponseWriter, r *http.Request) {
         return
     case errors.Is(err, ErrNotAuthorized):
         httpx.WriteError(w, http.StatusForbidden, "forbidden",
-            "only the inviter or a tenant owner can revoke this invite")
+            "only the inviter or a workspace owner can revoke this invite")
         return
     case err != nil:
         httpx.WriteServiceError(w, err)
         return
     }
-    h.svc.WriteAudit(r.Context(), tenantID, requester,
+    h.svc.WriteAudit(r.Context(), workspaceID, requester,
         "member.invite_revoked", "invite", inviteID, nil, nil)
     w.WriteHeader(http.StatusNoContent)
 }
@@ -2674,10 +2674,10 @@ func inviteURL(plaintext string) string {
 ```go
 inviteH := identity.NewInviteHandler(identitySvc, identity.NewInviteService(d.DB), d.Mailer)
 
-r.Route("/t/{tenantId}", func(r chi.Router) {
+r.Route("/t/{workspaceId}", func(r chi.Router) {
     r.Use(auth.RequireSession(authSvc))
     r.Use(auth.RequireMembership(identitySvc))
-    tenantH.Mount(r)
+    workspaceH.Mount(r)
     r.Route("/invites", inviteH.Mount)
     // accounts etc., re-mounted here
     r.Route("/accounts", accountsH.Mount)
@@ -2703,13 +2703,13 @@ func TestInviteHandler_Create_MemberInvitesMember(t *testing.T) {
     mockMail := mailer.NewLogMailer(nil)
     srv := newTestServerWithMailer(t, pool, mockMail)
 
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     alice := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    testdb.CreateTestMembership(t, pool, tenantID, alice, "member")
+    testdb.CreateTestMembership(t, pool, workspaceID, alice, "member")
     _, rawToken := testdb.CreateTestSession(t, pool, alice)
     // RequireFreshReauth is not mounted in Plan 2 (§0.2); no reauth setup needed.
 
-    req := httptest.NewRequest("POST", "/api/v1/t/"+tenantID.String()+"/invites",
+    req := httptest.NewRequest("POST", "/api/v1/t/"+workspaceID.String()+"/invites",
         bytes.NewBufferString(`{"email":"bob@example.com","role":"member"}`))
     req.Header.Set("Cookie", "folio_session="+rawToken)
     req.Header.Set("X-Folio-Request", "1")
@@ -2818,7 +2818,7 @@ func (h *Handler) acceptInvite(w http.ResponseWriter, r *http.Request) {
         return
     }
     // Audit — member.invite_accepted.
-    h.identity.WriteAudit(r.Context(), mem.TenantID, userID,
+    h.identity.WriteAudit(r.Context(), mem.WorkspaceID, userID,
         "member.invite_accepted", "membership", mem.UserID, nil,
         map[string]any{"role": mem.Role})
     httpx.WriteJSON(w, http.StatusOK, mem)
@@ -2845,7 +2845,7 @@ Ensure `auth.Handler` has an `invites *identity.InviteService` and `identity *id
 2. Same endpoint returns 410 `invite_expired` once `expires_at` is in the past.
 3. `POST /auth/invites/{token}/accept` without a session returns 401.
 4. `POST /auth/invites/{token}/accept` with a mismatched-email session returns 403 `email_mismatch`.
-5. Successful accept returns 200 with `{tenantId, userId, role}` and writes the membership row.
+5. Successful accept returns 200 with `{workspaceId, userId, role}` and writes the membership row.
 
 Skeleton for test 5:
 
@@ -2855,10 +2855,10 @@ func TestAuth_AcceptInvite_Succeeds(t *testing.T) {
     srv := newTestServer(t, pool)
     inviteSvc := identity.NewInviteService(pool)
 
-    tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice")
+    workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice")
     alice := testdb.CreateTestUser(t, pool, "alice@example.com", true)
-    testdb.CreateTestMembership(t, pool, tenantID, alice, "owner")
-    _, plaintext, _ := inviteSvc.Create(context.Background(), tenantID, alice, "bob@example.com", identity.RoleMember)
+    testdb.CreateTestMembership(t, pool, workspaceID, alice, "owner")
+    _, plaintext, _ := inviteSvc.Create(context.Background(), workspaceID, alice, "bob@example.com", identity.RoleMember)
 
     bob := testdb.CreateTestUser(t, pool, "bob@example.com", true)
     _, rawToken := testdb.CreateTestSession(t, pool, bob)
@@ -2873,8 +2873,8 @@ func TestAuth_AcceptInvite_Succeeds(t *testing.T) {
     }
     var count int
     _ = pool.QueryRow(context.Background(),
-        `select count(*) from tenant_memberships where tenant_id = $1 and user_id = $2`,
-        tenantID, bob).Scan(&count)
+        `select count(*) from workspace_memberships where workspace_id = $1 and user_id = $2`,
+        workspaceID, bob).Scan(&count)
     if count != 1 {
         t.Fatalf("want 1 membership, got %d", count)
     }
@@ -2905,7 +2905,7 @@ EOF
 
 ---
 
-## Task 13: folio-sweeper binary — hard-delete soft-deleted tenants >30d
+## Task 13: folio-sweeper binary — hard-delete soft-deleted workspaces >30d
 
 **Spec:** §10 soft-delete grace period.
 
@@ -2930,16 +2930,16 @@ import (
     "github.com/xmedavid/folio/backend/internal/testdb"
 )
 
-func TestSweeper_Run_HardDeletesTenantsOlderThan30Days(t *testing.T) {
+func TestSweeper_Run_HardDeletesWorkspacesOlderThan30Days(t *testing.T) {
     pool := testdb.Pool(t)
-    old, _ := testdb.CreateTestTenant(t, pool, "Old")
-    recent, _ := testdb.CreateTestTenant(t, pool, "Recent")
-    fresh, _ := testdb.CreateTestTenant(t, pool, "Fresh")
+    old, _ := testdb.CreateTestWorkspace(t, pool, "Old")
+    recent, _ := testdb.CreateTestWorkspace(t, pool, "Recent")
+    fresh, _ := testdb.CreateTestWorkspace(t, pool, "Fresh")
 
     _, _ = pool.Exec(context.Background(),
-        `update tenants set deleted_at = now() - interval '31 days' where id = $1`, old)
+        `update workspaces set deleted_at = now() - interval '31 days' where id = $1`, old)
     _, _ = pool.Exec(context.Background(),
-        `update tenants set deleted_at = now() - interval '5 days' where id = $1`, recent)
+        `update workspaces set deleted_at = now() - interval '5 days' where id = $1`, recent)
     // 'fresh' is not deleted.
 
     report, err := cleanup.Run(context.Background(), pool, 30*24*time.Hour)
@@ -2953,10 +2953,10 @@ func TestSweeper_Run_HardDeletesTenantsOlderThan30Days(t *testing.T) {
     // 'old' is gone; 'recent' and 'fresh' remain.
     var count int
     _ = pool.QueryRow(context.Background(),
-        `select count(*) from tenants where id = any($1)`,
+        `select count(*) from workspaces where id = any($1)`,
         []any{old, recent, fresh}).Scan(&count)
     if count != 2 {
-        t.Fatalf("want 2 remaining tenants, got %d", count)
+        t.Fatalf("want 2 remaining workspaces, got %d", count)
     }
 }
 ```
@@ -2986,14 +2986,14 @@ type Report struct {
     FinishedAt   time.Time
 }
 
-// Run hard-deletes every tenant where deleted_at < now() - gracePeriod.
-// Returns a Report of which tenants were removed. Cascades propagate via
+// Run hard-deletes every workspace where deleted_at < now() - gracePeriod.
+// Returns a Report of which workspaces were removed. Cascades propagate via
 // existing FKs (accounts → transactions → …); this is the only place in
-// the codebase that deletes a tenant row permanently.
+// the codebase that deletes a workspace row permanently.
 func Run(ctx context.Context, pool *pgxpool.Pool, gracePeriod time.Duration) (*Report, error) {
     r := &Report{StartedAt: time.Now()}
     rows, err := pool.Query(ctx, `
-        delete from tenants
+        delete from workspaces
         where deleted_at is not null
           and deleted_at < now() - $1::interval
         returning id::text
@@ -3024,7 +3024,7 @@ func Run(ctx context.Context, pool *pgxpool.Pool, gracePeriod time.Duration) (*R
 
 ```go
 // Command folio-sweeper is a one-shot cron-invokable entry point that
-// hard-deletes tenants past their 30-day soft-delete grace period.
+// hard-deletes workspaces past their 30-day soft-delete grace period.
 //
 // Plan 2 ships this as a standalone binary so the sweeper works without
 // River. Plan 3 wires River to call cleanup.Run directly inside the
@@ -3087,9 +3087,9 @@ go build -o /tmp/folio-sweeper ./cmd/folio-sweeper
 cd /Users/xmedavid/dev/folio
 git add backend/internal/jobs/cleanup/ backend/cmd/folio-sweeper/
 git commit -m "$(cat <<'EOF'
-feat(jobs): add tenant soft-delete sweeper
+feat(jobs): add workspace soft-delete sweeper
 
-cleanup.Run hard-deletes tenants whose deleted_at exceeds the grace
+cleanup.Run hard-deletes workspaces whose deleted_at exceeds the grace
 period (default 30 days). Ships as the standalone folio-sweeper binary
 so cron-based self-hosted deployments work without River; plan 3 adds
 a River periodic job that calls cleanup.Run on the same schedule.
@@ -3099,31 +3099,31 @@ EOF
 
 ---
 
-## Task 14: Remove legacy `httpx.RequireTenant` once plan-1's auth middleware is in place
+## Task 14: Remove legacy `httpx.RequireWorkspace` once plan-1's auth middleware is in place
 
-**Spec:** §12 rollout — `httpx.RequireTenant` is deleted.
+**Spec:** §12 rollout — `httpx.RequireWorkspace` is deleted.
 
 **Files:**
-- Modify: `backend/internal/httpx/httpx.go` — delete `RequireTenant` and context helpers
+- Modify: `backend/internal/httpx/httpx.go` — delete `RequireWorkspace` and context helpers
 - Modify: call sites that still referenced the old header auth
-- Modify: `.env.example` — remove `X-Tenant-ID` documentation
+- Modify: `.env.example` — remove `X-Workspace-ID` documentation
 
-- [ ] **Step 1: Grep for remaining `httpx.RequireTenant` usages**
+- [ ] **Step 1: Grep for remaining `httpx.RequireWorkspace` usages**
 
 ```bash
 cd /Users/xmedavid/dev/folio/backend
-rg 'httpx\.RequireTenant|X-Tenant-ID|httpx\.TenantIDFrom' .
+rg 'httpx\.RequireWorkspace|X-Workspace-ID|httpx\.WorkspaceIDFrom' .
 ```
 
-Every hit must be replaced by `auth.RequireSession` + `auth.RequireMembership` + `auth.TenantFromCtx`. Existing accounts/transactions/classification handlers that read `httpx.TenantIDFrom` are migrated to `auth.TenantFromCtx`. Frontend code must not send `X-Tenant-ID` headers (it didn't since plan 1).
+Every hit must be replaced by `auth.RequireSession` + `auth.RequireMembership` + `auth.WorkspaceFromCtx`. Existing accounts/transactions/classification handlers that read `httpx.WorkspaceIDFrom` are migrated to `auth.WorkspaceFromCtx`. Frontend code must not send `X-Workspace-ID` headers (it didn't since plan 1).
 
 - [ ] **Step 2: Delete the middleware and helpers**
 
 In `backend/internal/httpx/httpx.go`, remove:
 
-- `RequireTenant`
-- `TenantIDFrom`, `UserIDFrom`, `WithTenantID`, `WithUserID`
-- the `tenantIDKey`, `userIDKey` constants
+- `RequireWorkspace`
+- `WorkspaceIDFrom`, `UserIDFrom`, `WithWorkspaceID`, `WithUserID`
+- the `workspaceIDKey`, `userIDKey` constants
 
 Keep `WriteJSON`, `WriteError`, `ValidationError`, `NotFoundError`, `WriteServiceError`.
 
@@ -3154,10 +3154,10 @@ git add backend/internal/httpx/httpx.go backend/internal/accounts/ \
         backend/internal/transactions/ backend/internal/classification/ \
         .env.example
 git commit -m "$(cat <<'EOF'
-refactor(httpx): drop RequireTenant and legacy context helpers
+refactor(httpx): drop RequireWorkspace and legacy context helpers
 
 Replaces every call site with auth.RequireSession + auth.RequireMembership
-and auth.TenantFromCtx / auth.UserFromCtx. httpx is now purely
+and auth.WorkspaceFromCtx / auth.UserFromCtx. httpx is now purely
 response / error helpers.
 EOF
 )"
@@ -3165,16 +3165,16 @@ EOF
 
 ---
 
-## Task 15: Frontend — `/t/[slug]/settings/tenant` page (rename, slug, base currency, soft-delete)
+## Task 15: Frontend — `/t/[slug]/settings/workspace` page (rename, slug, base currency, soft-delete)
 
 **Spec:** §13 web surface.
 
 **Files:**
-- Create: `web/app/t/[slug]/settings/tenant/page.tsx`
-- Create: `web/lib/hooks/use-tenant-settings.ts`
-- Modify: `web/lib/api/client.ts` — add `patchTenant`, `deleteTenant`, `restoreTenant` wrappers
+- Create: `web/app/t/[slug]/settings/workspace/page.tsx`
+- Create: `web/lib/hooks/use-workspace-settings.ts`
+- Modify: `web/lib/api/client.ts` — add `patchWorkspace`, `deleteWorkspace`, `restoreWorkspace` wrappers
 
-> `web/app/t/[slug]/settings/layout.tsx` and the `TenantShell` component were added in the pre-plan-2 consolidation commit (`refactor(web): consolidate tenant shell before Plan 2 settings pages`). Plan 2's settings pages (Tasks 15/16/17) live inside this layout and receive the side-nav for free. **Do not create a new layout or shell.**
+> `web/app/t/[slug]/settings/layout.tsx` and the `WorkspaceShell` component were added in the pre-plan-2 consolidation commit (`refactor(web): consolidate workspace shell before Plan 2 settings pages`). Plan 2's settings pages (Tasks 15/16/17) live inside this layout and receive the side-nav for free. **Do not create a new layout or shell.**
 
 - [ ] **Step 1: Design compliance gate**
 
@@ -3184,22 +3184,22 @@ Read `/Users/xmedavid/dev/folio/.claude/skills/folio-frontend-design/SKILL.md` *
 
 ```ts
 // web/lib/api/client.ts — append
-export async function patchTenant(tenantID: string, body: {
+export async function patchWorkspace(workspaceID: string, body: {
   name?: string; slug?: string; baseCurrency?: string;
   cycleAnchorDay?: number; locale?: string; timezone?: string;
 }) {
-  const res = await fetch(`${API_BASE}/api/v1/t/${tenantID}`, {
+  const res = await fetch(`${API_BASE}/api/v1/t/${workspaceID}`, {
     method: "PATCH",
     credentials: "include",
     headers: { "Content-Type": "application/json", "X-Folio-Request": "1" },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw await toApiError(res);
-  return (await res.json()) as Tenant;
+  return (await res.json()) as Workspace;
 }
 
-export async function deleteTenant(tenantID: string) {
-  const res = await fetch(`${API_BASE}/api/v1/t/${tenantID}`, {
+export async function deleteWorkspace(workspaceID: string) {
+  const res = await fetch(`${API_BASE}/api/v1/t/${workspaceID}`, {
     method: "DELETE",
     credentials: "include",
     headers: { "X-Folio-Request": "1" },
@@ -3207,14 +3207,14 @@ export async function deleteTenant(tenantID: string) {
   if (!res.ok) throw await toApiError(res);
 }
 
-export async function restoreTenant(tenantID: string) {
-  const res = await fetch(`${API_BASE}/api/v1/t/${tenantID}/restore`, {
+export async function restoreWorkspace(workspaceID: string) {
+  const res = await fetch(`${API_BASE}/api/v1/t/${workspaceID}/restore`, {
     method: "POST",
     credentials: "include",
     headers: { "X-Folio-Request": "1" },
   });
   if (!res.ok) throw await toApiError(res);
-  return (await res.json()) as Tenant;
+  return (await res.json()) as Workspace;
 }
 ```
 
@@ -3223,44 +3223,44 @@ export async function restoreTenant(tenantID: string) {
 - [ ] **Step 3: Page component**
 
 ```tsx
-// web/app/t/[slug]/settings/tenant/page.tsx
+// web/app/t/[slug]/settings/workspace/page.tsx
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useIdentity } from "@/lib/hooks/use-identity";
-import { patchTenant, deleteTenant } from "@/lib/api/client";
+import { patchWorkspace, deleteWorkspace } from "@/lib/api/client";
 import { FormField } from "@/components/forms/form-field";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 
-export default function TenantSettingsPage({ params }: { params: { slug: string } }) {
+export default function WorkspaceSettingsPage({ params }: { params: { slug: string } }) {
   const { data: me } = useIdentity();
-  const tenant = me?.tenants.find((t) => t.slug === params.slug);
+  const workspace = me?.workspaces.find((t) => t.slug === params.slug);
   const qc = useQueryClient();
   const router = useRouter();
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const patch = useMutation({
-    mutationFn: (body: Parameters<typeof patchTenant>[1]) =>
-      patchTenant(tenant!.id, body),
+    mutationFn: (body: Parameters<typeof patchWorkspace>[1]) =>
+      patchWorkspace(workspace!.id, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
   });
   const softDelete = useMutation({
-    mutationFn: () => deleteTenant(tenant!.id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["me"] }); router.push("/tenants"); },
+    mutationFn: () => deleteWorkspace(workspace!.id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["me"] }); router.push("/workspaces"); },
   });
 
-  if (!tenant) return null;
-  const isOwner = tenant.role === "owner";
+  if (!workspace) return null;
+  const isOwner = workspace.role === "owner";
 
   return (
     <section className="space-y-8 max-w-2xl">
       <header>
-        <h1 className="text-2xl font-semibold">Tenant settings</h1>
+        <h1 className="text-2xl font-semibold">Workspace settings</h1>
         <p className="text-sm text-muted-foreground">
-          {isOwner ? "You are an owner of this tenant." : "Only owners can edit settings."}
+          {isOwner ? "You are an owner of this workspace." : "Only owners can edit settings."}
         </p>
       </header>
 
@@ -3277,13 +3277,13 @@ export default function TenantSettingsPage({ params }: { params: { slug: string 
         }}
         className="space-y-4"
       >
-        <FormField label="Name" name="name" defaultValue={tenant.name} disabled={!isOwner} required />
-        <FormField label="Slug" name="slug" defaultValue={tenant.slug} disabled={!isOwner}
+        <FormField label="Name" name="name" defaultValue={workspace.name} disabled={!isOwner} required />
+        <FormField label="Slug" name="slug" defaultValue={workspace.slug} disabled={!isOwner}
                    pattern="^[a-z0-9][a-z0-9-]{1,62}$" />
-        <FormField label="Base currency" name="baseCurrency" defaultValue={tenant.baseCurrency}
+        <FormField label="Base currency" name="baseCurrency" defaultValue={workspace.baseCurrency}
                    disabled={!isOwner} pattern="^[A-Z0-9]{3,10}$" />
         <FormField label="Cycle anchor day" name="cycleAnchorDay" type="number"
-                   min={1} max={31} defaultValue={String(tenant.cycleAnchorDay)}
+                   min={1} max={31} defaultValue={String(workspace.cycleAnchorDay)}
                    disabled={!isOwner} />
         {patch.error && <ApiError error={patch.error} />}
         <Button type="submit" disabled={!isOwner || patch.isPending}>
@@ -3295,18 +3295,18 @@ export default function TenantSettingsPage({ params }: { params: { slug: string 
         <section className="border-t pt-6 space-y-2">
           <h2 className="text-lg font-semibold text-destructive">Danger zone</h2>
           <p className="text-sm text-muted-foreground">
-            Soft-deletes the tenant. You have 30 days to restore before data is
+            Soft-deletes the workspace. You have 30 days to restore before data is
             permanently removed.
           </p>
           <Button variant="destructive" onClick={() => setConfirmDelete(true)}>
-            Delete tenant
+            Delete workspace
           </Button>
           <ConfirmDialog
             open={confirmDelete}
             onOpenChange={setConfirmDelete}
-            title={`Delete ${tenant.name}?`}
+            title={`Delete ${workspace.name}?`}
             description="You have 30 days to restore before data is permanently removed."
-            confirmLabel="Delete tenant"
+            confirmLabel="Delete workspace"
             onConfirm={() => softDelete.mutate()}
           />
         </section>
@@ -3331,12 +3331,12 @@ pnpm build
 
 ```bash
 cd /Users/xmedavid/dev/folio
-git add web/app/t/[slug]/settings/tenant/ web/lib/api/client.ts
+git add web/app/t/[slug]/settings/workspace/ web/lib/api/client.ts
 git commit -m "$(cat <<'EOF'
-feat(web): tenant settings page with rename / slug / soft-delete
+feat(web): workspace settings page with rename / slug / soft-delete
 
 Read-only for non-owners; owners see a danger zone for soft-delete.
-Form posts PATCH /t/{id}; delete routes to /tenants on success. Surfaces
+Form posts PATCH /t/{id}; delete routes to /workspaces on success. Surfaces
 reauth_required as a pending modal — plan 4 lands the actual prompt.
 EOF
 )"
@@ -3355,8 +3355,8 @@ EOF
 - [ ] **Step 1: API client**
 
 ```ts
-export async function getMembers(tenantID: string) {
-  const res = await fetch(`${API_BASE}/api/v1/t/${tenantID}/members`, {
+export async function getMembers(workspaceID: string) {
+  const res = await fetch(`${API_BASE}/api/v1/t/${workspaceID}/members`, {
     credentials: "include",
   });
   if (!res.ok) throw await toApiError(res);
@@ -3366,8 +3366,8 @@ export async function getMembers(tenantID: string) {
   };
 }
 
-export async function patchMember(tenantID: string, userID: string, role: "owner" | "member") {
-  const res = await fetch(`${API_BASE}/api/v1/t/${tenantID}/members/${userID}`, {
+export async function patchMember(workspaceID: string, userID: string, role: "owner" | "member") {
+  const res = await fetch(`${API_BASE}/api/v1/t/${workspaceID}/members/${userID}`, {
     method: "PATCH",
     credentials: "include",
     headers: { "Content-Type": "application/json", "X-Folio-Request": "1" },
@@ -3376,8 +3376,8 @@ export async function patchMember(tenantID: string, userID: string, role: "owner
   if (!res.ok) throw await toApiError(res);
 }
 
-export async function removeMember(tenantID: string, userID: string) {
-  const res = await fetch(`${API_BASE}/api/v1/t/${tenantID}/members/${userID}`, {
+export async function removeMember(workspaceID: string, userID: string) {
+  const res = await fetch(`${API_BASE}/api/v1/t/${workspaceID}/members/${userID}`, {
     method: "DELETE",
     credentials: "include",
     headers: { "X-Folio-Request": "1" },
@@ -3402,25 +3402,25 @@ import { ApiError } from "@/components/ui/api-error";
 
 export default function MembersPage({ params }: { params: { slug: string } }) {
   const { data: me } = useIdentity();
-  const tenant = me?.tenants.find((t) => t.slug === params.slug);
+  const workspace = me?.workspaces.find((t) => t.slug === params.slug);
   const qc = useQueryClient();
   const membersQ = useQuery({
-    queryKey: ["members", tenant?.id],
-    queryFn: () => getMembers(tenant!.id),
-    enabled: !!tenant,
+    queryKey: ["members", workspace?.id],
+    queryFn: () => getMembers(workspace!.id),
+    enabled: !!workspace,
   });
   const change = useMutation({
     mutationFn: ({ userID, role }: { userID: string; role: "owner" | "member" }) =>
-      patchMember(tenant!.id, userID, role),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["members", tenant?.id] }),
+      patchMember(workspace!.id, userID, role),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["members", workspace?.id] }),
   });
   const remove = useMutation({
-    mutationFn: (userID: string) => removeMember(tenant!.id, userID),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["members", tenant?.id] }),
+    mutationFn: (userID: string) => removeMember(workspace!.id, userID),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["members", workspace?.id] }),
   });
 
-  if (!tenant || !membersQ.data) return null;
-  const isOwner = tenant.role === "owner";
+  if (!workspace || !membersQ.data) return null;
+  const isOwner = workspace.role === "owner";
 
   return (
     <section className="space-y-6">
@@ -3450,7 +3450,7 @@ export default function MembersPage({ params }: { params: { slug: string } }) {
               <Button
                 variant="destructive"
                 onClick={() => remove.mutate(m.userId)}
-                aria-label={m.userId === me!.user.id ? "Leave tenant" : "Remove member"}
+                aria-label={m.userId === me!.user.id ? "Leave workspace" : "Remove member"}
               >
                 {m.userId === me!.user.id ? "Leave" : isOwner ? "Remove" : ""}
               </Button>
@@ -3465,7 +3465,7 @@ export default function MembersPage({ params }: { params: { slug: string } }) {
 }
 ```
 
-`ApiError` surfaces `last_owner` / `last_tenant` / `reauth_required` codes with helpful copy.
+`ApiError` surfaces `last_owner` / `last_workspace` / `reauth_required` codes with helpful copy.
 
 - [ ] **Step 3: Verify & commit**
 
@@ -3482,7 +3482,7 @@ feat(web): members settings page with role change / remove / leave
 
 Role dropdown is owner-only; remove is owner-only; every member can
 leave (row shows "Leave" for userId == self). ApiError surfaces
-last_owner / last_tenant / reauth_required codes with actionable copy.
+last_owner / last_workspace / reauth_required codes with actionable copy.
 EOF
 )"
 ```
@@ -3501,8 +3501,8 @@ EOF
 - [ ] **Step 1: API client**
 
 ```ts
-export async function createInvite(tenantID: string, body: { email: string; role: "owner" | "member" }) {
-  const res = await fetch(`${API_BASE}/api/v1/t/${tenantID}/invites`, {
+export async function createInvite(workspaceID: string, body: { email: string; role: "owner" | "member" }) {
+  const res = await fetch(`${API_BASE}/api/v1/t/${workspaceID}/invites`, {
     method: "POST", credentials: "include",
     headers: { "Content-Type": "application/json", "X-Folio-Request": "1" },
     body: JSON.stringify(body),
@@ -3511,8 +3511,8 @@ export async function createInvite(tenantID: string, body: { email: string; role
   return await res.json();
 }
 
-export async function revokeInvite(tenantID: string, inviteID: string) {
-  const res = await fetch(`${API_BASE}/api/v1/t/${tenantID}/invites/${inviteID}`, {
+export async function revokeInvite(workspaceID: string, inviteID: string) {
+  const res = await fetch(`${API_BASE}/api/v1/t/${workspaceID}/invites/${inviteID}`, {
     method: "DELETE", credentials: "include",
     headers: { "X-Folio-Request": "1" },
   });
@@ -3585,23 +3585,23 @@ import { formatDate } from "@/lib/format";
 
 export default function InvitesPage({ params }: { params: { slug: string } }) {
   const { data: me } = useIdentity();
-  const tenant = me?.tenants.find((t) => t.slug === params.slug);
+  const workspace = me?.workspaces.find((t) => t.slug === params.slug);
   const qc = useQueryClient();
   const q = useQuery({
-    queryKey: ["members", tenant?.id],
-    queryFn: () => getMembers(tenant!.id),
-    enabled: !!tenant,
+    queryKey: ["members", workspace?.id],
+    queryFn: () => getMembers(workspace!.id),
+    enabled: !!workspace,
   });
   const create = useMutation({
-    mutationFn: (body: { email: string; role: "owner" | "member" }) => createInvite(tenant!.id, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["members", tenant?.id] }),
+    mutationFn: (body: { email: string; role: "owner" | "member" }) => createInvite(workspace!.id, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["members", workspace?.id] }),
   });
   const revoke = useMutation({
-    mutationFn: (id: string) => revokeInvite(tenant!.id, id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["members", tenant?.id] }),
+    mutationFn: (id: string) => revokeInvite(workspace!.id, id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["members", workspace?.id] }),
   });
   const [dlg, setDlg] = useState(false);
-  if (!tenant || !q.data) return null;
+  if (!workspace || !q.data) return null;
 
   return (
     <section className="space-y-6">
@@ -3626,7 +3626,7 @@ export default function InvitesPage({ params }: { params: { slug: string } }) {
       <NewInviteDialog
         open={dlg}
         onOpenChange={setDlg}
-        canInviteOwner={tenant.role === "owner"}
+        canInviteOwner={workspace.role === "owner"}
         onSubmit={async (email, role) => { await create.mutateAsync({ email, role }); }}
       />
     </section>
@@ -3674,7 +3674,7 @@ export async function previewInvite(token: string) {
   const res = await fetch(`${API_BASE}/api/v1/auth/invites/${encodeURIComponent(token)}`);
   if (!res.ok) throw await toApiError(res);
   return await res.json() as {
-    tenantID: string; tenantName: string; tenantSlug: string;
+    workspaceID: string; workspaceName: string; workspaceSlug: string;
     inviterDisplayName: string; email: string;
     role: "owner" | "member"; expiresAt: string;
   };
@@ -3686,7 +3686,7 @@ export async function acceptInvite(token: string) {
     headers: { "X-Folio-Request": "1" },
   });
   if (!res.ok) throw await toApiError(res);
-  return await res.json() as { tenantId: string; userId: string; role: string };
+  return await res.json() as { workspaceId: string; userId: string; role: string };
 }
 ```
 
@@ -3720,8 +3720,8 @@ export default function AcceptInvitePage({ params }: { params: Promise<{ token: 
     onSuccess: async (res) => {
       await qc.invalidateQueries({ queryKey: ["me"] });
       // Resolve slug from the /me payload after invalidation.
-      const fresh = qc.getQueryData<{ tenants: { id: string; slug: string }[] }>(["me"]);
-      const slug = fresh?.tenants.find((t) => t.id === res.tenantId)?.slug ?? "";
+      const fresh = qc.getQueryData<{ workspaces: { id: string; slug: string }[] }>(["me"]);
+      const slug = fresh?.workspaces.find((t) => t.id === res.workspaceId)?.slug ?? "";
       router.push(`/t/${slug}`);
     },
   });
@@ -3742,7 +3742,7 @@ export default function AcceptInvitePage({ params }: { params: Promise<{ token: 
 
   return (
     <Card className="max-w-md mx-auto space-y-4">
-      <h1 className="text-xl font-semibold">Join {preview.data.tenantName}</h1>
+      <h1 className="text-xl font-semibold">Join {preview.data.workspaceName}</h1>
       <dl className="text-sm space-y-1">
         <dt className="inline font-medium">Invited by </dt>
         <dd className="inline">{preview.data.inviterDisplayName}</dd>
@@ -3760,7 +3760,7 @@ export default function AcceptInvitePage({ params }: { params: Promise<{ token: 
       )}
 
       <Button disabled={!emailMatches || accept.isPending} onClick={() => accept.mutate()}>
-        {accept.isPending ? "Joining…" : `Join ${preview.data.tenantName}`}
+        {accept.isPending ? "Joining…" : `Join ${preview.data.workspaceName}`}
       </Button>
       {accept.error && <ApiError error={accept.error} />}
     </Card>
@@ -3834,7 +3834,7 @@ import (
 
 // The full flow: Alice signs up, creates an invite for Bob, Bob
 // previews it, signs up consuming the token, and is a member of
-// Alice's tenant + his new Personal tenant.
+// Alice's workspace + his new Personal workspace.
 func TestE2E_InviteRoundTrip(t *testing.T) {
     pool := testdb.Pool(t)
     mockMail := mailer.NewLogMailer(nil)
@@ -3843,22 +3843,22 @@ func TestE2E_InviteRoundTrip(t *testing.T) {
     // 1. Alice signs up (plan 1 handler).
     post(t, srv, "/api/v1/auth/signup", `{
       "email":"alice@example.com","displayName":"Alice",
-      "password":"correcthorsebatterystaple","tenantName":"Alice"
+      "password":"correcthorsebatterystaple","workspaceName":"Alice"
     }`, 201)
     aliceCookie := lastSessionCookie(t, srv, "alice@example.com", "correcthorsebatterystaple")
 
-    // 2. Resolve Alice's tenant id from /me.
+    // 2. Resolve Alice's workspace id from /me.
     var me struct {
         User    struct{ ID string `json:"id"` }
-        Tenants []struct{ ID string; Role string }
+        Workspaces []struct{ ID string; Role string }
     }
     mustGetJSON(t, srv, "/api/v1/me", aliceCookie, &me)
-    tenantID := me.Tenants[0].ID
+    workspaceID := me.Workspaces[0].ID
 
     // RequireFreshReauth is not mounted in Plan 2 (§0.2); no reauth setup needed.
 
     // 3. Alice creates an invite for Bob.
-    body, status := post(t, srv, "/api/v1/t/"+tenantID+"/invites",
+    body, status := post(t, srv, "/api/v1/t/"+workspaceID+"/invites",
         `{"email":"bob@example.com","role":"member"}`, 201, withCookie(aliceCookie))
     _ = status
     var inv struct {
@@ -3873,14 +3873,14 @@ func TestE2E_InviteRoundTrip(t *testing.T) {
     // 5. Unauthenticated preview works.
     var preview map[string]any
     mustGetJSON(t, srv, "/api/v1/auth/invites/"+plaintext, "", &preview)
-    if preview["tenantName"] != "Alice" {
-        t.Fatalf("preview tenantName: %v", preview["tenantName"])
+    if preview["workspaceName"] != "Alice" {
+        t.Fatalf("preview workspaceName: %v", preview["workspaceName"])
     }
 
     // 6. Bob signs up with the invite.
     post(t, srv, "/api/v1/auth/signup", `{
       "email":"bob@example.com","displayName":"Bob",
-      "password":"correcthorsebatterystaple","tenantName":"Bob",
+      "password":"correcthorsebatterystaple","workspaceName":"Bob",
       "inviteToken":"`+plaintext+`"
     }`, 201)
 
@@ -3888,7 +3888,7 @@ func TestE2E_InviteRoundTrip(t *testing.T) {
     bobID := lookupUserID(t, pool, "bob@example.com")
     var count int
     _ = pool.QueryRow(context.Background(),
-        `select count(*) from tenant_memberships where user_id = $1`, bobID).Scan(&count)
+        `select count(*) from workspace_memberships where user_id = $1`, bobID).Scan(&count)
     if count != 2 {
         t.Fatalf("want 2 memberships, got %d", count)
     }
@@ -3896,7 +3896,7 @@ func TestE2E_InviteRoundTrip(t *testing.T) {
     // 8. Invite is consumed.
     var accepted *time.Time
     _ = pool.QueryRow(context.Background(),
-        `select accepted_at from tenant_invites where email = 'bob@example.com'`).Scan(&accepted)
+        `select accepted_at from workspace_invites where email = 'bob@example.com'`).Scan(&accepted)
     if accepted == nil {
         t.Fatal("invite not accepted")
     }
@@ -3976,7 +3976,7 @@ kill %1
 
 ```bash
 cd /Users/xmedavid/dev/folio/backend
-rg -l 'UpdateTenant|SoftDeleteTenant|RestoreTenant|ChangeRole|RemoveMember|LeaveTenant' internal/identity/
+rg -l 'UpdateWorkspace|SoftDeleteWorkspace|RestoreWorkspace|ChangeRole|RemoveMember|LeaveWorkspace' internal/identity/
 rg -l 'InviteService.*Create|InviteService.*Preview|InviteService.*Accept|InviteService.*Revoke' internal/identity/
 rg -l 'mailer\.Mailer|mailer\.LogMailer' internal/
 ```
@@ -3996,9 +3996,9 @@ Expected: clean (all prior tasks committed their own work).
 
 ## Self-review checklist (run after writing all tasks, before declaring done)
 
-- [ ] Every spec section in scope (§3.4 invariants, §4.2 invite routes, §4.4 tenant-scoped routes, §8.3 audit events, §10 sweeper, §13 web pages) has at least one task.
-- [ ] Canonical function names (`UpdateTenant`, `SoftDeleteTenant`, `RestoreTenant`, `ChangeRole`, `RemoveMember`, `LeaveTenant`, `InviteService.Create`, `InviteService.Preview`, `InviteService.Accept`, `InviteService.Revoke`, `mailer.Mailer`, `mailer.LogMailer`) appear exactly as named.
-- [ ] Every task has a commit step using Conventional Commits scopes (`feat(tenants)`, `feat(invites)`, `feat(mailer)`, `feat(jobs)`, `feat(web)`, `refactor(httpx)`, `test(invites)`).
+- [ ] Every spec section in scope (§3.4 invariants, §4.2 invite routes, §4.4 workspace-scoped routes, §8.3 audit events, §10 sweeper, §13 web pages) has at least one task.
+- [ ] Canonical function names (`UpdateWorkspace`, `SoftDeleteWorkspace`, `RestoreWorkspace`, `ChangeRole`, `RemoveMember`, `LeaveWorkspace`, `InviteService.Create`, `InviteService.Preview`, `InviteService.Accept`, `InviteService.Revoke`, `mailer.Mailer`, `mailer.LogMailer`) appear exactly as named.
+- [ ] Every task has a commit step using Conventional Commits scopes (`feat(workspaces)`, `feat(invites)`, `feat(mailer)`, `feat(jobs)`, `feat(web)`, `refactor(httpx)`, `test(invites)`).
 - [ ] No "TODO", "TBD", "similar to Task N", "pseudocode", or "add appropriate error handling" strings remain.
 - [ ] Every code block is real code the implementer can paste and compile, not sketches.
 - [ ] Fresh-reauth middleware is deliberately NOT mounted in Plan 2 (deferred to Plan 4); the rationale is documented in §0.2 and Tasks 9/10/11.

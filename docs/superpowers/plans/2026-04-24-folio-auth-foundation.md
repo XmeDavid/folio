@@ -2,18 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the `X-Tenant-ID` dev bridge with real session-cookie authentication and land the multi-tenant membership schema. Ship signup, login, logout, `/me`, tenant creation, and member listing end-to-end; move the web app to `/t/{slug}/…` routing.
+**Goal:** Replace the `X-Workspace-ID` dev bridge with real session-cookie authentication and land the workspace-scoped membership schema. Ship signup, login, logout, `/me`, workspace creation, and member listing end-to-end; move the web app to `/t/{slug}/…` routing.
 
-**Architecture:** A new `backend/internal/auth` package owns password hashing, session cookies, middleware (`RequireSession`, `RequireMembership`, `RequireRole`, `RequireFreshReauth` stub, `CSRF`, rate limits), and the signup/login/logout HTTP handlers. The existing `backend/internal/identity` package is trimmed and extended to own user/tenant/membership queries (`Me`, `CreateTenant`, `ListMembers`). The identity migration (`20260424000001_identity.sql`) is rewritten in place to ship the full auth-and-tenancy schema. The Next.js app router moves tenant-scoped pages under `/t/[slug]/…`; the `localStorage` identity bridge is deleted in favour of a React Query hook around `GET /api/v1/me`.
+**Architecture:** A new `backend/internal/auth` package owns password hashing, session cookies, middleware (`RequireSession`, `RequireMembership`, `RequireRole`, `RequireFreshReauth` stub, `CSRF`, rate limits), and the signup/login/logout HTTP handlers. The existing `backend/internal/identity` package is trimmed and extended to own user/workspace/membership queries (`Me`, `CreateWorkspace`, `ListMembers`). The identity migration (`20260424000001_identity.sql`) is rewritten in place to ship the full auth-and-workspace schema. The Next.js app router moves workspace-scoped pages under `/t/[slug]/…`; the `localStorage` identity bridge is deleted in favour of a React Query hook around `GET /api/v1/me`.
 
 **Tech Stack:** Go 1.25 (chi v5, pgx/v5, `golang.org/x/crypto/argon2`, `github.com/bits-and-blooms/bloom/v3`). Postgres 17. Next.js 16 (App Router), React Query, Tailwind v4, shadcn/ui.
 
-**Spec:** `docs/superpowers/specs/2026-04-24-folio-auth-and-tenancy-design.md` — column-level source of truth. This plan cross-references spec sections for context.
+**Spec:** `docs/superpowers/specs/2026-04-24-folio-auth-and-workspace-design.md` — column-level source of truth. This plan cross-references spec sections for context.
 
 **Prior plans in series:** none (this is plan 1 of 5).
 
 **Plans that follow:**
-- `docs/superpowers/plans/2026-04-24-folio-invites-and-tenant-lifecycle.md` (plan 2)
+- `docs/superpowers/plans/2026-04-24-folio-invites-and-workspace-lifecycle.md` (plan 2)
 - `docs/superpowers/plans/2026-04-24-folio-email-infrastructure.md` (plan 3)
 - `docs/superpowers/plans/2026-04-24-folio-mfa.md` (plan 4)
 - `docs/superpowers/plans/2026-04-24-folio-admin-console.md` (plan 5)
@@ -75,9 +75,9 @@ Never run in production.
 
 **Packages:** `backend/internal/auth`, `backend/internal/identity`, `backend/internal/testdb`.
 
-**Types:** `identity.Role` (`RoleOwner`, `RoleMember`), `identity.Tenant`, `identity.User`, `identity.Membership`, `identity.Invite` (defined, unused until plan 2). `auth.Service`, `auth.Session`, `auth.Handler`.
+**Types:** `identity.Role` (`RoleOwner`, `RoleMember`), `identity.Workspace`, `identity.User`, `identity.Membership`, `identity.Invite` (defined, unused until plan 2). `auth.Service`, `auth.Session`, `auth.Handler`.
 
-**Functions:** `auth.HashPassword` / `VerifyPassword` / `CheckPasswordPolicy` / `GenerateSessionToken` / `HashToken` / `SetSessionCookie` / `ClearSessionCookie` / `RequireSession` / `RequireMembership` / `RequireRole` / `RequireFreshReauth` (stub) / `CSRF` / `UserFromCtx` / `TenantFromCtx` / `RoleFromCtx` / `MustUser` / `MustTenant`.
+**Functions:** `auth.HashPassword` / `VerifyPassword` / `CheckPasswordPolicy` / `GenerateSessionToken` / `HashToken` / `SetSessionCookie` / `ClearSessionCookie` / `RequireSession` / `RequireMembership` / `RequireRole` / `RequireFreshReauth` (stub) / `CSRF` / `UserFromCtx` / `WorkspaceFromCtx` / `RoleFromCtx` / `MustUser` / `MustWorkspace`.
 
 ---
 
@@ -85,7 +85,7 @@ Never run in production.
 
 Spec reference: §3 entire, §10 (soft delete columns), §12 (rollout).
 
-### Task 1.1: Rewrite identity migration with the full auth-and-tenancy schema
+### Task 1.1: Rewrite identity migration with the full auth-and-workspace schema
 
 **Files:**
 - Modify: `backend/db/migrations/20260424000001_identity.sql`
@@ -93,8 +93,8 @@ Spec reference: §3 entire, §10 (soft delete columns), §12 (rollout).
 - [ ] **Step 1: Replace the file's contents**
 
 ```sql
--- Folio v2 domain — identity, tenancy, auth, memberships.
--- Tenants own financial data; users authenticate and can belong to many tenants.
+-- Folio v2 domain — identity, workspace, auth, memberships.
+-- Workspaces own financial data; users authenticate and can belong to many workspaces.
 
 create extension if not exists citext;
 
@@ -110,12 +110,12 @@ $$;
 create domain money_currency as varchar(10)
   check (value ~ '^[A-Z0-9]{3,10}$');
 
--- Shared: tenant_role enum. Owner and member are the only roles in v1.
-create type tenant_role as enum ('owner', 'member');
+-- Shared: workspace_role enum. Owner and member are the only roles in v1.
+create type workspace_role as enum ('owner', 'member');
 
--- Tenants: root of the financial data graph. Not tenant-scoped itself.
--- FKs to tenants always reference tenants(id); never composite.
-create table tenants (
+-- Workspaces: root of the financial data graph. Not workspace-scoped itself.
+-- FKs to workspaces always reference workspaces(id); never composite.
+create table workspaces (
   id                uuid primary key,
   name              text not null,
   slug              citext not null unique
@@ -129,14 +129,14 @@ create table tenants (
   updated_at        timestamptz not null default now()
 );
 
-create trigger tenants_updated_at before update on tenants
+create trigger workspaces_updated_at before update on workspaces
   for each row execute function set_updated_at();
 
-create index tenants_deleted_at_idx
-  on tenants (deleted_at)
+create index workspaces_deleted_at_idx
+  on workspaces (deleted_at)
   where deleted_at is not null;
 
--- Users: authenticate into zero or more tenants via tenant_memberships.
+-- Users: authenticate into zero or more workspaces via workspace_memberships.
 -- password_hash is NOT NULL; signup always sets it.
 create table users (
   id                 uuid primary key,
@@ -144,7 +144,7 @@ create table users (
   password_hash      text not null,
   display_name       text not null,
   email_verified_at  timestamptz,
-  last_tenant_id     uuid references tenants(id) on delete set null,
+  last_workspace_id     uuid references workspaces(id) on delete set null,
   is_admin           boolean not null default false,
   last_login_at      timestamptz,
   created_at         timestamptz not null default now(),
@@ -154,7 +154,7 @@ create table users (
 create trigger users_updated_at before update on users
   for each row execute function set_updated_at();
 
--- user_preferences: per-user UI settings. No tenant_id; reaches tenant via
+-- user_preferences: per-user UI settings. No workspace_id; reaches workspace via
 -- the user's active membership at read time.
 create table user_preferences (
   user_id           uuid primary key references users(id) on delete cascade,
@@ -169,35 +169,35 @@ create table user_preferences (
 create trigger user_preferences_updated_at before update on user_preferences
   for each row execute function set_updated_at();
 
--- tenant_memberships: a user can belong to many tenants with a role each.
--- Primary key (tenant_id, user_id) — a user cannot have two roles in one tenant.
-create table tenant_memberships (
-  tenant_id   uuid not null references tenants(id) on delete cascade,
+-- workspace_memberships: a user can belong to many workspaces with a role each.
+-- Primary key (workspace_id, user_id) — a user cannot have two roles in one workspace.
+create table workspace_memberships (
+  workspace_id   uuid not null references workspaces(id) on delete cascade,
   user_id     uuid not null references users(id)   on delete cascade,
-  role        tenant_role not null,
+  role        workspace_role not null,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now(),
-  primary key (tenant_id, user_id)
+  primary key (workspace_id, user_id)
 );
 
-create index tenant_memberships_user_id_idx
-  on tenant_memberships (user_id);
+create index workspace_memberships_user_id_idx
+  on workspace_memberships (user_id);
 
--- Partial index for the "does this tenant still have an owner?" check.
-create index tenant_memberships_owners
-  on tenant_memberships (tenant_id)
+-- Partial index for the "does this workspace still have an owner?" check.
+create index workspace_memberships_owners
+  on workspace_memberships (workspace_id)
   where role = 'owner';
 
-create trigger tenant_memberships_updated_at before update on tenant_memberships
+create trigger workspace_memberships_updated_at before update on workspace_memberships
   for each row execute function set_updated_at();
 
--- tenant_invites: pending invitations to join a tenant.
+-- workspace_invites: pending invitations to join a workspace.
 -- token_hash is sha256(plaintext); plaintext ships only in the email.
-create table tenant_invites (
+create table workspace_invites (
   id                  uuid primary key,
-  tenant_id           uuid not null references tenants(id) on delete cascade,
+  workspace_id           uuid not null references workspaces(id) on delete cascade,
   email               citext not null,
-  role                tenant_role not null,
+  role                workspace_role not null,
   token_hash          bytea not null unique,
   invited_by_user_id  uuid not null references users(id) on delete restrict,
   created_at          timestamptz not null default now(),
@@ -206,9 +206,9 @@ create table tenant_invites (
   revoked_at          timestamptz
 );
 
-create index tenant_invites_tenant_id_idx on tenant_invites (tenant_id);
-create index tenant_invites_pending_email_idx
-  on tenant_invites (email)
+create index workspace_invites_workspace_id_idx on workspace_invites (workspace_id);
+create index workspace_invites_pending_email_idx
+  on workspace_invites (email)
   where accepted_at is null and revoked_at is null;
 
 -- auth_tokens: unified single-use tokens for email verify / password reset /
@@ -289,7 +289,7 @@ create index totp_credentials_user_id_idx on totp_credentials(user_id);
 -- audit_events: append-only activity log. Plans 1+ write to this.
 create table audit_events (
   id              uuid primary key,
-  tenant_id       uuid references tenants(id) on delete cascade,
+  workspace_id       uuid references workspaces(id) on delete cascade,
   actor_user_id   uuid references users(id) on delete set null,
   action          text not null,
   entity_type     text,
@@ -301,7 +301,7 @@ create table audit_events (
   at              timestamptz not null default now()
 );
 
-create index audit_events_tenant_id_at_idx on audit_events (tenant_id, at desc);
+create index audit_events_workspace_id_at_idx on audit_events (workspace_id, at desc);
 create index audit_events_actor_user_id_at_idx on audit_events (actor_user_id, at desc);
 create index audit_events_action_at_idx on audit_events (action, at desc);
 ```
@@ -335,7 +335,7 @@ Applying version 20260424000001 (1 statements):
 atlas migrate apply --env local
 ```
 
-Expected: all 14 migrations apply cleanly. No errors from downstream migrations (they don't reference the dropped `users.tenant_id`).
+Expected: all 14 migrations apply cleanly. No errors from downstream migrations (they don't reference the dropped `users.workspace_id`).
 
 - [ ] **Step 5: Verify with sqlc**
 
@@ -343,13 +343,13 @@ Expected: all 14 migrations apply cleanly. No errors from downstream migrations 
 cd backend && sqlc generate
 ```
 
-Expected: `sqlc` reports no schema errors. If a downstream migration FK-referenced `users(tenant_id, id)`, this step fails; fix inline.
+Expected: `sqlc` reports no schema errors. If a downstream migration FK-referenced `users(workspace_id, id)`, this step fails; fix inline.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add backend/db/migrations/20260424000001_identity.sql backend/db/migrations/atlas.sum
-git commit -m "chore(migrations): rewrite identity migration for v2 auth and multi-tenancy"
+git commit -m "chore(migrations): rewrite identity migration for v2 auth and workspace-scoped"
 ```
 
 ---
@@ -559,7 +559,7 @@ Expected: FAIL with "undefined: HashPassword".
 // Package auth owns credential primitives (password hashing, session tokens),
 // HTTP middleware (RequireSession, RequireMembership, RequireRole,
 // RequireFreshReauth, CSRF), rate limiters, and the signup/login/logout
-// HTTP surface. It is intentionally free of tenant-scoped queries; those
+// HTTP surface. It is intentionally free of workspace-scoped queries; those
 // live in backend/internal/identity.
 package auth
 
@@ -1127,7 +1127,7 @@ Spec reference: §3.5, §4.3, §4.4.
 - [ ] **Step 1: Replace `doc.go` with the new purpose**
 
 ```go
-// Package identity owns read/write queries for users, tenants, memberships,
+// Package identity owns read/write queries for users, workspaces, memberships,
 // and (in plan 2) invites. It is intentionally free of credential code —
 // password hashing, session cookies, and HTTP middleware live in
 // backend/internal/auth.
@@ -1145,7 +1145,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Role is the per-tenant membership role. Matches the Postgres `tenant_role` enum.
+// Role is the per-workspace membership role. Matches the Postgres `workspace_role` enum.
 type Role string
 
 const (
@@ -1156,8 +1156,8 @@ const (
 // Valid reports whether r is a known role.
 func (r Role) Valid() bool { return r == RoleOwner || r == RoleMember }
 
-// Tenant is the wire/read-model shape of a tenant row.
-type Tenant struct {
+// Workspace is the wire/read-model shape of a workspace row.
+type Workspace struct {
 	ID             uuid.UUID  `json:"id"`
 	Name           string     `json:"name"`
 	Slug           string     `json:"slug"`
@@ -1176,21 +1176,21 @@ type User struct {
 	DisplayName     string     `json:"displayName"`
 	EmailVerifiedAt *time.Time `json:"emailVerifiedAt,omitempty"`
 	IsAdmin         bool       `json:"isAdmin"`
-	LastTenantID    *uuid.UUID `json:"lastTenantId,omitempty"`
+	LastWorkspaceID    *uuid.UUID `json:"lastWorkspaceId,omitempty"`
 	CreatedAt       time.Time  `json:"createdAt"`
 }
 
-// Membership is a (tenant, user, role) triple.
+// Membership is a (workspace, user, role) triple.
 type Membership struct {
-	TenantID  uuid.UUID `json:"tenantId"`
+	WorkspaceID  uuid.UUID `json:"workspaceId"`
 	UserID    uuid.UUID `json:"userId"`
 	Role      Role      `json:"role"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// TenantWithRole attaches the caller's role on a tenant for the /me response.
-type TenantWithRole struct {
-	Tenant
+// WorkspaceWithRole attaches the caller's role on a workspace for the /me response.
+type WorkspaceWithRole struct {
+	Workspace
 	Role Role `json:"role"`
 }
 
@@ -1198,7 +1198,7 @@ type TenantWithRole struct {
 // Plan 1 leaves it unused.
 type Invite struct {
 	ID               uuid.UUID  `json:"id"`
-	TenantID         uuid.UUID  `json:"tenantId"`
+	WorkspaceID         uuid.UUID  `json:"workspaceId"`
 	Email            string     `json:"email"`
 	Role             Role       `json:"role"`
 	InvitedByUserID  uuid.UUID  `json:"invitedByUserId"`
@@ -1221,7 +1221,7 @@ Expected: success.
 
 ```bash
 git add backend/internal/identity/
-git commit -m "feat(identity): add Role/Tenant/User/Membership domain types"
+git commit -m "feat(identity): add Role/Workspace/User/Membership domain types"
 ```
 
 ### Task 5.2: `identity.Slugify`
@@ -1333,7 +1333,7 @@ git add backend/internal/identity/slug.go backend/internal/identity/slug_test.go
 git commit -m "feat(identity): add Slugify helper"
 ```
 
-### Task 5.3: `identity.Service` core (Me + CreateTenant + ListMembers)
+### Task 5.3: `identity.Service` core (Me + CreateWorkspace + ListMembers)
 
 **Files:**
 - Replace: `backend/internal/identity/service.go` (remove `Bootstrap`, keep new shape)
@@ -1360,7 +1360,7 @@ import (
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
-// Service owns writes and reads for users, tenants, and memberships.
+// Service owns writes and reads for users, workspaces, and memberships.
 type Service struct {
 	pool *pgxpool.Pool
 	now  func() time.Time
@@ -1371,15 +1371,15 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, now: time.Now}
 }
 
-// Me returns the user + every tenant they belong to, with their role per
-// tenant. Soft-deleted tenants are excluded.
-func (s *Service) Me(ctx context.Context, userID uuid.UUID) (User, []TenantWithRole, error) {
+// Me returns the user + every workspace they belong to, with their role per
+// workspace. Soft-deleted workspaces are excluded.
+func (s *Service) Me(ctx context.Context, userID uuid.UUID) (User, []WorkspaceWithRole, error) {
 	var u User
 	err := s.pool.QueryRow(ctx, `
-		select id, email, display_name, email_verified_at, is_admin, last_tenant_id, created_at
+		select id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at
 		from users
 		where id = $1
-	`, userID).Scan(&u.ID, &u.Email, &u.DisplayName, &u.EmailVerifiedAt, &u.IsAdmin, &u.LastTenantID, &u.CreatedAt)
+	`, userID).Scan(&u.ID, &u.Email, &u.DisplayName, &u.EmailVerifiedAt, &u.IsAdmin, &u.LastWorkspaceID, &u.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return u, nil, httpx.NewNotFoundError("user")
@@ -1388,8 +1388,8 @@ func (s *Service) Me(ctx context.Context, userID uuid.UUID) (User, []TenantWithR
 	}
 	rows, err := s.pool.Query(ctx, `
 		select t.id, t.name, t.slug, t.base_currency, t.cycle_anchor_day, t.locale, t.timezone, t.deleted_at, t.created_at, m.role
-		from tenant_memberships m
-		join tenants t on t.id = m.tenant_id
+		from workspace_memberships m
+		join workspaces t on t.id = m.workspace_id
 		where m.user_id = $1 and t.deleted_at is null
 		order by t.name
 	`, userID)
@@ -1397,23 +1397,23 @@ func (s *Service) Me(ctx context.Context, userID uuid.UUID) (User, []TenantWithR
 		return u, nil, fmt.Errorf("list memberships: %w", err)
 	}
 	defer rows.Close()
-	var tenants []TenantWithRole
+	var workspaces []WorkspaceWithRole
 	for rows.Next() {
-		var tr TenantWithRole
+		var tr WorkspaceWithRole
 		if err := rows.Scan(&tr.ID, &tr.Name, &tr.Slug, &tr.BaseCurrency, &tr.CycleAnchorDay,
 			&tr.Locale, &tr.Timezone, &tr.DeletedAt, &tr.CreatedAt, &tr.Role); err != nil {
 			return u, nil, fmt.Errorf("scan membership: %w", err)
 		}
-		tenants = append(tenants, tr)
+		workspaces = append(workspaces, tr)
 	}
 	if rows.Err() != nil {
 		return u, nil, rows.Err()
 	}
-	return u, tenants, nil
+	return u, workspaces, nil
 }
 
-// CreateTenantInput is the validated input to CreateTenant.
-type CreateTenantInput struct {
+// CreateWorkspaceInput is the validated input to CreateWorkspace.
+type CreateWorkspaceInput struct {
 	Name           string
 	BaseCurrency   string
 	CycleAnchorDay int
@@ -1421,7 +1421,7 @@ type CreateTenantInput struct {
 	Timezone       string
 }
 
-func (in CreateTenantInput) normalize() (CreateTenantInput, error) {
+func (in CreateWorkspaceInput) normalize() (CreateWorkspaceInput, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.Locale = strings.TrimSpace(in.Locale)
 	in.Timezone = strings.TrimSpace(in.Timezone)
@@ -1448,42 +1448,42 @@ func (in CreateTenantInput) normalize() (CreateTenantInput, error) {
 	return in, nil
 }
 
-// CreateTenant creates a tenant with a unique slug derived from its name,
+// CreateWorkspace creates a workspace with a unique slug derived from its name,
 // and installs the calling user as an owner in the same transaction.
-// Returns the tenant and the membership.
-func (s *Service) CreateTenant(ctx context.Context, userID uuid.UUID, raw CreateTenantInput) (Tenant, Membership, error) {
+// Returns the workspace and the membership.
+func (s *Service) CreateWorkspace(ctx context.Context, userID uuid.UUID, raw CreateWorkspaceInput) (Workspace, Membership, error) {
 	in, err := raw.normalize()
 	if err != nil {
-		return Tenant{}, Membership{}, err
+		return Workspace{}, Membership{}, err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return Tenant{}, Membership{}, fmt.Errorf("begin: %w", err)
+		return Workspace{}, Membership{}, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	t, err := insertTenantTx(ctx, tx, uuidx.New(), in)
+	t, err := insertWorkspaceTx(ctx, tx, uuidx.New(), in)
 	if err != nil {
-		return Tenant{}, Membership{}, err
+		return Workspace{}, Membership{}, err
 	}
 	m, err := insertMembershipTx(ctx, tx, t.ID, userID, RoleOwner)
 	if err != nil {
-		return Tenant{}, Membership{}, err
+		return Workspace{}, Membership{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Tenant{}, Membership{}, fmt.Errorf("commit: %w", err)
+		return Workspace{}, Membership{}, fmt.Errorf("commit: %w", err)
 	}
 	return t, m, nil
 }
 
-// ListMembers returns every membership in tenantID. Plan 1 ships list-only;
+// ListMembers returns every membership in workspaceID. Plan 1 ships list-only;
 // plan 2 extends with pending invites.
-func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) ([]Membership, error) {
+func (s *Service) ListMembers(ctx context.Context, workspaceID uuid.UUID) ([]Membership, error) {
 	rows, err := s.pool.Query(ctx, `
-		select tenant_id, user_id, role, created_at
-		from tenant_memberships
-		where tenant_id = $1
+		select workspace_id, user_id, role, created_at
+		from workspace_memberships
+		where workspace_id = $1
 		order by created_at
-	`, tenantID)
+	`, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list members: %w", err)
 	}
@@ -1491,7 +1491,7 @@ func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) ([]Member
 	var out []Membership
 	for rows.Next() {
 		var m Membership
-		if err := rows.Scan(&m.TenantID, &m.UserID, &m.Role, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.WorkspaceID, &m.UserID, &m.Role, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -1499,9 +1499,9 @@ func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) ([]Member
 	return out, rows.Err()
 }
 
-// insertTenantTx/insertMembershipTx are exposed as package-private so
+// insertWorkspaceTx/insertMembershipTx are exposed as package-private so
 // auth.Service.Signup can reuse them inside its own transaction.
-func insertTenantTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in CreateTenantInput) (Tenant, error) {
+func insertWorkspaceTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in CreateWorkspaceInput) (Workspace, error) {
 	base := Slugify(in.Name)
 	if base == "" {
 		base = "workspace"
@@ -1509,9 +1509,9 @@ func insertTenantTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in CreateTenan
 	// Collision-suffix loop. Caps at 100 attempts then fails.
 	slug := base
 	for i := 0; i < 100; i++ {
-		var t Tenant
+		var t Workspace
 		err := tx.QueryRow(ctx, `
-			insert into tenants (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
+			insert into workspaces (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
 			values ($1,$2,$3,$4,$5,$6,$7)
 			returning id, name, slug, base_currency, cycle_anchor_day, locale, timezone, deleted_at, created_at
 		`, id, in.Name, slug, in.BaseCurrency, in.CycleAnchorDay, in.Locale, in.Timezone).
@@ -1519,22 +1519,22 @@ func insertTenantTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in CreateTenan
 		if err == nil {
 			return t, nil
 		}
-		if !isUniqueViolation(err, "tenants_slug_key") {
-			return Tenant{}, fmt.Errorf("insert tenant: %w", err)
+		if !isUniqueViolation(err, "workspaces_slug_key") {
+			return Workspace{}, fmt.Errorf("insert workspace: %w", err)
 		}
 		// Collision — suffix and retry.
 		slug = fmt.Sprintf("%s-%d", base, i+2)
 	}
-	return Tenant{}, httpx.NewValidationError("could not generate unique slug")
+	return Workspace{}, httpx.NewValidationError("could not generate unique slug")
 }
 
-func insertMembershipTx(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UUID, role Role) (Membership, error) {
+func insertMembershipTx(ctx context.Context, tx pgx.Tx, workspaceID, userID uuid.UUID, role Role) (Membership, error) {
 	var m Membership
 	err := tx.QueryRow(ctx, `
-		insert into tenant_memberships (tenant_id, user_id, role)
+		insert into workspace_memberships (workspace_id, user_id, role)
 		values ($1, $2, $3)
-		returning tenant_id, user_id, role, created_at
-	`, tenantID, userID, role).Scan(&m.TenantID, &m.UserID, &m.Role, &m.CreatedAt)
+		returning workspace_id, user_id, role, created_at
+	`, workspaceID, userID, role).Scan(&m.WorkspaceID, &m.UserID, &m.Role, &m.CreatedAt)
 	if err != nil {
 		return Membership{}, fmt.Errorf("insert membership: %w", err)
 	}
@@ -1569,8 +1569,8 @@ import (
 	"github.com/xmedavid/folio/backend/internal/httpx"
 )
 
-func TestCreateTenantInput_normalize(t *testing.T) {
-	good := CreateTenantInput{
+func TestCreateWorkspaceInput_normalize(t *testing.T) {
+	good := CreateWorkspaceInput{
 		Name: "  My Workspace ", BaseCurrency: "chf", Locale: "en-CH",
 	}
 	out, err := good.normalize()
@@ -1588,12 +1588,12 @@ func TestCreateTenantInput_normalize(t *testing.T) {
 	}
 }
 
-func TestCreateTenantInput_normalize_errors(t *testing.T) {
-	cases := []struct{ name string; in CreateTenantInput }{
-		{"missing name", CreateTenantInput{BaseCurrency: "CHF", Locale: "en"}},
-		{"missing locale", CreateTenantInput{Name: "x", BaseCurrency: "CHF"}},
-		{"bad currency", CreateTenantInput{Name: "x", BaseCurrency: "zz", Locale: "en"}},
-		{"bad day", CreateTenantInput{Name: "x", BaseCurrency: "CHF", Locale: "en", CycleAnchorDay: 40}},
+func TestCreateWorkspaceInput_normalize_errors(t *testing.T) {
+	cases := []struct{ name string; in CreateWorkspaceInput }{
+		{"missing name", CreateWorkspaceInput{BaseCurrency: "CHF", Locale: "en"}},
+		{"missing locale", CreateWorkspaceInput{Name: "x", BaseCurrency: "CHF"}},
+		{"bad currency", CreateWorkspaceInput{Name: "x", BaseCurrency: "zz", Locale: "en"}},
+		{"bad day", CreateWorkspaceInput{Name: "x", BaseCurrency: "CHF", Locale: "en", CycleAnchorDay: 40}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1623,7 +1623,7 @@ import (
 	"github.com/xmedavid/folio/backend/internal/testdb"
 )
 
-func TestService_CreateTenant_integration(t *testing.T) {
+func TestService_CreateWorkspace_integration(t *testing.T) {
 	testdb.WithTx(t, func(ctx context.Context, tx pgx.Tx) {
 		// Seed a user so the membership FK has a target.
 		userID := uuid.New()
@@ -1637,24 +1637,24 @@ func TestService_CreateTenant_integration(t *testing.T) {
 		// We can't use the Service directly without a pool; run the insert
 		// helpers against the tx.
 		slug := Slugify("Personal")
-		var tenantID uuid.UUID
+		var workspaceID uuid.UUID
 		if err := tx.QueryRow(ctx, `
-			insert into tenants (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
+			insert into workspaces (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
 			values ($1, 'Personal', $2, 'CHF', 1, 'en-CH', 'Europe/Zurich')
 			returning id
-		`, uuid.New(), slug).Scan(&tenantID); err != nil {
-			t.Fatalf("insert tenant: %v", err)
+		`, uuid.New(), slug).Scan(&workspaceID); err != nil {
+			t.Fatalf("insert workspace: %v", err)
 		}
 		if _, err := tx.Exec(ctx, `
-			insert into tenant_memberships (tenant_id, user_id, role)
+			insert into workspace_memberships (workspace_id, user_id, role)
 			values ($1, $2, 'owner')
-		`, tenantID, userID); err != nil {
+		`, workspaceID, userID); err != nil {
 			t.Fatalf("insert membership: %v", err)
 		}
 		var role string
 		if err := tx.QueryRow(ctx, `
-			select role from tenant_memberships where tenant_id = $1 and user_id = $2
-		`, tenantID, userID).Scan(&role); err != nil {
+			select role from workspace_memberships where workspace_id = $1 and user_id = $2
+		`, workspaceID, userID).Scan(&role); err != nil {
 			t.Fatalf("read membership: %v", err)
 		}
 		if role != "owner" {
@@ -1680,7 +1680,7 @@ Expected: unit tests PASS; integration test PASS or SKIP if `DATABASE_URL` unset
 
 ```bash
 git add backend/internal/identity/
-git commit -m "refactor(identity): replace Bootstrap with Me/CreateTenant/ListMembers"
+git commit -m "refactor(identity): replace Bootstrap with Me/CreateWorkspace/ListMembers"
 ```
 
 ---
@@ -1784,7 +1784,7 @@ import (
 	"github.com/xmedavid/folio/backend/internal/testdb"
 )
 
-func TestSignup_createsUserPersonalTenantAndSession(t *testing.T) {
+func TestSignup_createsUserPersonalWorkspaceAndSession(t *testing.T) {
 	testdb.WithTx(t, func(ctx context.Context, tx pgx.Tx) {
 		// Using tx directly via a tx-scoped pool shim. For this test we
 		// inline the minimal flow so the integration test does not depend
@@ -1823,7 +1823,7 @@ type SignupInput struct {
 	Email          string
 	Password       string
 	DisplayName    string
-	TenantName     string
+	WorkspaceName     string
 	BaseCurrency   string
 	CycleAnchorDay int
 	Locale         string
@@ -1836,7 +1836,7 @@ type SignupInput struct {
 func (in SignupInput) normalize() (SignupInput, error) {
 	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
 	in.DisplayName = strings.TrimSpace(in.DisplayName)
-	in.TenantName = strings.TrimSpace(in.TenantName)
+	in.WorkspaceName = strings.TrimSpace(in.WorkspaceName)
 	in.Locale = strings.TrimSpace(in.Locale)
 	in.Timezone = strings.TrimSpace(in.Timezone)
 	if in.Email == "" || !strings.Contains(in.Email, "@") {
@@ -1848,8 +1848,8 @@ func (in SignupInput) normalize() (SignupInput, error) {
 	if err := CheckPasswordPolicy(in.Password, in.Email, in.DisplayName); err != nil {
 		return in, err
 	}
-	if in.TenantName == "" {
-		in.TenantName = fmt.Sprintf("%s's Workspace", strings.Fields(in.DisplayName)[0])
+	if in.WorkspaceName == "" {
+		in.WorkspaceName = fmt.Sprintf("%s's Workspace", strings.Fields(in.DisplayName)[0])
 	}
 	if in.Locale == "" {
 		in.Locale = "en-US"
@@ -1878,12 +1878,12 @@ func (in SignupInput) normalize() (SignupInput, error) {
 // SignupResult is returned by Signup.
 type SignupResult struct {
 	User         identity.User
-	Tenant       identity.Tenant
+	Workspace       identity.Workspace
 	Membership   identity.Membership
 	SessionToken string
 }
 
-// Signup creates a user, their Personal tenant, an owner membership, and a
+// Signup creates a user, their Personal workspace, an owner membership, and a
 // session — all in one transaction. Returns the plaintext session token for
 // the handler to set in a cookie.
 func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, error) {
@@ -1910,10 +1910,10 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 	err = tx.QueryRow(ctx, `
 		insert into users (id, email, password_hash, display_name)
 		values ($1, $2, $3, $4)
-		returning id, email, display_name, email_verified_at, is_admin, last_tenant_id, created_at
+		returning id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at
 	`, userID, in.Email, hash, in.DisplayName).Scan(
 		&user.ID, &user.Email, &user.DisplayName, &user.EmailVerifiedAt,
-		&user.IsAdmin, &user.LastTenantID, &user.CreatedAt,
+		&user.IsAdmin, &user.LastWorkspaceID, &user.CreatedAt,
 	)
 	if err != nil {
 		if isUniqueViolation(err, "users_email_key") {
@@ -1922,28 +1922,28 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 		return nil, fmt.Errorf("insert user: %w", err)
 	}
 
-	// Insert Personal tenant + owner membership using identity helpers.
-	tenantCI := identity.CreateTenantInput{
-		Name: in.TenantName, BaseCurrency: in.BaseCurrency,
+	// Insert Personal workspace + owner membership using identity helpers.
+	workspaceCI := identity.CreateWorkspaceInput{
+		Name: in.WorkspaceName, BaseCurrency: in.BaseCurrency,
 		CycleAnchorDay: in.CycleAnchorDay, Locale: in.Locale, Timezone: in.Timezone,
 	}
-	if _, err := tenantCI.Normalize(); err != nil {
+	if _, err := workspaceCI.Normalize(); err != nil {
 		return nil, err
 	}
-	tenant, err := identity.InsertTenantTx(ctx, tx, uuidx.New(), tenantCI)
+	workspace, err := identity.InsertWorkspaceTx(ctx, tx, uuidx.New(), workspaceCI)
 	if err != nil {
 		return nil, err
 	}
-	membership, err := identity.InsertMembershipTx(ctx, tx, tenant.ID, userID, identity.RoleOwner)
+	membership, err := identity.InsertMembershipTx(ctx, tx, workspace.ID, userID, identity.RoleOwner)
 	if err != nil {
 		return nil, err
 	}
 
-	// Set last_tenant_id so /me redirects to this workspace.
-	if _, err := tx.Exec(ctx, `update users set last_tenant_id = $1 where id = $2`, tenant.ID, userID); err != nil {
-		return nil, fmt.Errorf("set last_tenant_id: %w", err)
+	// Set last_workspace_id so /me redirects to this workspace.
+	if _, err := tx.Exec(ctx, `update users set last_workspace_id = $1 where id = $2`, workspace.ID, userID); err != nil {
+		return nil, fmt.Errorf("set last_workspace_id: %w", err)
 	}
-	user.LastTenantID = &tenant.ID
+	user.LastWorkspaceID = &workspace.ID
 
 	// Issue session.
 	plaintext, _ := GenerateSessionToken()
@@ -1957,17 +1957,17 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 	}
 
 	// Audit.
-	if err := writeAudit(ctx, tx, &tenant.ID, &userID, "user.signup", "user", userID, nil, nil, in.IP, in.UserAgent); err != nil {
+	if err := writeAudit(ctx, tx, &workspace.ID, &userID, "user.signup", "user", userID, nil, nil, in.IP, in.UserAgent); err != nil {
 		return nil, err
 	}
-	if err := writeAudit(ctx, tx, &tenant.ID, &userID, "tenant.created", "tenant", tenant.ID, nil, nil, in.IP, in.UserAgent); err != nil {
+	if err := writeAudit(ctx, tx, &workspace.ID, &userID, "workspace.created", "workspace", workspace.ID, nil, nil, in.IP, in.UserAgent); err != nil {
 		return nil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
-	return &SignupResult{User: user, Tenant: tenant, Membership: membership, SessionToken: plaintext}, nil
+	return &SignupResult{User: user, Workspace: workspace, Membership: membership, SessionToken: plaintext}, nil
 }
 
 func (s *Service) enforceRegistrationMode(ctx context.Context) error {
@@ -1995,7 +1995,7 @@ func (s *Service) enforceRegistrationMode(ctx context.Context) error {
 
 - [ ] **Step 3: Promote `identity`'s tx helpers to exported names**
 
-Inside `backend/internal/identity/service.go`, rename `insertTenantTx` → `InsertTenantTx`, `insertMembershipTx` → `InsertMembershipTx`, and expose `CreateTenantInput.Normalize()` (add `// Normalize exposes the previously private normalize for cross-package use.` comment). Rewire the callers in `service.go`.
+Inside `backend/internal/identity/service.go`, rename `insertWorkspaceTx` → `InsertWorkspaceTx`, `insertMembershipTx` → `InsertMembershipTx`, and expose `CreateWorkspaceInput.Normalize()` (add `// Normalize exposes the previously private normalize for cross-package use.` comment). Rewire the callers in `service.go`.
 
 - [ ] **Step 4: Run**
 
@@ -2010,7 +2010,7 @@ Expected: build succeeds; normalize-style tests pass (signup end-to-end arrives 
 
 ```bash
 git add backend/internal/auth/ backend/internal/identity/
-git commit -m "feat(auth): Signup creates user, Personal tenant, owner membership, session"
+git commit -m "feat(auth): Signup creates user, Personal workspace, owner membership, session"
 ```
 
 ### Task 6.3: `auth.Service.Login`
@@ -2126,10 +2126,10 @@ func (s *Service) Login(ctx context.Context, raw LoginInput) (*LoginResult, erro
 	var hash string
 	var user identity.User
 	err = s.pool.QueryRow(ctx, `
-		select id, email, display_name, email_verified_at, is_admin, last_tenant_id, created_at, password_hash
+		select id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at, password_hash
 		from users where email = $1
 	`, in.Email).Scan(&user.ID, &user.Email, &user.DisplayName, &user.EmailVerifiedAt,
-		&user.IsAdmin, &user.LastTenantID, &user.CreatedAt, &hash)
+		&user.IsAdmin, &user.LastWorkspaceID, &user.CreatedAt, &hash)
 	userID = user.ID
 	if err != nil && errors.Is(err, pgx.ErrNoRows) {
 		// Compute a fake Argon2id verify against a pre-hashed dummy so
@@ -2171,18 +2171,18 @@ func (s *Service) Login(ctx context.Context, raw LoginInput) (*LoginResult, erro
 func (s *Service) logLoginFailed(ctx context.Context, email string, ip net.IP, ua string) {
 	// Keyed by email, not user (we may not know a user_id).
 	_, _ = s.pool.Exec(ctx, `
-		insert into audit_events (id, tenant_id, actor_user_id, action, entity_type, after_value, ip, user_agent)
+		insert into audit_events (id, workspace_id, actor_user_id, action, entity_type, after_value, ip, user_agent)
 		values ($1, null, null, 'user.login_failed', 'email', jsonb_build_object('email', $2::text), $3, $4)
 	`, uuidx.New(), email, ip.String(), ua)
 }
 
 // logAuditDirect writes to audit_events outside a tx. Signup uses the
 // tx-bound writeAudit; steady-state login does not have a tx.
-func (s *Service) logAuditDirect(ctx context.Context, tenantID *uuid.UUID, actorUserID *uuid.UUID, action, entityType string, entityID uuid.UUID, ip net.IP, ua string) {
+func (s *Service) logAuditDirect(ctx context.Context, workspaceID *uuid.UUID, actorUserID *uuid.UUID, action, entityType string, entityID uuid.UUID, ip net.IP, ua string) {
 	_, _ = s.pool.Exec(ctx, `
-		insert into audit_events (id, tenant_id, actor_user_id, action, entity_type, entity_id, ip, user_agent)
+		insert into audit_events (id, workspace_id, actor_user_id, action, entity_type, entity_id, ip, user_agent)
 		values ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, uuidx.New(), tenantID, actorUserID, action, entityType, entityID, ip.String(), ua)
+	`, uuidx.New(), workspaceID, actorUserID, action, entityType, entityID, ip.String(), ua)
 }
 
 // dummyHash is a pre-computed Argon2id hash used as a constant-time decoy
@@ -2282,7 +2282,7 @@ type ctxKey string
 const (
 	ctxKeyUser    ctxKey = "folio.auth.user"
 	ctxKeySession ctxKey = "folio.auth.session"
-	ctxKeyTenant  ctxKey = "folio.auth.tenant"
+	ctxKeyWorkspace  ctxKey = "folio.auth.workspace"
 	ctxKeyRole    ctxKey = "folio.auth.role"
 )
 
@@ -2317,26 +2317,26 @@ func SessionFromCtx(ctx context.Context) (Session, bool) {
 	return s, ok
 }
 
-// WithTenant / TenantFromCtx attach the tenant the caller is looking at.
+// WithWorkspace / WorkspaceFromCtx attach the workspace the caller is looking at.
 // Set by RequireMembership.
-func WithTenant(ctx context.Context, t identity.Tenant) context.Context {
-	return context.WithValue(ctx, ctxKeyTenant, t)
+func WithWorkspace(ctx context.Context, t identity.Workspace) context.Context {
+	return context.WithValue(ctx, ctxKeyWorkspace, t)
 }
 
-func TenantFromCtx(ctx context.Context) (identity.Tenant, bool) {
-	t, ok := ctx.Value(ctxKeyTenant).(identity.Tenant)
+func WorkspaceFromCtx(ctx context.Context) (identity.Workspace, bool) {
+	t, ok := ctx.Value(ctxKeyWorkspace).(identity.Workspace)
 	return t, ok
 }
 
-func MustTenant(r *http.Request) identity.Tenant {
-	t, ok := TenantFromCtx(r.Context())
+func MustWorkspace(r *http.Request) identity.Workspace {
+	t, ok := WorkspaceFromCtx(r.Context())
 	if !ok {
-		panic("MustTenant called without RequireMembership upstream")
+		panic("MustWorkspace called without RequireMembership upstream")
 	}
 	return t
 }
 
-// WithRole / RoleFromCtx attach the caller's role in the current tenant.
+// WithRole / RoleFromCtx attach the caller's role in the current workspace.
 func WithRole(ctx context.Context, r identity.Role) context.Context {
 	return context.WithValue(ctx, ctxKeyRole, r)
 }
@@ -2368,10 +2368,10 @@ func TestContextRoundtrip(t *testing.T) {
 	if !ok || u.Email != "a@b.com" {
 		t.Fatalf("UserFromCtx: %+v %v", u, ok)
 	}
-	ctx = WithTenant(ctx, identity.Tenant{ID: uuid.New(), Name: "T"})
-	tn, _ := TenantFromCtx(ctx)
+	ctx = WithWorkspace(ctx, identity.Workspace{ID: uuid.New(), Name: "T"})
+	tn, _ := WorkspaceFromCtx(ctx)
 	if tn.Name != "T" {
-		t.Fatalf("TenantFromCtx: %+v", tn)
+		t.Fatalf("WorkspaceFromCtx: %+v", tn)
 	}
 	ctx = WithRole(ctx, identity.RoleOwner)
 	r, _ := RoleFromCtx(ctx)
@@ -2412,7 +2412,7 @@ Expected: PASS.
 
 ```bash
 git add backend/internal/auth/context.go backend/internal/auth/context_test.go backend/internal/auth/service.go
-git commit -m "feat(auth): context keys for user, session, tenant, role"
+git commit -m "feat(auth): context keys for user, session, workspace, role"
 ```
 
 ### Task 7.2: `auth.RequireSession`
@@ -2606,9 +2606,9 @@ import (
 	"github.com/xmedavid/folio/backend/internal/identity"
 )
 
-// RequireMembership extracts `{tenantId}` from the URL, verifies the caller
-// has a membership in that tenant, and attaches the Tenant + Role to the
-// request context. 404 on miss (spec §4.5: hide tenant existence).
+// RequireMembership extracts `{workspaceId}` from the URL, verifies the caller
+// has a membership in that workspace, and attaches the Workspace + Role to the
+// request context. 404 on miss (spec §4.5: hide workspace existence).
 func (s *Service) RequireMembership(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := UserFromCtx(r.Context())
@@ -2616,24 +2616,24 @@ func (s *Service) RequireMembership(next http.Handler) http.Handler {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
 			return
 		}
-		raw := chi.URLParam(r, "tenantId")
+		raw := chi.URLParam(r, "workspaceId")
 		tid, err := uuid.Parse(raw)
 		if err != nil {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
 			return
 		}
 
-		var tenant identity.Tenant
+		var workspace identity.Workspace
 		var role identity.Role
 		err = s.pool.QueryRow(r.Context(), `
 			select t.id, t.name, t.slug, t.base_currency, t.cycle_anchor_day,
 			       t.locale, t.timezone, t.deleted_at, t.created_at, m.role
-			from tenants t
-			join tenant_memberships m on m.tenant_id = t.id
+			from workspaces t
+			join workspace_memberships m on m.workspace_id = t.id
 			where t.id = $1 and m.user_id = $2 and t.deleted_at is null
-		`, tid, user.ID).Scan(&tenant.ID, &tenant.Name, &tenant.Slug, &tenant.BaseCurrency,
-			&tenant.CycleAnchorDay, &tenant.Locale, &tenant.Timezone, &tenant.DeletedAt,
-			&tenant.CreatedAt, &role)
+		`, tid, user.ID).Scan(&workspace.ID, &workspace.Name, &workspace.Slug, &workspace.BaseCurrency,
+			&workspace.CycleAnchorDay, &workspace.Locale, &workspace.Timezone, &workspace.DeletedAt,
+			&workspace.CreatedAt, &role)
 		if err != nil && errors.Is(err, pgx.ErrNoRows) {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
 			return
@@ -2643,7 +2643,7 @@ func (s *Service) RequireMembership(next http.Handler) http.Handler {
 			return
 		}
 
-		ctx := WithTenant(r.Context(), tenant)
+		ctx := WithWorkspace(r.Context(), workspace)
 		ctx = WithRole(ctx, role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -3122,8 +3122,8 @@ import (
 )
 
 // writeAudit inserts an audit_events row inside the provided tx.
-// Passing any of tenantID / actorUserID as nil stores SQL NULL.
-func writeAudit(ctx context.Context, tx pgx.Tx, tenantID, actorUserID *uuid.UUID,
+// Passing any of workspaceID / actorUserID as nil stores SQL NULL.
+func writeAudit(ctx context.Context, tx pgx.Tx, workspaceID, actorUserID *uuid.UUID,
 	action, entityType string, entityID uuid.UUID, before, after any, ip net.IP, ua string) error {
 
 	var beforeJSON, afterJSON []byte
@@ -3136,9 +3136,9 @@ func writeAudit(ctx context.Context, tx pgx.Tx, tenantID, actorUserID *uuid.UUID
 		afterJSON = b
 	}
 	_, err := tx.Exec(ctx, `
-		insert into audit_events (id, tenant_id, actor_user_id, action, entity_type, entity_id, before_value, after_value, ip, user_agent)
+		insert into audit_events (id, workspace_id, actor_user_id, action, entity_type, entity_id, before_value, after_value, ip, user_agent)
 		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, uuidx.New(), tenantID, actorUserID, action, entityType, entityID, beforeJSON, afterJSON, ip.String(), ua)
+	`, uuidx.New(), workspaceID, actorUserID, action, entityType, entityID, beforeJSON, afterJSON, ip.String(), ua)
 	if err != nil {
 		return fmt.Errorf("audit insert: %w", err)
 	}
@@ -3165,7 +3165,7 @@ git commit -m "feat(auth): audit_events insert helper for tx-scoped writes"
 
 ## 10. HTTP handlers
 
-Spec reference: §4.2 (signup/login/logout), §4.3 (/me, POST /tenants), §4.4 (list members).
+Spec reference: §4.2 (signup/login/logout), §4.3 (/me, POST /workspaces), §4.4 (list members).
 
 ### Task 10.1: `auth.Handler` signup / login / logout
 
@@ -3204,17 +3204,17 @@ func (h *Handler) MountPublic(r chi.Router) {
 	})
 }
 
-// MountAuthed mounts authenticated non-tenant routes.
+// MountAuthed mounts authenticated non-workspace routes.
 func (h *Handler) MountAuthed(r chi.Router) {
 	r.Get("/me", h.me)
-	r.Post("/tenants", h.createTenant)
+	r.Post("/workspaces", h.createWorkspace)
 }
 
 type signupReq struct {
 	Email          string `json:"email"`
 	Password       string `json:"password"`
 	DisplayName    string `json:"displayName"`
-	TenantName     string `json:"tenantName,omitempty"`
+	WorkspaceName     string `json:"workspaceName,omitempty"`
 	BaseCurrency   string `json:"baseCurrency"`
 	CycleAnchorDay int    `json:"cycleAnchorDay,omitempty"`
 	Locale         string `json:"locale"`
@@ -3231,7 +3231,7 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 	ip := net.ParseIP(ipFromRequest(r))
 	out, err := h.svc.Signup(r.Context(), SignupInput{
 		Email: body.Email, Password: body.Password, DisplayName: body.DisplayName,
-		TenantName: body.TenantName, BaseCurrency: body.BaseCurrency,
+		WorkspaceName: body.WorkspaceName, BaseCurrency: body.BaseCurrency,
 		CycleAnchorDay: body.CycleAnchorDay, Locale: body.Locale, Timezone: body.Timezone,
 		InviteToken: body.InviteToken, IP: ip, UserAgent: r.UserAgent(),
 	})
@@ -3242,7 +3242,7 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 	SetSessionCookie(w, out.SessionToken)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"user":        out.User,
-		"tenant":      out.Tenant,
+		"workspace":      out.Workspace,
 		"membership":  out.Membership,
 		"mfaRequired": false,
 	})
@@ -3295,18 +3295,18 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	user := MustUser(r)
-	_, tenants, err := h.svc.identity.Me(r.Context(), user.ID)
+	_, workspaces, err := h.svc.identity.Me(r.Context(), user.ID)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":    user,
-		"tenants": tenants,
+		"workspaces": workspaces,
 	})
 }
 
-type createTenantReq struct {
+type createWorkspaceReq struct {
 	Name           string `json:"name"`
 	BaseCurrency   string `json:"baseCurrency"`
 	CycleAnchorDay int    `json:"cycleAnchorDay,omitempty"`
@@ -3314,30 +3314,30 @@ type createTenantReq struct {
 	Timezone       string `json:"timezone,omitempty"`
 }
 
-func (h *Handler) createTenant(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	user := MustUser(r)
-	var body createTenantReq
+	var body createWorkspaceReq
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
 		return
 	}
-	t, m, err := h.svc.identity.CreateTenant(r.Context(), user.ID, identityCreateInput(body))
+	t, m, err := h.svc.identity.CreateWorkspace(r.Context(), user.ID, identityCreateInput(body))
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"tenant": t, "membership": m})
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"workspace": t, "membership": m})
 }
 
-func identityCreateInput(r createTenantReq) identityCreateTenantInput {
-	return identityCreateTenantInput{
+func identityCreateInput(r createWorkspaceReq) identityCreateWorkspaceInput {
+	return identityCreateWorkspaceInput{
 		Name: r.Name, BaseCurrency: r.BaseCurrency, CycleAnchorDay: r.CycleAnchorDay,
 		Locale: r.Locale, Timezone: r.Timezone,
 	}
 }
 ```
 
-(Above uses a local alias `identityCreateTenantInput` — since we already re-export via `identity.CreateTenantInput`, swap the alias for the actual type; this snippet exists to isolate the handler from the type's location.)
+(Above uses a local alias `identityCreateWorkspaceInput` — since we already re-export via `identity.CreateWorkspaceInput`, swap the alias for the actual type; this snippet exists to isolate the handler from the type's location.)
 
 - [ ] **Step 2: Write an HTTP-level signup test**
 
@@ -3362,7 +3362,7 @@ func TestSignupHTTP(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()
 	// Reset between tests: truncate users cascades everything.
-	if _, err := pool.Exec(ctx, `truncate users cascade; truncate tenants cascade`); err != nil {
+	if _, err := pool.Exec(ctx, `truncate users cascade; truncate workspaces cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	svc := NewService(pool, identity.NewService(pool), Config{Registration: RegistrationOpen})
@@ -3413,10 +3413,10 @@ Expected: PASS (requires `DATABASE_URL`).
 
 ```bash
 git add backend/internal/auth/http.go backend/internal/auth/http_test.go
-git commit -m "feat(auth): HTTP handlers for signup, login, logout, /me, POST /tenants"
+git commit -m "feat(auth): HTTP handlers for signup, login, logout, /me, POST /workspaces"
 ```
 
-### Task 10.2: `GET /t/{tenantId}/members` handler
+### Task 10.2: `GET /t/{workspaceId}/members` handler
 
 **Files:**
 - Modify: `backend/internal/identity/http.go` (replace existing Bootstrap handler with member-list)
@@ -3436,21 +3436,21 @@ import (
 	"github.com/xmedavid/folio/backend/internal/httpx"
 )
 
-// Handler mounts identity read endpoints scoped to a tenant.
+// Handler mounts identity read endpoints scoped to a workspace.
 type Handler struct {
 	svc *Service
 }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-// MountTenantScoped mounts under /t/{tenantId}/…
-func (h *Handler) MountTenantScoped(r chi.Router) {
+// MountWorkspaceScoped mounts under /t/{workspaceId}/…
+func (h *Handler) MountWorkspaceScoped(r chi.Router) {
 	r.Get("/members", h.listMembers)
 }
 
 func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
-	tenant := auth.MustTenant(r)
-	members, err := h.svc.ListMembers(r.Context(), tenant.ID)
+	workspace := auth.MustWorkspace(r)
+	members, err := h.svc.ListMembers(r.Context(), workspace.ID)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -3458,10 +3458,10 @@ func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"members": members})
 }
 
-// ParseTenantID parses {tenantId} from the URL; returned for handlers that
+// ParseWorkspaceID parses {workspaceId} from the URL; returned for handlers that
 // need the id prior to RequireMembership running.
-func ParseTenantID(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "tenantId"))
+func ParseWorkspaceID(r *http.Request) (uuid.UUID, error) {
+	return uuid.Parse(chi.URLParam(r, "workspaceId"))
 }
 ```
 
@@ -3478,7 +3478,7 @@ git commit -m "refactor(identity): replace Bootstrap handler with member list un
 
 Spec reference: §4, §12.
 
-### Task 11.1: Delete `httpx.RequireTenant` and legacy context helpers
+### Task 11.1: Delete `httpx.RequireWorkspace` and legacy context helpers
 
 **Files:**
 - Modify: `backend/internal/httpx/httpx.go`
@@ -3486,7 +3486,7 @@ Spec reference: §4, §12.
 
 - [ ] **Step 1: Remove the helpers**
 
-Delete from `httpx.go`: `tenantIDKey`, `userIDKey`, `TenantIDFrom`, `UserIDFrom`, `WithTenantID`, `WithUserID`, and `RequireTenant`. Keep: `WriteJSON`, `WriteError`, `ErrorBody`, `ValidationError`, `NewValidationError`, `NotFoundError`, `NewNotFoundError`, `WriteServiceError`.
+Delete from `httpx.go`: `workspaceIDKey`, `userIDKey`, `WorkspaceIDFrom`, `UserIDFrom`, `WithWorkspaceID`, `WithUserID`, and `RequireWorkspace`. Keep: `WriteJSON`, `WriteError`, `ErrorBody`, `ValidationError`, `NewValidationError`, `NotFoundError`, `NewNotFoundError`, `WriteServiceError`.
 
 - [ ] **Step 2: Update `httpx_test.go`** to drop tests that referenced the removed helpers.
 
@@ -3502,7 +3502,7 @@ If downstream packages (accounts/transactions/classification) still reference th
 
 ```bash
 git add backend/internal/httpx/
-git commit -m "refactor(httpx): remove X-Tenant-ID stand-in middleware"
+git commit -m "refactor(httpx): remove X-Workspace-ID stand-in middleware"
 ```
 
 ### Task 11.2: Refactor accounts / transactions / classification handlers
@@ -3512,17 +3512,17 @@ git commit -m "refactor(httpx): remove X-Tenant-ID stand-in middleware"
 - Modify: `backend/internal/transactions/http.go`
 - Modify: `backend/internal/classification/http.go`
 
-- [ ] **Step 1: For each handler file, replace `httpx.TenantIDFrom(r.Context())` with `auth.MustTenant(r).ID`** and remove the `TenantIDFrom` import.
+- [ ] **Step 1: For each handler file, replace `httpx.WorkspaceIDFrom(r.Context())` with `auth.MustWorkspace(r).ID`** and remove the `WorkspaceIDFrom` import.
 
 Example (accounts/http.go):
 
 ```diff
--	tenantID, ok := httpx.TenantIDFrom(r.Context())
+-	workspaceID, ok := httpx.WorkspaceIDFrom(r.Context())
 -	if !ok {
--		httpx.WriteError(w, http.StatusUnauthorized, "tenant_required", "tenant required")
+-		httpx.WriteError(w, http.StatusUnauthorized, "workspace_required", "workspace required")
 -		return
 -	}
-+	tenantID := auth.MustTenant(r).ID
++	workspaceID := auth.MustWorkspace(r).ID
 ```
 
 - [ ] **Step 2: Add `auth` import** to each file:
@@ -3546,7 +3546,7 @@ Expected: success.
 
 ```bash
 git add backend/internal/accounts/ backend/internal/transactions/ backend/internal/classification/
-git commit -m "refactor(handlers): read tenant from auth.MustTenant instead of httpx context"
+git commit -m "refactor(handlers): read workspace from auth.MustWorkspace instead of httpx context"
 ```
 
 ### Task 11.3: Rewire `router.go`
@@ -3622,18 +3622,18 @@ func NewRouter(d Deps) http.Handler {
 		// Public auth surface
 		authH.MountPublic(r)
 
-		// Authenticated, non-tenant-scoped
+		// Authenticated, non-workspace-scoped
 		r.Group(func(r chi.Router) {
 			r.Use(authSvc.RequireSession)
 			authH.MountAuthed(r)
 		})
 
-		// Tenant-scoped: /api/v1/t/{tenantId}/...
-		r.Route("/t/{tenantId}", func(r chi.Router) {
+		// Workspace-scoped: /api/v1/t/{workspaceId}/...
+		r.Route("/t/{workspaceId}", func(r chi.Router) {
 			r.Use(authSvc.RequireSession)
 			r.Use(authSvc.RequireMembership)
 
-			identityH.MountTenantScoped(r) // /members
+			identityH.MountWorkspaceScoped(r) // /members
 
 			r.Route("/accounts", accountsH.Mount)
 			r.Route("/transactions", transactionsH.Mount)
@@ -3691,7 +3691,7 @@ Expected: any existing router smoke test passes.
 
 ```bash
 git add backend/internal/http/router.go
-git commit -m "refactor(router): mount tenant-scoped routes under /api/v1/t/{tenantId}, wire auth middleware"
+git commit -m "refactor(router): mount workspace-scoped routes under /api/v1/t/{workspaceId}, wire auth middleware"
 ```
 
 ---
@@ -3703,19 +3703,19 @@ Spec reference: §13.
 ### Task 12.1: Delete the localStorage identity bridge
 
 **Files:**
-- Delete: `web/lib/tenant.ts`
+- Delete: `web/lib/workspace.ts`
 
 - [ ] **Step 1**:
 
 ```bash
-rm web/lib/tenant.ts
-git add -u web/lib/tenant.ts
+rm web/lib/workspace.ts
+git add -u web/lib/workspace.ts
 ```
 
 - [ ] **Step 2: Commit**
 
 ```bash
-git commit -m "chore(web): remove localStorage tenant bridge"
+git commit -m "chore(web): remove localStorage workspace bridge"
 ```
 
 ### Task 12.2: Rewrite `useIdentity` as a React Query hook around `/api/v1/me`
@@ -3737,10 +3737,10 @@ export interface Me {
     displayName: string;
     emailVerifiedAt?: string;
     isAdmin: boolean;
-    lastTenantId?: string;
+    lastWorkspaceId?: string;
     createdAt: string;
   };
-  tenants: Array<{
+  workspaces: Array<{
     id: string;
     name: string;
     slug: string;
@@ -3782,10 +3782,10 @@ export function useIdentity(): IdentityState {
   return { status: "loading", data: null };
 }
 
-export function useCurrentTenant(slug: string): Me["tenants"][number] | undefined {
+export function useCurrentWorkspace(slug: string): Me["workspaces"][number] | undefined {
   const id = useIdentity();
   if (id.status !== "authenticated") return undefined;
-  return id.data.tenants.find((t) => t.slug === slug);
+  return id.data.workspaces.find((t) => t.slug === slug);
 }
 ```
 
@@ -3796,7 +3796,7 @@ git add web/lib/hooks/use-identity.ts
 git commit -m "feat(web): rewrite useIdentity as React Query wrapper around /me"
 ```
 
-### Task 12.3: Update `api/client.ts` to target `/api/v1/t/{tenantId}/…`
+### Task 12.3: Update `api/client.ts` to target `/api/v1/t/{workspaceId}/…`
 
 **Files:**
 - Modify: `web/lib/api/client.ts`
@@ -3804,12 +3804,12 @@ git commit -m "feat(web): rewrite useIdentity as React Query wrapper around /me"
 - [ ] **Step 1: Update signatures**
 
 ```typescript
-export async function fetchAccounts(tenantId: string) {
-  return getJSON(`/api/v1/t/${tenantId}/accounts`);
+export async function fetchAccounts(workspaceId: string) {
+  return getJSON(`/api/v1/t/${workspaceId}/accounts`);
 }
-export async function fetchTransactions(tenantId: string, params?: { limit?: number }) {
+export async function fetchTransactions(workspaceId: string, params?: { limit?: number }) {
   const q = params?.limit ? `?limit=${params.limit}` : "";
-  return getJSON(`/api/v1/t/${tenantId}/transactions${q}`);
+  return getJSON(`/api/v1/t/${workspaceId}/transactions${q}`);
 }
 export async function fetchMe(): Promise<Me> {
   return getJSON(`/api/v1/me`);
@@ -3831,7 +3831,7 @@ async function getJSON(path: string) {
 
 ```bash
 git add web/lib/api/client.ts
-git commit -m "refactor(web): API client targets /api/v1/t/{tenantId}/... and /api/v1/me"
+git commit -m "refactor(web): API client targets /api/v1/t/{workspaceId}/... and /api/v1/me"
 ```
 
 ---
@@ -3883,8 +3883,8 @@ export default function LoginPage() {
       }
       await qc.invalidateQueries({ queryKey: ["me"] });
       const me = await (await fetch("/api/v1/me", { credentials: "include", headers: { "X-Folio-Request": "1" } })).json();
-      const slug = me.tenants?.[0]?.slug;
-      router.push(slug ? `/t/${slug}` : "/tenants");
+      const slug = me.workspaces?.[0]?.slug;
+      router.push(slug ? `/t/${slug}` : "/workspaces");
     } finally {
       setBusy(false);
     }
@@ -3972,7 +3972,7 @@ export default function SignupPage() {
         return;
       }
       await qc.invalidateQueries({ queryKey: ["me"] });
-      router.push(`/t/${body.tenant.slug}`);
+      router.push(`/t/${body.workspace.slug}`);
     } finally {
       setBusy(false);
     }
@@ -4028,7 +4028,7 @@ git commit -m "feat(web): /signup page"
 
 ---
 
-## 14. Frontend — tenant-scoped routing
+## 14. Frontend — workspace-scoped routing
 
 Spec reference: §13.
 
@@ -4044,9 +4044,9 @@ Spec reference: §13.
 
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { useIdentity, useCurrentTenant } from "@/lib/hooks/use-identity";
+import { useIdentity, useCurrentWorkspace } from "@/lib/hooks/use-identity";
 
-export default function TenantLayout({
+export default function WorkspaceLayout({
   children,
   params,
 }: {
@@ -4054,31 +4054,31 @@ export default function TenantLayout({
   params: { slug: string };
 }) {
   const id = useIdentity();
-  const tenant = useCurrentTenant(params.slug);
+  const workspace = useCurrentWorkspace(params.slug);
   const router = useRouter();
 
   useEffect(() => {
     if (id.status === "unauthenticated") router.replace("/login");
-    if (id.status === "authenticated" && !tenant) router.replace("/tenants");
-  }, [id.status, tenant, router]);
+    if (id.status === "authenticated" && !workspace) router.replace("/workspaces");
+  }, [id.status, workspace, router]);
 
-  if (id.status !== "authenticated" || !tenant) {
+  if (id.status !== "authenticated" || !workspace) {
     return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   }
   return (
     <div className="flex min-h-dvh flex-col">
-      <TopBar currentTenantSlug={params.slug} />
+      <TopBar currentWorkspaceSlug={params.slug} />
       <main className="flex-1 p-6">{children}</main>
     </div>
   );
 }
 
-function TopBar({ currentTenantSlug }: { currentTenantSlug: string }) {
-  // Tenant switcher mounted below (Task 14.5). Placeholder here for layout.
+function TopBar({ currentWorkspaceSlug }: { currentWorkspaceSlug: string }) {
+  // Workspace switcher mounted below (Task 14.5). Placeholder here for layout.
   return (
     <header className="flex items-center justify-between border-b px-6 py-3">
       <div className="font-semibold">Folio</div>
-      <div>/{currentTenantSlug}</div>
+      <div>/{currentWorkspaceSlug}</div>
     </header>
   );
 }
@@ -4088,18 +4088,18 @@ function TopBar({ currentTenantSlug }: { currentTenantSlug: string }) {
 
 ```bash
 git add web/app/t/[slug]/layout.tsx
-git commit -m "feat(web): tenant-scoped layout at /t/[slug]"
+git commit -m "feat(web): workspace-scoped layout at /t/[slug]"
 ```
 
 ### Task 14.2: Move dashboard under `/t/[slug]/page.tsx`
 
 **Files:**
-- Move: `web/app/page.tsx` → `web/app/t/[slug]/page.tsx` (with the `TenantGate` logic removed; the layout now handles it)
+- Move: `web/app/page.tsx` → `web/app/t/[slug]/page.tsx` (with the `WorkspaceGate` logic removed; the layout now handles it)
 - Modify: `web/app/page.tsx` (reduce to a redirector)
 
-- [ ] **Step 1: Create the tenant-scoped dashboard page**
+- [ ] **Step 1: Create the workspace-scoped dashboard page**
 
-Copy the current `web/app/page.tsx` into `web/app/t/[slug]/page.tsx`, replacing `tenantId` lookups with the tenant from `useCurrentTenant(params.slug)`. Remove the `TenantGate` wrapper.
+Copy the current `web/app/page.tsx` into `web/app/t/[slug]/page.tsx`, replacing `workspaceId` lookups with the workspace from `useCurrentWorkspace(params.slug)`. Remove the `WorkspaceGate` wrapper.
 
 - [ ] **Step 2: Replace root `page.tsx` with a redirector**
 
@@ -4116,8 +4116,8 @@ export default function Root() {
   useEffect(() => {
     if (id.status === "unauthenticated") router.replace("/login");
     if (id.status === "authenticated") {
-      const slug = id.data.tenants[0]?.slug;
-      router.replace(slug ? `/t/${slug}` : "/tenants");
+      const slug = id.data.workspaces[0]?.slug;
+      router.replace(slug ? `/t/${slug}` : "/workspaces");
     }
   }, [id.status, id.data, router]);
   return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
@@ -4141,8 +4141,8 @@ git commit -m "feat(web): move dashboard to /t/[slug], redirect root based on se
 
 In both pages:
 - Read `params: { slug: string }`
-- Resolve `tenant` via `useCurrentTenant(slug)`
-- Pass `tenant.id` (not `tenantId` from localStorage) into `fetchAccounts` / `fetchTransactions`
+- Resolve `workspace` via `useCurrentWorkspace(slug)`
+- Pass `workspace.id` (not `workspaceId` from localStorage) into `fetchAccounts` / `fetchTransactions`
 
 - [ ] **Step 2: Commit**
 
@@ -4151,10 +4151,10 @@ git add web/app/
 git commit -m "refactor(web): move accounts/transactions pages under /t/[slug]/"
 ```
 
-### Task 14.4: `/tenants` picker page
+### Task 14.4: `/workspaces` picker page
 
 **Files:**
-- Create: `web/app/tenants/page.tsx`
+- Create: `web/app/workspaces/page.tsx`
 
 - [ ] **Step 1: Write the picker**
 
@@ -4164,14 +4164,14 @@ git commit -m "refactor(web): move accounts/transactions pages under /t/[slug]/"
 import Link from "next/link";
 import { useIdentity } from "@/lib/hooks/use-identity";
 
-export default function TenantsPage() {
+export default function WorkspacesPage() {
   const id = useIdentity();
   if (id.status !== "authenticated") return <div className="p-6">Loading…</div>;
   return (
     <main className="mx-auto max-w-xl p-6">
       <h1 className="mb-4 text-2xl font-semibold">Your workspaces</h1>
       <ul className="flex flex-col gap-2">
-        {id.data.tenants.map((t) => (
+        {id.data.workspaces.map((t) => (
           <li key={t.id} className="rounded border p-3">
             <Link href={`/t/${t.slug}`} className="font-medium underline">
               {t.name}
@@ -4182,13 +4182,13 @@ export default function TenantsPage() {
           </li>
         ))}
       </ul>
-      <CreateTenantForm />
+      <CreateWorkspaceForm />
     </main>
   );
 }
 
-function CreateTenantForm() {
-  // Posts to /api/v1/tenants; omitted for brevity here — see §4.3 endpoint.
+function CreateWorkspaceForm() {
+  // Posts to /api/v1/workspaces; omitted for brevity here — see §4.3 endpoint.
   // Plan 2 extends the picker with invite-join and settings.
   return null;
 }
@@ -4197,14 +4197,14 @@ function CreateTenantForm() {
 - [ ] **Step 2: Commit**
 
 ```bash
-git add web/app/tenants/page.tsx
-git commit -m "feat(web): /tenants picker page"
+git add web/app/workspaces/page.tsx
+git commit -m "feat(web): /workspaces picker page"
 ```
 
-### Task 14.5: `TenantSwitcher` component
+### Task 14.5: `WorkspaceSwitcher` component
 
 **Files:**
-- Create: `web/components/tenant-switcher.tsx`
+- Create: `web/components/workspace-switcher.tsx`
 
 - [ ] **Step 1: Write the switcher**
 
@@ -4214,7 +4214,7 @@ git commit -m "feat(web): /tenants picker page"
 import Link from "next/link";
 import { useIdentity } from "@/lib/hooks/use-identity";
 
-export function TenantSwitcher({ currentSlug }: { currentSlug: string }) {
+export function WorkspaceSwitcher({ currentSlug }: { currentSlug: string }) {
   const id = useIdentity();
   if (id.status !== "authenticated") return null;
   return (
@@ -4225,7 +4225,7 @@ export function TenantSwitcher({ currentSlug }: { currentSlug: string }) {
         window.location.href = `/t/${e.target.value}`;
       }}
     >
-      {id.data.tenants.map((t) => (
+      {id.data.workspaces.map((t) => (
         <option key={t.id} value={t.slug}>
           {t.name}
         </option>
@@ -4237,13 +4237,13 @@ export function TenantSwitcher({ currentSlug }: { currentSlug: string }) {
 
 - [ ] **Step 2: Mount it in `/t/[slug]/layout.tsx`**
 
-Replace the `TopBar` placeholder's `/{currentTenantSlug}` with `<TenantSwitcher currentSlug={params.slug} />`.
+Replace the `TopBar` placeholder's `/{currentWorkspaceSlug}` with `<WorkspaceSwitcher currentSlug={params.slug} />`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add web/components/tenant-switcher.tsx web/app/t/[slug]/layout.tsx
-git commit -m "feat(web): TenantSwitcher in top bar"
+git add web/components/workspace-switcher.tsx web/app/t/[slug]/layout.tsx
+git commit -m "feat(web): WorkspaceSwitcher in top bar"
 ```
 
 ---
@@ -4275,7 +4275,7 @@ curl -i -X POST http://localhost:8081/api/v1/auth/signup \
   -d '{"email":"a@b.com","password":"correct horse battery staple","displayName":"Alice","baseCurrency":"CHF","locale":"en-CH"}'
 ```
 
-Expected: `HTTP/1.1 201 Created`, `Set-Cookie: folio_session=…; HttpOnly; Secure; SameSite=Lax`, body includes `{"user":{…},"tenant":{…,"slug":"alice-s-workspace"}}`.
+Expected: `HTTP/1.1 201 Created`, `Set-Cookie: folio_session=…; HttpOnly; Secure; SameSite=Lax`, body includes `{"user":{…},"workspace":{…,"slug":"alice-s-workspace"}}`.
 
 - [ ] **Step 3: /me**
 
@@ -4283,27 +4283,27 @@ Expected: `HTTP/1.1 201 Created`, `Set-Cookie: folio_session=…; HttpOnly; Secu
 curl -s http://localhost:8081/api/v1/me -H 'X-Folio-Request: 1' -b cookies.txt | jq .
 ```
 
-Expected: `{"user":{…},"tenants":[{…,"role":"owner"}]}`.
+Expected: `{"user":{…},"workspaces":[{…,"role":"owner"}]}`.
 
-- [ ] **Step 4: Create second tenant**
+- [ ] **Step 4: Create second workspace**
 
 ```bash
-curl -s -X POST http://localhost:8081/api/v1/tenants \
+curl -s -X POST http://localhost:8081/api/v1/workspaces \
   -H 'Content-Type: application/json' -H 'Origin: http://localhost:3000' -H 'X-Folio-Request: 1' \
   -b cookies.txt \
   -d '{"name":"Household","baseCurrency":"EUR","locale":"de-CH"}' | jq .
 ```
 
-Expected: 201; tenant returned with slug `household`.
+Expected: 201; workspace returned with slug `household`.
 
-- [ ] **Step 5: Tenant-scoped call**
+- [ ] **Step 5: Workspace-scoped call**
 
 ```bash
-TENANT_ID=$(curl -s http://localhost:8081/api/v1/me -H 'X-Folio-Request: 1' -b cookies.txt | jq -r '.tenants[0].id')
-curl -s http://localhost:8081/api/v1/t/$TENANT_ID/members -H 'X-Folio-Request: 1' -b cookies.txt | jq .
+WORKSPACE_ID=$(curl -s http://localhost:8081/api/v1/me -H 'X-Folio-Request: 1' -b cookies.txt | jq -r '.workspaces[0].id')
+curl -s http://localhost:8081/api/v1/t/$WORKSPACE_ID/members -H 'X-Folio-Request: 1' -b cookies.txt | jq .
 ```
 
-Expected: `{"members":[{"tenantId":"…","userId":"…","role":"owner","createdAt":"…"}]}`.
+Expected: `{"members":[{"workspaceId":"…","userId":"…","role":"owner","createdAt":"…"}]}`.
 
 - [ ] **Step 6: Logout**
 
@@ -4335,7 +4335,7 @@ git commit --allow-empty -m "test(auth): end-to-end signup/login/logout smoke ve
 
 | Plan | What it adds that plan 1 leaves space for |
 |---|---|
-| 2 | Invite accept / preview, extended signup inviteToken consumption, tenant settings PATCH, soft-delete DELETE + restore, member role changes + remove + leave, pending invites on `GET /t/{id}/members`, soft-delete sweeper binary, full invite-only registration mode |
+| 2 | Invite accept / preview, extended signup inviteToken consumption, workspace settings PATCH, soft-delete DELETE + restore, member role changes + remove + leave, pending invites on `GET /t/{id}/members`, soft-delete sweeper binary, full invite-only registration mode |
 | 3 | Email verification / reset / email-change flows, Resend + River, `auth.RequireEmailVerified`, `ResendMailer` replacing plan 2's log-only stub, rate limits on verify/reset, email-related audit events, periodic sweeper as a River job |
 | 4 | Passkey (WebAuthn) enroll + assert, TOTP enroll/verify/disable, `auth_recovery_codes` populated, MFA challenge table + `BeginMFA`/Verify endpoints, passkey-first login entry, **real `RequireFreshReauth` replaces the plan 1 stub** + `POST /auth/reauth`, `/settings/security` UI |
 | 5 | `folio-admin` CLI, `ADMIN_BOOTSTRAP_EMAIL` wiring into `Signup`, `RequireAdmin` middleware, `/api/v1/admin/*`, admin audit events, `/admin/*` web pages |

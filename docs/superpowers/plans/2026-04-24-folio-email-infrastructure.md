@@ -4,15 +4,15 @@
 
 **Goal:** Land Folio's transactional email stack — Resend delivery, River queue/retries/periodic jobs, a pluggable `mailer.Mailer` abstraction, and every email-driven auth flow (email verification, password reset, email change) with corresponding Next.js pages and an email-verified gate middleware.
 
-**Architecture:** `mailer.Mailer` is an interface implemented by `LogMailer` (from plan 2, used in tests and empty-key dev) and `ResendMailer` (new, prod). River owns queuing, retry, and periodic scheduling; workers dequeue `SendEmailArgs` jobs and call `mailer.Mailer.Send`. Auth flows mutate `auth_tokens` rows synchronously in the service layer, then enqueue a single `SendEmail` River job — the HTTP response does not wait for SMTP. A `SoftDeletedTenantSweeper` periodic River job wraps plan 2's `folio-sweeper` `Sweep()` logic. `auth.RequireEmailVerified` is applied to sensitive routes.
+**Architecture:** `mailer.Mailer` is an interface implemented by `LogMailer` (from plan 2, used in tests and empty-key dev) and `ResendMailer` (new, prod). River owns queuing, retry, and periodic scheduling; workers dequeue `SendEmailArgs` jobs and call `mailer.Mailer.Send`. Auth flows mutate `auth_tokens` rows synchronously in the service layer, then enqueue a single `SendEmail` River job — the HTTP response does not wait for SMTP. A `SoftDeletedWorkspaceSweeper` periodic River job wraps plan 2's `folio-sweeper` `Sweep()` logic. `auth.RequireEmailVerified` is applied to sensitive routes.
 
 **Tech Stack:** Go 1.25; `github.com/riverqueue/river` (v0.12+); `github.com/riverqueue/river/riverdriver/riverpgxv5`; `github.com/riverqueue/river/rivermigrate`; `github.com/resend/resend-go/v2`; `html/template` + `text/template`; Postgres 17; Next.js 16; shared Resend delivery for dev (or `LogMailer` fallback when `RESEND_API_KEY` is empty).
 
-**Spec:** `docs/superpowers/specs/2026-04-24-folio-auth-and-tenancy-design.md`
+**Spec:** `docs/superpowers/specs/2026-04-24-folio-auth-and-workspace-design.md`
 
 **Prior plans in series:**
-- `docs/superpowers/plans/2026-04-24-folio-auth-foundation.md` (plan 1) — `auth` package, middleware, signup/login/logout, `auth_tokens` & `sessions` schema, frontend login/signup/tenants picker.
-- `docs/superpowers/plans/2026-04-24-folio-invites-and-tenant-lifecycle.md` (plan 2) — `identity.InviteService`, interface-only `mailer.Mailer` with `LogMailer` stub, `folio-sweeper` binary.
+- `docs/superpowers/plans/2026-04-24-folio-auth-foundation.md` (plan 1) — `auth` package, middleware, signup/login/logout, `auth_tokens` & `sessions` schema, frontend login/signup/workspaces picker.
+- `docs/superpowers/plans/2026-04-24-folio-invites-and-workspace-lifecycle.md` (plan 2) — `identity.InviteService`, interface-only `mailer.Mailer` with `LogMailer` stub, `folio-sweeper` binary.
 
 **Follow-up plans in series:**
 - Plan 4 — passkeys, TOTP, MFA, step-up re-auth.
@@ -93,11 +93,11 @@ backend/internal/mailer/
 backend/internal/jobs/
   client.go                    # NEW: River client wrapper + config
   client_test.go               # NEW
-  args.go                      # NEW: SendEmailArgs, SweepSoftDeletedTenantsArgs, etc.
+  args.go                      # NEW: SendEmailArgs, SweepSoftDeletedWorkspacesArgs, etc.
   send_email_worker.go         # NEW
   send_email_worker_test.go    # NEW
-  sweep_soft_deleted_tenants_worker.go  # NEW
-  sweep_soft_deleted_tenants_worker_test.go  # NEW
+  sweep_soft_deleted_workspaces_worker.go  # NEW
+  sweep_soft_deleted_workspaces_worker_test.go  # NEW
   periodic.go                  # NEW: periodic-job registration
 
 backend/cmd/folio-river-migrate/main.go  # NEW
@@ -128,7 +128,7 @@ web/lib/auth/email-flows.ts           # fetch wrappers for the 6 new endpoints
 
 #### P1 — Token generation and hashing
 
-All single-use tokens use the same shape (matches plan 1's `auth_tokens` table and plan 2's `tenant_invites.token_hash`):
+All single-use tokens use the same shape (matches plan 1's `auth_tokens` table and plan 2's `workspace_invites.token_hash`):
 
 ```go
 // In backend/internal/auth/tokens.go (exists from plan 1).
@@ -169,7 +169,7 @@ Uses plan 1's in-memory token-bucket limiter (`auth.RateLimiter`) swappable per 
 
 #### P5 — Audit-event writes
 
-Every successful flow writes an `audit_events` row via the existing helper in `backend/internal/audit` (from domain-v2 plan). Events: `user.email_verified`, `user.password_reset_completed`, `user.email_change_requested`, `user.email_change_confirmed`. `tenant_id = NULL` because these are user-scoped.
+Every successful flow writes an `audit_events` row via the existing helper in `backend/internal/audit` (from domain-v2 plan). Events: `user.email_verified`, `user.password_reset_completed`, `user.email_change_requested`, `user.email_change_confirmed`. `workspace_id = NULL` because these are user-scoped.
 
 ### 0.6 Per-task verification baseline
 
@@ -436,13 +436,13 @@ type SendEmailArgs struct {
 
 func (SendEmailArgs) Kind() string { return "send_email" }
 
-// SweepSoftDeletedTenantsArgs drives plan 2's folio-sweeper Sweep() logic
+// SweepSoftDeletedWorkspacesArgs drives plan 2's folio-sweeper Sweep() logic
 // from a periodic River job rather than the standalone binary.
-type SweepSoftDeletedTenantsArgs struct{}
+type SweepSoftDeletedWorkspacesArgs struct{}
 
-func (SweepSoftDeletedTenantsArgs) Kind() string { return "sweep_soft_deleted_tenants" }
+func (SweepSoftDeletedWorkspacesArgs) Kind() string { return "sweep_soft_deleted_workspaces" }
 
-// ResolveTenantMembershipArgs is reserved for future tenant-invite flows
+// ResolveWorkspaceMembershipArgs is reserved for future workspace-invite flows
 // that need asynchronous post-processing; left empty here intentionally.
 // (Delete this comment if plan 4 doesn't materialise the job.)
 type _ struct{ _ uuid.UUID }
@@ -576,7 +576,7 @@ feat(jobs): add River client wrapper and job args
 
 Client wraps river.Client[pgx.Tx] for Insert/InsertTx without leaking
 River types to service callers. SendEmailArgs and
-SweepSoftDeletedTenantsArgs are declared; workers land in later tasks.
+SweepSoftDeletedWorkspacesArgs are declared; workers land in later tasks.
 EOF
 )"
 ```
@@ -920,7 +920,7 @@ type EmailChangeOldNoticeData struct {
 
 type InviteData struct {
 	InviterName string
-	TenantName  string
+	WorkspaceName  string
 	Role        string
 	AcceptURL   string
 }
@@ -934,7 +934,7 @@ func LoadTemplate(name string) (*Template, error) {
 		"email_change_old_notice": func(_ any) string { return "Your Folio email address was changed" },
 		"invite": func(d any) string {
 			if i, ok := d.(InviteData); ok {
-				return fmt.Sprintf("You're invited to join %s on Folio", i.TenantName)
+				return fmt.Sprintf("You're invited to join %s on Folio", i.WorkspaceName)
 			}
 			return "You're invited on Folio"
 		},
@@ -1071,7 +1071,7 @@ If this wasn't you, reply immediately.
 
 ```html
 {{ define "content" -}}
-<p>{{ .InviterName }} invited you to join <strong>{{ .TenantName }}</strong> on
+<p>{{ .InviterName }} invited you to join <strong>{{ .WorkspaceName }}</strong> on
 Folio as <strong>{{ .Role }}</strong>.</p>
 <p><a href="{{ .AcceptURL }}">Accept invitation</a></p>
 <p>The invite expires in 7 days.</p>
@@ -1081,7 +1081,7 @@ Folio as <strong>{{ .Role }}</strong>.</p>
 `invite.txt.tmpl`:
 
 ```
-{{ .InviterName }} invited you to join {{ .TenantName }} on Folio as {{ .Role }}.
+{{ .InviterName }} invited you to join {{ .WorkspaceName }} on Folio as {{ .Role }}.
 Accept: {{ .AcceptURL }}
 Expires in 7 days.
 ```
@@ -1272,17 +1272,17 @@ EOF
 
 ---
 
-## Task 7: `SoftDeletedTenantSweeper` worker and periodic registration
+## Task 7: `SoftDeletedWorkspaceSweeper` worker and periodic registration
 
 **Files:**
-- Create: `backend/internal/jobs/sweep_soft_deleted_tenants_worker.go`
-- Create: `backend/internal/jobs/sweep_soft_deleted_tenants_worker_test.go`
+- Create: `backend/internal/jobs/sweep_soft_deleted_workspaces_worker.go`
+- Create: `backend/internal/jobs/sweep_soft_deleted_workspaces_worker_test.go`
 - Create: `backend/internal/jobs/periodic.go`
 
 - [ ] **Step 1: Write the failing test**
 
 ```go
-// sweep_soft_deleted_tenants_worker_test.go
+// sweep_soft_deleted_workspaces_worker_test.go
 package jobs
 
 import (
@@ -1299,10 +1299,10 @@ func (f *fakeSweeper) Sweep(ctx context.Context) (int, error) {
 	return 3, nil
 }
 
-func TestSweepSoftDeletedTenantsWorker_CallsSweeper(t *testing.T) {
+func TestSweepSoftDeletedWorkspacesWorker_CallsSweeper(t *testing.T) {
 	fs := &fakeSweeper{}
-	w := NewSweepSoftDeletedTenantsWorker(fs)
-	if err := w.Work(context.Background(), &river.Job[SweepSoftDeletedTenantsArgs]{}); err != nil {
+	w := NewSweepSoftDeletedWorkspacesWorker(fs)
+	if err := w.Work(context.Background(), &river.Job[SweepSoftDeletedWorkspacesArgs]{}); err != nil {
 		t.Fatal(err)
 	}
 	if fs.called != 1 {
@@ -1313,7 +1313,7 @@ func TestSweepSoftDeletedTenantsWorker_CallsSweeper(t *testing.T) {
 
 - [ ] **Step 2: Implement the worker**
 
-`sweep_soft_deleted_tenants_worker.go`:
+`sweep_soft_deleted_workspaces_worker.go`:
 
 ```go
 package jobs
@@ -1325,34 +1325,34 @@ import (
 	"github.com/riverqueue/river"
 )
 
-// TenantSweeper is the minimum surface needed from plan 2's sweeper; that
+// WorkspaceSweeper is the minimum surface needed from plan 2's sweeper; that
 // plan defines a concrete type whose Sweep matches this signature. This
 // interface lets tests inject a fake without dragging in the Postgres pool.
-type TenantSweeper interface {
-	// Sweep hard-deletes soft-deleted tenants past the grace window and
-	// returns the number of tenants removed.
+type WorkspaceSweeper interface {
+	// Sweep hard-deletes soft-deleted workspaces past the grace window and
+	// returns the number of workspaces removed.
 	Sweep(ctx context.Context) (int, error)
 }
 
-// SweepSoftDeletedTenantsWorker runs the sweeper periodically.
-type SweepSoftDeletedTenantsWorker struct {
-	river.WorkerDefaults[SweepSoftDeletedTenantsArgs]
-	sweeper TenantSweeper
+// SweepSoftDeletedWorkspacesWorker runs the sweeper periodically.
+type SweepSoftDeletedWorkspacesWorker struct {
+	river.WorkerDefaults[SweepSoftDeletedWorkspacesArgs]
+	sweeper WorkspaceSweeper
 	logger  *slog.Logger
 }
 
-// NewSweepSoftDeletedTenantsWorker wires a TenantSweeper into the worker.
-func NewSweepSoftDeletedTenantsWorker(s TenantSweeper) *SweepSoftDeletedTenantsWorker {
-	return &SweepSoftDeletedTenantsWorker{sweeper: s, logger: slog.Default()}
+// NewSweepSoftDeletedWorkspacesWorker wires a WorkspaceSweeper into the worker.
+func NewSweepSoftDeletedWorkspacesWorker(s WorkspaceSweeper) *SweepSoftDeletedWorkspacesWorker {
+	return &SweepSoftDeletedWorkspacesWorker{sweeper: s, logger: slog.Default()}
 }
 
 // Work implements river.Worker.
-func (w *SweepSoftDeletedTenantsWorker) Work(ctx context.Context, _ *river.Job[SweepSoftDeletedTenantsArgs]) error {
+func (w *SweepSoftDeletedWorkspacesWorker) Work(ctx context.Context, _ *river.Job[SweepSoftDeletedWorkspacesArgs]) error {
 	n, err := w.sweeper.Sweep(ctx)
 	if err != nil {
 		return err
 	}
-	w.logger.Info("tenant sweeper", "hard_deleted", n)
+	w.logger.Info("workspace sweeper", "hard_deleted", n)
 	return nil
 }
 ```
@@ -1377,7 +1377,7 @@ func PeriodicJobs() []*river.PeriodicJob {
 		river.NewPeriodicJob(
 			river.PeriodicInterval(24*time.Hour),
 			func() (river.JobArgs, *river.InsertOpts) {
-				return SweepSoftDeletedTenantsArgs{}, nil
+				return SweepSoftDeletedWorkspacesArgs{}, nil
 			},
 			&river.PeriodicJobOpts{RunOnStart: false},
 		),
@@ -1411,14 +1411,14 @@ Expected: new test passes alongside existing ones.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/internal/jobs/sweep_soft_deleted_tenants_worker.go \
-        backend/internal/jobs/sweep_soft_deleted_tenants_worker_test.go \
+git add backend/internal/jobs/sweep_soft_deleted_workspaces_worker.go \
+        backend/internal/jobs/sweep_soft_deleted_workspaces_worker_test.go \
         backend/internal/jobs/periodic.go \
         backend/internal/jobs/client.go
 git commit -m "$(cat <<'EOF'
-feat(jobs): add SoftDeletedTenantSweeper worker and periodic schedule
+feat(jobs): add SoftDeletedWorkspaceSweeper worker and periodic schedule
 
-Wraps plan 2's sweeper behind a TenantSweeper interface so tests can
+Wraps plan 2's sweeper behind a WorkspaceSweeper interface so tests can
 inject fakes. The periodic registration runs Sweep once per day; plan 2's
 folio-sweeper binary stays as a CLI backstop but is no longer required in
 production.
@@ -1431,7 +1431,7 @@ EOF
 ## Task 8: Prod wiring — factory, router, graceful shutdown
 
 **Files:**
-- Modify: `backend/internal/http/router.go` — stop mounting `httpx.RequireTenant`; accept `jobs.Client` + `mailer.Mailer` via `Deps`.
+- Modify: `backend/internal/http/router.go` — stop mounting `httpx.RequireWorkspace`; accept `jobs.Client` + `mailer.Mailer` via `Deps`.
 - Modify: `backend/cmd/folio-server/main.go` (or whichever `main.go` builds the server — inspect first) — build the `mailer.Mailer` (ResendMailer when `RESEND_API_KEY` set, else `LogMailer`), register workers, start the River client, pass into `Deps`.
 - Modify: `docker-compose.dev.yml` — append `RESEND_API_KEY`, `EMAIL_FROM`, `APP_URL` to the backend service env.
 - Modify: `.env.example` — add the three env vars.
@@ -1469,7 +1469,7 @@ mlr := mailer.New(os.Getenv("RESEND_API_KEY"), os.Getenv("EMAIL_FROM"), logger)
 // Register workers
 workers := river.NewWorkers()
 river.AddWorker(workers, jobs.NewSendEmailWorker(mlr))
-river.AddWorker(workers, jobs.NewSweepSoftDeletedTenantsWorker(tenantSweeper))
+river.AddWorker(workers, jobs.NewSweepSoftDeletedWorkspacesWorker(workspaceSweeper))
 
 // Build & start River client
 jobClient, err := jobs.NewClient(pool, workers, jobs.Config{
@@ -1498,7 +1498,7 @@ h := http.NewRouter(http.Deps{
 
 - [ ] **Step 3: Update `router.go`**
 
-Add `Jobs *jobs.Client` and `Mailer mailer.Mailer` to `Deps`. Construct `auth.Service` (plan 1) with `jobClient` dependency injection so `SendEmailVerification` etc. can enqueue jobs. Drop the `r.Use(httpx.RequireTenant)` block — plan 1 already replaced it with `auth.RequireSession` + `auth.RequireMembership` on `/t/{tenantId}`.
+Add `Jobs *jobs.Client` and `Mailer mailer.Mailer` to `Deps`. Construct `auth.Service` (plan 1) with `jobClient` dependency injection so `SendEmailVerification` etc. can enqueue jobs. Drop the `r.Use(httpx.RequireWorkspace)` block — plan 1 already replaced it with `auth.RequireSession` + `auth.RequireMembership` on `/t/{workspaceId}`.
 
 - [ ] **Step 4: Update compose + env example**
 
@@ -2273,7 +2273,7 @@ Per spec §7: "Creating an invite" also requires verified email. Wrap:
 
 ```go
 r.With(authSvc.RequireSession, authSvc.RequireMembership, authSvc.RequireEmailVerified).
-    Post("/api/v1/t/{tenantId}/invites", inviteH.Create)
+    Post("/api/v1/t/{workspaceId}/invites", inviteH.Create)
 ```
 
 - [ ] **Step 4: Verification**
@@ -2284,7 +2284,7 @@ Unit test new middleware composition with an unverified session:
 func TestInviteAccept_Rejects_UnverifiedUser(t *testing.T) {
     // seed unverified user + valid invite
     // POST /api/v1/auth/invites/<token>/accept → 403 email_not_verified
-    // assert no tenant_membership created
+    // assert no workspace_membership created
 }
 ```
 
@@ -2603,7 +2603,7 @@ export default function VerifyEmailPage() {
       try {
         await verifyEmail(token);
         setStatus("ok");
-        setTimeout(() => router.push("/tenants"), 1500);
+        setTimeout(() => router.push("/workspaces"), 1500);
       } catch (err) {
         setStatus("error");
         setMessage(err instanceof Error ? err.message : "verification failed");
@@ -2733,9 +2733,9 @@ export function VerifyEmailBanner() {
 }
 ```
 
-- [ ] **Step 2: Mount in tenant layout**
+- [ ] **Step 2: Mount in workspace layout**
 
-In `web/app/t/[slug]/layout.tsx`, render `<VerifyEmailBanner />` above `{children}` so it appears on every authenticated tenant page.
+In `web/app/t/[slug]/layout.tsx`, render `<VerifyEmailBanner />` above `{children}` so it appears on every authenticated workspace page.
 
 - [ ] **Step 3: `/settings/account/page.tsx`**
 
@@ -2822,7 +2822,7 @@ func TestE2E_SignupThenVerify(t *testing.T) {
 
 	// Signup (from plan 1)
 	user, _, err := svc.Signup(ctx, auth.SignupInput{
-		Email: "alice@example.com", Password: "correcthorsebatterystaple", DisplayName: "Alice", TenantName: "Personal",
+		Email: "alice@example.com", Password: "correcthorsebatterystaple", DisplayName: "Alice", WorkspaceName: "Personal",
 		BaseCurrency: "CHF", CycleAnchorDay: 1, Locale: "en", Timezone: "UTC",
 	})
 	if err != nil { t.Fatal(err) }
@@ -2880,7 +2880,7 @@ With the dev stack running:
 # Fresh user
 curl -s -X POST http://localhost:8080/api/v1/auth/signup \
   -H 'Content-Type: application/json' -H 'X-Folio-Request: 1' \
-  -d '{"email":"e2e@example.com","password":"abcdefghijkl","displayName":"E2E","tenantName":"P","baseCurrency":"CHF","cycleAnchorDay":1,"locale":"en","timezone":"UTC"}' \
+  -d '{"email":"e2e@example.com","password":"abcdefghijkl","displayName":"E2E","workspaceName":"P","baseCurrency":"CHF","cycleAnchorDay":1,"locale":"en","timezone":"UTC"}' \
   -c /tmp/folio.cookies
 # Reset request
 curl -s -X POST http://localhost:8080/api/v1/auth/password/reset-request \
@@ -2925,8 +2925,8 @@ EOF
 - [ ] `auth.RequireEmailVerified` exists (Task 13) and is applied to invite-accept and invite-create (Task 14). TODO stubs recorded for bank-link and data-export.
 - [ ] `ResendMailer` implements `mailer.Mailer` (Task 4).
 - [ ] `ResendMailer` replaces `LogMailer` in prod wiring; factory falls back to `LogMailer` when `RESEND_API_KEY` is empty (Task 8).
-- [ ] `jobs.Client`, `jobs.SendEmailArgs`, `jobs.SweepSoftDeletedTenantsArgs` match canonical names (Task 3).
-- [ ] `SoftDeletedTenantSweeper` periodic job registered (Task 7).
+- [ ] `jobs.Client`, `jobs.SendEmailArgs`, `jobs.SweepSoftDeletedWorkspacesArgs` match canonical names (Task 3).
+- [ ] `SoftDeletedWorkspaceSweeper` periodic job registered (Task 7).
 - [ ] Plan 2's `folio-sweeper` CLI remains available as a manual backstop (unchanged).
 - [ ] Spec §8.2 rate limits enforced: verify-resend (1/min, 5/hr/user), reset-request (3/hr/IP, 3/hr/email), email-change-request (3/hr/user) (Tasks 10–12, 15).
 - [ ] Spec §8.3 audit events written: `user.email_verified`, `user.password_reset_completed`, `user.email_change_requested`, `user.email_change_confirmed` (Tasks 9, 11, 12).

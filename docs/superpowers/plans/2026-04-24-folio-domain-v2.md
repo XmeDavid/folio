@@ -4,7 +4,7 @@
 
 **Goal:** Replace the scaffold schema with the full Folio v2 domain model — 14 domain-grouped migration files covering ~70 tables — and rewrite `docs/domain.md` to match.
 
-**Architecture:** Schema-only work. No Go code changes, no sqlc queries, no OpenAPI edits. Migrations are grouped by domain (identity → accounts → classification → transactions → imports → planning → goals → investments → assets → travel/splits → wishlist → attachments/audit → FX/reports → notifications). UUIDv7 app-side, uniform `numeric(28,8)` money, composite foreign keys for tenant isolation, typed relationship tables.
+**Architecture:** Schema-only work. No Go code changes, no sqlc queries, no OpenAPI edits. Migrations are grouped by domain (identity → accounts → classification → transactions → imports → planning → goals → investments → assets → travel/splits → wishlist → attachments/audit → FX/reports → notifications). UUIDv7 app-side, uniform `numeric(28,8)` money, composite foreign keys for workspace isolation, typed relationship tables.
 
 **Tech Stack:** Go 1.25, Postgres 17 (stock image, no extensions), [Atlas](https://atlasgo.io) for migration apply, [sqlc](https://sqlc.dev) for generated queries (run to confirm schema parses).
 
@@ -82,31 +82,31 @@ create domain money_currency as varchar(10)
 
 Every currency column elsewhere uses `money_currency not null` (or `money_currency nullable` where spec allows null).
 
-#### P3 — Tenant-scoped table skeleton
+#### P3 — Workspace-scoped table skeleton
 
-Every table that carries `tenant_id` follows this skeleton:
+Every table that carries `workspace_id` follows this skeleton:
 
 ```sql
 create table <name> (
   id          uuid primary key,
-  tenant_id   uuid not null references tenants(id) on delete cascade,
+  workspace_id   uuid not null references workspaces(id) on delete cascade,
   -- ...domain columns...
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now(),
-  unique (tenant_id, id)                 -- target for composite FKs
+  unique (workspace_id, id)                 -- target for composite FKs
 );
 
 create trigger <name>_updated_at before update on <name>
   for each row execute function set_updated_at();
 ```
 
-Tables without `updated_at` (append-only: `goal_allocations`, `audit_events`, `notification_events`, `fx_rates`, `instrument_prices`, `wishlist_price_observations`, `category_history`, `settlements`, `investment_lot_consumptions`, `source_refs`, `event_markers`) skip the trigger bind but keep the `unique (tenant_id, id)` row.
+Tables without `updated_at` (append-only: `goal_allocations`, `audit_events`, `notification_events`, `fx_rates`, `instrument_prices`, `wishlist_price_observations`, `category_history`, `settlements`, `investment_lot_consumptions`, `source_refs`, `event_markers`) skip the trigger bind but keep the `unique (workspace_id, id)` row.
 
-#### P4 — Composite FK to a tenant-scoped parent
+#### P4 — Composite FK to a workspace-scoped parent
 
 ```sql
-constraint <child>_<ref>_fk foreign key (tenant_id, <ref>_id)
-  references <parent>(tenant_id, id)
+constraint <child>_<ref>_fk foreign key (workspace_id, <ref>_id)
+  references <parent>(workspace_id, id)
   on delete cascade          -- or: set null, or: restrict, per spec
 ```
 
@@ -114,18 +114,18 @@ Examples (to be used verbatim, substituting table names):
 
 ```sql
 constraint transactions_account_fk
-  foreign key (tenant_id, account_id)
-  references accounts(tenant_id, id) on delete cascade
+  foreign key (workspace_id, account_id)
+  references accounts(workspace_id, id) on delete cascade
 
 -- self-referential:
 constraint categories_parent_fk
-  foreign key (tenant_id, parent_id)
-  references categories(tenant_id, id) on delete set null
+  foreign key (workspace_id, parent_id)
+  references categories(workspace_id, id) on delete set null
 
 -- nullable user ref (MATCH SIMPLE = default; NULLs skip the check):
 constraint audit_events_actor_fk
-  foreign key (tenant_id, actor_user_id)
-  references users(tenant_id, id) on delete set null
+  foreign key (workspace_id, actor_user_id)
+  references users(workspace_id, id) on delete set null
 ```
 
 #### P5 — Leaf-category guard (defined in `003_classification.sql`)
@@ -203,28 +203,28 @@ create or replace function record_audit_event() returns trigger language plpgsql
 declare
   v_entity_type text := tg_argv[0];
   v_actor uuid := nullif(current_setting('folio.actor_user_id', true), '')::uuid;
-  v_tenant uuid;
+  v_workspace uuid;
   v_entity_id uuid;
   v_before jsonb;
   v_after jsonb;
   v_action audit_action;
 begin
   if tg_op = 'DELETE' then
-    v_action := 'deleted'; v_tenant := old.tenant_id; v_entity_id := old.id;
+    v_action := 'deleted'; v_workspace := old.workspace_id; v_entity_id := old.id;
     v_before := to_jsonb(old); v_after := null;
   elsif tg_op = 'UPDATE' then
-    v_action := 'updated'; v_tenant := new.tenant_id; v_entity_id := new.id;
+    v_action := 'updated'; v_workspace := new.workspace_id; v_entity_id := new.id;
     v_before := to_jsonb(old); v_after := to_jsonb(new);
   else
-    v_action := 'created'; v_tenant := new.tenant_id; v_entity_id := new.id;
+    v_action := 'created'; v_workspace := new.workspace_id; v_entity_id := new.id;
     v_before := null; v_after := to_jsonb(new);
   end if;
 
   insert into audit_events (
-    tenant_id, entity_type, entity_id, action,
+    workspace_id, entity_type, entity_id, action,
     actor_user_id, before_jsonb, after_jsonb, occurred_at
   ) values (
-    v_tenant, v_entity_type, v_entity_id, v_action,
+    v_workspace, v_entity_type, v_entity_id, v_action,
     v_actor, v_before, v_after, now()
   );
 
@@ -347,7 +347,7 @@ At the top of the file:
 
 ```sql
 -- Folio v2 domain — identity.
--- Tenants own financial data; users authenticate into a tenant (1:1 in v1).
+-- Workspaces own financial data; users authenticate into a workspace (1:1 in v1).
 
 create extension if not exists citext;
 
@@ -364,10 +364,10 @@ create domain money_currency as varchar(10)
   check (value ~ '^[A-Z0-9]{3,10}$');
 ```
 
-- [ ] **Step 2: `tenants` — not tenant-scoped, plain id PK**
+- [ ] **Step 2: `workspaces` — not workspace-scoped, plain id PK**
 
 ```sql
-create table tenants (
+create table workspaces (
   id                uuid primary key,
   name              text not null,
   base_currency     money_currency not null,
@@ -378,23 +378,23 @@ create table tenants (
   updated_at        timestamptz not null default now()
 );
 
-create trigger tenants_updated_at before update on tenants
+create trigger workspaces_updated_at before update on workspaces
   for each row execute function set_updated_at();
 ```
 
-- [ ] **Step 3: `users` — one-to-one with tenants in v1**
+- [ ] **Step 3: `users` — one-to-one with workspaces in v1**
 
 ```sql
 create table users (
   id             uuid primary key,
-  tenant_id      uuid not null unique references tenants(id) on delete cascade,
+  workspace_id      uuid not null unique references workspaces(id) on delete cascade,
   email          citext not null unique,
   password_hash  text,
   display_name   text not null,
   last_login_at  timestamptz,
   created_at     timestamptz not null default now(),
   updated_at     timestamptz not null default now(),
-  unique (tenant_id, id)           -- composite-FK target
+  unique (workspace_id, id)           -- composite-FK target
 );
 
 create trigger users_updated_at before update on users
@@ -403,7 +403,7 @@ create trigger users_updated_at before update on users
 
 - [ ] **Step 4: `user_preferences`, `sessions`, `webauthn_credentials`, `totp_credentials`**
 
-Write each per spec §5.1. None carry `tenant_id` (they belong to a user; tenant is reached via join).
+Write each per spec §5.1. None carry `workspace_id` (they belong to a user; workspace is reached via join).
 
 - `user_preferences`: `user_id uuid primary key references users(id) on delete cascade`, `theme text`, `date_format text`, `number_format text`, `display_currency money_currency`, `feature_flags jsonb not null default '{}'::jsonb`, `updated_at timestamptz not null default now()`. Bind P1 trigger.
 - `sessions`: `id text primary key`, `user_id uuid not null references users(id) on delete cascade`, `created_at`, `expires_at timestamptz not null`, `user_agent text`, `ip inet`. Index `(user_id)`, `(expires_at)`. No trigger (no updated_at).
@@ -412,7 +412,7 @@ Write each per spec §5.1. None carry `tenant_id` (they belong to a user; tenant
 
 - [ ] **Step 5: Run the verification baseline (§0.5)**
 
-Expected: `atlas migrate apply` succeeds; `\dt` in psql shows `tenants, users, user_preferences, sessions, webauthn_credentials, totp_credentials`.
+Expected: `atlas migrate apply` succeeds; `\dt` in psql shows `workspaces, users, user_preferences, sessions, webauthn_credentials, totp_credentials`.
 
 Spot-check:
 
@@ -420,7 +420,7 @@ Spot-check:
 psql "$DATABASE_URL" -c '\d users'
 ```
 
-Expected: `tenant_id UNIQUE`, composite `UNIQUE (tenant_id, id)`, FK to `tenants(id) ON DELETE CASCADE`.
+Expected: `workspace_id UNIQUE`, composite `UNIQUE (workspace_id, id)`, FK to `workspaces(id) ON DELETE CASCADE`.
 
 - [ ] **Step 6: Commit**
 
@@ -430,7 +430,7 @@ git add backend/db/migrations/20260424000001_identity.sql
 git commit -m "$(cat <<'EOF'
 feat(schema): add identity migration
 
-Tenants, users (1:1 with tenants in v1), user_preferences, sessions,
+Workspaces, users (1:1 with workspaces in v1), user_preferences, sessions,
 webauthn_credentials, totp_credentials. Introduces the set_updated_at
 trigger function and money_currency domain used by later migrations.
 EOF
@@ -467,18 +467,18 @@ create type reconciliation_status as enum (
 
 - [ ] **Step 2: `accounts`**
 
-Use the P3 tenant-scoped skeleton. Columns per spec §5.2 — `name text not null`, `nickname text`, `kind account_kind not null`, `currency money_currency not null`, `institution text`, `open_date date not null`, `close_date date`, `opening_balance numeric(28,8) not null default 0`, `opening_balance_date date not null`, `include_in_networth bool not null default true`, `include_in_savings_rate bool not null`, `archived_at timestamptz`.
+Use the P3 workspace-scoped skeleton. Columns per spec §5.2 — `name text not null`, `nickname text`, `kind account_kind not null`, `currency money_currency not null`, `institution text`, `open_date date not null`, `close_date date`, `opening_balance numeric(28,8) not null default 0`, `opening_balance_date date not null`, `include_in_networth bool not null default true`, `include_in_savings_rate bool not null`, `archived_at timestamptz`.
 
-Index `(tenant_id, archived_at) where archived_at is null` to accelerate "active accounts" lookups.
+Index `(workspace_id, archived_at) where archived_at is null` to accelerate "active accounts" lookups.
 
 - [ ] **Step 3: `account_balance_snapshots`**
 
-Tenant-scoped skeleton minus the `updated_at`/trigger (append-only fact):
+Workspace-scoped skeleton minus the `updated_at`/trigger (append-only fact):
 
 ```sql
 create table account_balance_snapshots (
   id          uuid primary key,
-  tenant_id   uuid not null references tenants(id) on delete cascade,
+  workspace_id   uuid not null references workspaces(id) on delete cascade,
   account_id  uuid not null,
   as_of       timestamptz not null,
   balance     numeric(28,8) not null,
@@ -486,10 +486,10 @@ create table account_balance_snapshots (
   source      balance_snapshot_source not null,
   note        text,
   created_at  timestamptz not null default now(),
-  unique (tenant_id, id),
+  unique (workspace_id, id),
   unique (account_id, as_of, source),
-  constraint abs_account_fk foreign key (tenant_id, account_id)
-    references accounts(tenant_id, id) on delete cascade
+  constraint abs_account_fk foreign key (workspace_id, account_id)
+    references accounts(workspace_id, id) on delete cascade
 );
 
 create index abs_account_timeline_idx on account_balance_snapshots(account_id, as_of desc);
@@ -497,26 +497,26 @@ create index abs_account_timeline_idx on account_balance_snapshots(account_id, a
 
 - [ ] **Step 4: `reconciliation_checkpoints`**
 
-Per spec §5.2; tenant-scoped with updated_at and P1 trigger. Composite FK to `accounts(tenant_id, id)`.
+Per spec §5.2; workspace-scoped with updated_at and P1 trigger. Composite FK to `accounts(workspace_id, id)`.
 
 - [ ] **Step 5: Run verification baseline**
 
 Spot-check:
 
 ```bash
-psql "$DATABASE_URL" -c "insert into tenants (id, name, base_currency, cycle_anchor_day) values ('00000000-0000-7000-8000-000000000001', 't1', 'CHF', 25);"
-psql "$DATABASE_URL" -c "insert into users (id, tenant_id, email, display_name) values ('00000000-0000-7000-8000-00000000000a', '00000000-0000-7000-8000-000000000001', 'a@example.com', 'Alice');"
-psql "$DATABASE_URL" -c "insert into accounts (id, tenant_id, name, kind, currency, open_date, opening_balance_date, include_in_savings_rate) values ('00000000-0000-7000-8000-0000000000ff', '00000000-0000-7000-8000-000000000001', 'Checking', 'checking', 'CHF', '2026-01-01', '2026-01-01', true);"
+psql "$DATABASE_URL" -c "insert into workspaces (id, name, base_currency, cycle_anchor_day) values ('00000000-0000-7000-8000-000000000001', 't1', 'CHF', 25);"
+psql "$DATABASE_URL" -c "insert into users (id, workspace_id, email, display_name) values ('00000000-0000-7000-8000-00000000000a', '00000000-0000-7000-8000-000000000001', 'a@example.com', 'Alice');"
+psql "$DATABASE_URL" -c "insert into accounts (id, workspace_id, name, kind, currency, open_date, opening_balance_date, include_in_savings_rate) values ('00000000-0000-7000-8000-0000000000ff', '00000000-0000-7000-8000-000000000001', 'Checking', 'checking', 'CHF', '2026-01-01', '2026-01-01', true);"
 ```
 
-Then attempt the cross-tenant violation:
+Then attempt the cross-workspace violation:
 
 ```bash
-psql "$DATABASE_URL" -c "insert into tenants (id, name, base_currency, cycle_anchor_day) values ('00000000-0000-7000-8000-000000000002', 't2', 'CHF', 25);"
-psql "$DATABASE_URL" -c "insert into account_balance_snapshots (id, tenant_id, account_id, as_of, balance, currency, source) values ('00000000-0000-7000-8000-00000000f000', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-0000000000ff', now(), 0, 'CHF', 'opening');"
+psql "$DATABASE_URL" -c "insert into workspaces (id, name, base_currency, cycle_anchor_day) values ('00000000-0000-7000-8000-000000000002', 't2', 'CHF', 25);"
+psql "$DATABASE_URL" -c "insert into account_balance_snapshots (id, workspace_id, account_id, as_of, balance, currency, source) values ('00000000-0000-7000-8000-00000000f000', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-0000000000ff', now(), 0, 'CHF', 'opening');"
 ```
 
-Expected: last insert fails with an FK violation on `abs_account_fk` (the snapshot row's tenant_id ≠ account's tenant_id).
+Expected: last insert fails with an FK violation on `abs_account_fk` (the snapshot row's workspace_id ≠ account's workspace_id).
 
 Clean up:
 
@@ -564,30 +564,30 @@ Per spec §5.3.
 - Self-reference on `categories.parent_id` uses composite FK (P4):
   ```sql
   constraint categories_parent_fk
-    foreign key (tenant_id, parent_id)
-    references categories(tenant_id, id) on delete set null
+    foreign key (workspace_id, parent_id)
+    references categories(workspace_id, id) on delete set null
   ```
 - `merchants.default_category_id` → composite FK to `categories`.
 - `merchant_aliases.merchant_id` → composite FK to `merchants` (on delete cascade).
-- `category_history` carries `tenant_id`; composite FKs to `categories(tenant_id, id)` (both `category_id` and `merged_into_category_id`) and to `users(tenant_id, id)` for `actor_user_id` (on delete set null).
-- `categorization_rules.tenant_id` + `priority int not null`; add partial index `where enabled = true` on `(tenant_id, priority)` for rule-engine scans.
+- `category_history` carries `workspace_id`; composite FKs to `categories(workspace_id, id)` (both `category_id` and `merged_into_category_id`) and to `users(workspace_id, id)` for `actor_user_id` (on delete set null).
+- `categorization_rules.workspace_id` + `priority int not null`; add partial index `where enabled = true` on `(workspace_id, priority)` for rule-engine scans.
 
 - [ ] **Step 4: Run verification baseline**
 
 Spot-check hierarchy constraint:
 
 ```bash
-# seed tenant + user + two categories
+# seed workspace + user + two categories
 psql "$DATABASE_URL" <<'SQL'
-insert into tenants (id, name, base_currency, cycle_anchor_day)
+insert into workspaces (id, name, base_currency, cycle_anchor_day)
   values ('00000000-0000-7000-8000-000000000001', 't1', 'CHF', 25);
-insert into users (id, tenant_id, email, display_name)
+insert into users (id, workspace_id, email, display_name)
   values ('00000000-0000-7000-8000-00000000000a',
           '00000000-0000-7000-8000-000000000001', 'a@example.com', 'A');
-insert into categories (id, tenant_id, name, sort_order)
+insert into categories (id, workspace_id, name, sort_order)
   values ('00000000-0000-7000-8000-00000000c001',
           '00000000-0000-7000-8000-000000000001', 'Food', 0);
-insert into categories (id, tenant_id, parent_id, name, sort_order)
+insert into categories (id, workspace_id, parent_id, name, sort_order)
   values ('00000000-0000-7000-8000-00000000c002',
           '00000000-0000-7000-8000-000000000001',
           '00000000-0000-7000-8000-00000000c001', 'Groceries', 0);
@@ -632,15 +632,15 @@ create type match_provenance as enum (
 
 - [ ] **Step 2: `transactions`**
 
-Tenant-scoped skeleton. Columns per spec §5.4 — note `original_currency money_currency nullable`, `currency money_currency not null`. Composite FKs:
+Workspace-scoped skeleton. Columns per spec §5.4 — note `original_currency money_currency nullable`, `currency money_currency not null`. Composite FKs:
 
 ```sql
-constraint transactions_account_fk   foreign key (tenant_id, account_id)   references accounts(tenant_id, id)   on delete cascade,
-constraint transactions_category_fk  foreign key (tenant_id, category_id)  references categories(tenant_id, id) on delete set null,
-constraint transactions_merchant_fk  foreign key (tenant_id, merchant_id)  references merchants(tenant_id, id)  on delete set null
+constraint transactions_account_fk   foreign key (workspace_id, account_id)   references accounts(workspace_id, id)   on delete cascade,
+constraint transactions_category_fk  foreign key (workspace_id, category_id)  references categories(workspace_id, id) on delete set null,
+constraint transactions_merchant_fk  foreign key (workspace_id, merchant_id)  references merchants(workspace_id, id)  on delete set null
 ```
 
-Indexes from spec: `(tenant_id, booked_at desc)`, `(account_id, booked_at desc)`, `(category_id)`, `(merchant_id)`, `(status)`.
+Indexes from spec: `(workspace_id, booked_at desc)`, `(account_id, booked_at desc)`, `(category_id)`, `(merchant_id)`, `(status)`.
 
 Currency-match trigger:
 
@@ -676,7 +676,7 @@ Per spec §5.4. Composite FKs to the transaction pairs and to users for `matched
 ```sql
 create table categorization_suggestions (
   id                  uuid primary key,
-  tenant_id           uuid not null references tenants(id) on delete cascade,
+  workspace_id           uuid not null references workspaces(id) on delete cascade,
   transaction_id      uuid not null,
   suggested_category_id uuid not null,
   confidence          numeric(5,4) not null,
@@ -684,11 +684,11 @@ create table categorization_suggestions (
   created_at          timestamptz not null default now(),
   accepted_at         timestamptz,
   dismissed_at        timestamptz,
-  unique (tenant_id, id),
-  constraint cs_txn_fk foreign key (tenant_id, transaction_id)
-    references transactions(tenant_id, id) on delete cascade,
-  constraint cs_cat_fk foreign key (tenant_id, suggested_category_id)
-    references categories(tenant_id, id) on delete cascade
+  unique (workspace_id, id),
+  constraint cs_txn_fk foreign key (workspace_id, transaction_id)
+    references transactions(workspace_id, id) on delete cascade,
+  constraint cs_cat_fk foreign key (workspace_id, suggested_category_id)
+    references categories(workspace_id, id) on delete cascade
 );
 ```
 
@@ -719,26 +719,26 @@ Seed script (reset first):
 psql "$DATABASE_URL" -c 'drop schema public cascade; create schema public;'
 atlas migrate apply --env local
 psql "$DATABASE_URL" <<'SQL'
-insert into tenants (id, name, base_currency, cycle_anchor_day)
+insert into workspaces (id, name, base_currency, cycle_anchor_day)
   values ('00000000-0000-7000-8000-000000000001', 't1', 'CHF', 25);
-insert into users (id, tenant_id, email, display_name)
+insert into users (id, workspace_id, email, display_name)
   values ('00000000-0000-7000-8000-00000000000a',
           '00000000-0000-7000-8000-000000000001', 'a@example.com', 'A');
-insert into accounts (id, tenant_id, name, kind, currency, open_date, opening_balance_date, include_in_savings_rate)
+insert into accounts (id, workspace_id, name, kind, currency, open_date, opening_balance_date, include_in_savings_rate)
   values ('00000000-0000-7000-8000-0000000000ff',
           '00000000-0000-7000-8000-000000000001',
           'Checking', 'checking', 'CHF', '2026-01-01', '2026-01-01', true);
-insert into categories (id, tenant_id, name, sort_order)
+insert into categories (id, workspace_id, name, sort_order)
   values ('00000000-0000-7000-8000-00000000c001',
           '00000000-0000-7000-8000-000000000001', 'Food', 0);
-insert into categories (id, tenant_id, parent_id, name, sort_order)
+insert into categories (id, workspace_id, parent_id, name, sort_order)
   values ('00000000-0000-7000-8000-00000000c002',
           '00000000-0000-7000-8000-000000000001',
           '00000000-0000-7000-8000-00000000c001', 'Groceries', 0);
 SQL
 
 # (1) currency mismatch
-psql "$DATABASE_URL" -c "insert into transactions (id, tenant_id, account_id, status, booked_at, amount, currency)
+psql "$DATABASE_URL" -c "insert into transactions (id, workspace_id, account_id, status, booked_at, amount, currency)
   values ('00000000-0000-7000-8000-00000000t001',
           '00000000-0000-7000-8000-000000000001',
           '00000000-0000-7000-8000-0000000000ff',
@@ -746,7 +746,7 @@ psql "$DATABASE_URL" -c "insert into transactions (id, tenant_id, account_id, st
 # Expected: ERROR: transaction currency USD does not match account currency CHF
 
 # (2) parent category (non-leaf)
-psql "$DATABASE_URL" -c "insert into transactions (id, tenant_id, account_id, status, booked_at, amount, currency, category_id)
+psql "$DATABASE_URL" -c "insert into transactions (id, workspace_id, account_id, status, booked_at, amount, currency, category_id)
   values ('00000000-0000-7000-8000-00000000t002',
           '00000000-0000-7000-8000-000000000001',
           '00000000-0000-7000-8000-0000000000ff',
@@ -755,7 +755,7 @@ psql "$DATABASE_URL" -c "insert into transactions (id, tenant_id, account_id, st
 # Expected: ERROR: category_id ... is not a leaf
 
 # Valid insert
-psql "$DATABASE_URL" -c "insert into transactions (id, tenant_id, account_id, status, booked_at, amount, currency, category_id)
+psql "$DATABASE_URL" -c "insert into transactions (id, workspace_id, account_id, status, booked_at, amount, currency, category_id)
   values ('00000000-0000-7000-8000-00000000t003',
           '00000000-0000-7000-8000-000000000001',
           '00000000-0000-7000-8000-0000000000ff',
@@ -764,7 +764,7 @@ psql "$DATABASE_URL" -c "insert into transactions (id, tenant_id, account_id, st
 # Expected: INSERT 0 1
 
 # (3) double classification
-psql "$DATABASE_URL" -c "insert into transaction_lines (id, tenant_id, transaction_id, amount, currency, category_id, sort_order)
+psql "$DATABASE_URL" -c "insert into transaction_lines (id, workspace_id, transaction_id, amount, currency, category_id, sort_order)
   values ('00000000-0000-7000-8000-000000001ab0',
           '00000000-0000-7000-8000-000000000001',
           '00000000-0000-7000-8000-00000000t003',
@@ -804,11 +804,11 @@ Per spec: `provider_connection_status`, `import_profile_kind`, `import_source_ki
 Create `provider_connections`, `provider_accounts`, `import_profiles`, `import_batches`, `source_refs` per spec §5.5.
 
 - Composite FKs on `provider_accounts.account_id`, `import_batches.import_profile_id` and `import_batches.provider_connection_id` and `import_batches.created_by_user_id`, `source_refs.import_batch_id`.
-- `source_refs` unique key: `unique (tenant_id, entity_type, provider, external_id) where provider is not null`. Note: Postgres unique indexes with predicates require the CREATE INDEX form, not a table-level `UNIQUE`:
+- `source_refs` unique key: `unique (workspace_id, entity_type, provider, external_id) where provider is not null`. Note: Postgres unique indexes with predicates require the CREATE INDEX form, not a table-level `UNIQUE`:
 
   ```sql
   create unique index source_refs_dedupe
-    on source_refs (tenant_id, entity_type, provider, external_id)
+    on source_refs (workspace_id, entity_type, provider, external_id)
     where provider is not null;
   ```
 
@@ -816,7 +816,7 @@ Create `provider_connections`, `provider_accounts`, `import_profiles`, `import_b
 
 - [ ] **Step 3: Verification baseline + spot-check**
 
-Insert two tenants, two provider_connections, same provider + external_id, same entity_type. Confirm the two rows coexist. Repeat within one tenant and confirm the second insert conflicts on `source_refs_dedupe`.
+Insert two workspaces, two provider_connections, same provider + external_id, same entity_type. Confirm the two rows coexist. Repeat within one workspace and confirm the second insert conflicts on `source_refs_dedupe`.
 
 - [ ] **Step 4: Commit**
 
@@ -825,7 +825,7 @@ git add backend/db/migrations/20260424000005_imports.sql
 git commit -m "feat(schema): add imports and provider integration migration
 
 provider_connections, provider_accounts, import_profiles, import_batches,
-source_refs (polymorphic dedupe, tenant-scoped unique key)."
+source_refs (polymorphic dedupe, workspace-scoped unique key)."
 ```
 
 ---
@@ -905,7 +905,7 @@ Composite FKs on `goal_contributions.transaction_id` (to transactions) and `goal
 
 ```sql
 alter table cycle_plan_lines add constraint cpl_goal_fk
-  foreign key (tenant_id, goal_id) references goals(tenant_id, id)
+  foreign key (workspace_id, goal_id) references goals(workspace_id, id)
   on delete set null;
 ```
 
@@ -937,9 +937,9 @@ FK."
 
 Per spec: `asset_class`, `trade_side`, `cost_basis_method`, `corporate_action_kind`, `price_source`.
 
-- [ ] **Step 2: Global tables (no `tenant_id`)**
+- [ ] **Step 2: Global tables (no `workspace_id`)**
 
-`instruments` and `instrument_prices`. Plain `id uuid primary key`, no tenant_id, no composite unique. Indexes per spec.
+`instruments` and `instrument_prices`. Plain `id uuid primary key`, no workspace_id, no composite unique. Indexes per spec.
 
 Instruments:
 
@@ -949,17 +949,17 @@ create unique index instruments_symbol_exchange_uq
   on instruments(symbol, exchange) where isin is null;
 ```
 
-- [ ] **Step 3: Tenant-scoped tables**
+- [ ] **Step 3: Workspace-scoped tables**
 
 `investment_accounts` (extends `accounts`; `account_id uuid primary key references accounts(id) on delete cascade` — this is the one exception to the "every PK is v7 uuid" rule since it's a 1:1 extension), `investment_trades`, `investment_lots`, `investment_lot_consumptions`, `dividend_events`, `corporate_actions`, `investment_positions` (composite PK `(account_id, instrument_id)`; cache), `allocation_buckets`, `position_bucket_allocations`, `target_allocations`.
 
-`investment_accounts.tenant_id` sits alongside `account_id` for tenant-scoped queries; composite FK `(tenant_id, account_id)` to `accounts(tenant_id, id)`.
+`investment_accounts.workspace_id` sits alongside `account_id` for workspace-scoped queries; composite FK `(workspace_id, account_id)` to `accounts(workspace_id, id)`.
 
 Self-FK on `allocation_buckets.parent_bucket_id` uses composite P4.
 
 - [ ] **Step 4: Verification baseline**
 
-Insert an instrument (global), an investment_account (tied to a brokerage account), a trade, and a lot. Confirm a cross-tenant insert of investment_trades against another tenant's investment_account fails.
+Insert an instrument (global), an investment_account (tied to a brokerage account), a trade, and a lot. Confirm a cross-workspace insert of investment_trades against another workspace's investment_account fails.
 
 - [ ] **Step 5: Commit**
 
@@ -987,11 +987,11 @@ Per spec: `asset_category`, `asset_valuation_method`, `asset_valuation_source`, 
 
 - [ ] **Step 2: Tables**
 
-`assets` (1:1 with asset-kind accounts — `account_id uuid not null unique`, composite FK), `asset_valuations`, `asset_events`, `asset_depreciation_schedules` (1:1 with assets), `retirement_contribution_limits` (reference data, no tenant_id), `mortgage_schedules` (1:1 with mortgage-kind accounts), `mortgage_payments`.
+`assets` (1:1 with asset-kind accounts — `account_id uuid not null unique`, composite FK), `asset_valuations`, `asset_events`, `asset_depreciation_schedules` (1:1 with assets), `retirement_contribution_limits` (reference data, no workspace_id), `mortgage_schedules` (1:1 with mortgage-kind accounts), `mortgage_payments`.
 
-`mortgage_schedules.account_id` is unique and references `accounts(tenant_id, id)` via composite FK.
+`mortgage_schedules.account_id` is unique and references `accounts(workspace_id, id)` via composite FK.
 
-`asset_events.linked_transaction_id` uses composite FK to `transactions(tenant_id, id)` (`on delete set null`).
+`asset_events.linked_transaction_id` uses composite FK to `transactions(workspace_id, id)` (`on delete set null`).
 
 - [ ] **Step 3: Verification baseline**
 
@@ -1039,7 +1039,7 @@ Composite FK back-fill for `cycle_plan_lines.trip_id`:
 
 ```sql
 alter table cycle_plan_lines add constraint cpl_trip_fk
-  foreign key (tenant_id, trip_id) references trips(tenant_id, id)
+  foreign key (workspace_id, trip_id) references trips(workspace_id, id)
   on delete set null;
 ```
 
@@ -1075,7 +1075,7 @@ cycle_plan_lines.trip_id FK."
 
 `wishlist_items`, `wishlist_price_observations` (append-only; no updated_at), `wishlist_purchase_links`.
 
-Composite FKs: `wishlist_items.linked_goal_id` → `goals(tenant_id, id)`, `wishlist_purchase_links.transaction_id` → `transactions(tenant_id, id)`, `wishlist_purchase_links.wishlist_item_id` unique + composite FK to `wishlist_items(tenant_id, id)` cascade.
+Composite FKs: `wishlist_items.linked_goal_id` → `goals(workspace_id, id)`, `wishlist_purchase_links.transaction_id` → `transactions(workspace_id, id)`, `wishlist_purchase_links.wishlist_item_id` unique + composite FK to `wishlist_items(workspace_id, id)` cascade.
 
 Optional trigger: on insert into `wishlist_purchase_links`, set `wishlist_items.status = 'bought'`.
 
@@ -1121,13 +1121,13 @@ with trigger that flips wishlist_items.status to 'bought' on purchase."
 
 - [ ] **Step 2: Tables**
 
-`attachments` (unique `(tenant_id, sha256)` for dedupe), `attachment_links` (unique `(attachment_id, entity_type, entity_id)`), `ocr_documents`, `saved_searches`, `audit_events`.
+`attachments` (unique `(workspace_id, sha256)` for dedupe), `attachment_links` (unique `(attachment_id, entity_type, entity_id)`), `ocr_documents`, `saved_searches`, `audit_events`.
 
 Composite FKs for user references (`attachments.uploaded_by_user_id`, `attachment_links.linked_by_user_id`, `saved_searches.user_id`, `audit_events.actor_user_id`). Indexes:
 
 ```sql
 create index audit_events_entity_idx
-  on audit_events(tenant_id, entity_type, entity_id, occurred_at desc);
+  on audit_events(workspace_id, entity_type, entity_id, occurred_at desc);
 ```
 
 - [ ] **Step 3: Define P7 (`record_audit_event` function)**
@@ -1171,7 +1171,7 @@ create trigger audit_events_no_delete before delete on audit_events
 
 - [ ] **Step 5: Verification baseline + spot-check**
 
-Seed one tenant/user. Insert a category; confirm `audit_events` has one `created` row for `entity_type='category'` with `actor_user_id = null` (no `folio.actor_user_id` set). Now:
+Seed one workspace/user. Insert a category; confirm `audit_events` has one `created` row for `entity_type='category'` with `actor_user_id = null` (no `folio.actor_user_id` set). Now:
 
 ```bash
 psql "$DATABASE_URL" <<'SQL'
@@ -1208,9 +1208,9 @@ audited tables. audit_events enforced append-only."
 
 - [ ] **Step 2: Tables**
 
-`fx_rates` (global, no tenant_id), `networth_snapshots`, `event_markers`, `report_exports`, `export_templates`.
+`fx_rates` (global, no workspace_id), `networth_snapshots`, `event_markers`, `report_exports`, `export_templates`.
 
-Composite FKs for user references (`report_exports.requested_by_user_id`). `report_exports.file_attachment_id` FK to `attachments` (single-column is OK here because attachments is tenant-scoped and the composite `(tenant_id, file_attachment_id)` is also needed — use composite).
+Composite FKs for user references (`report_exports.requested_by_user_id`). `report_exports.file_attachment_id` FK to `attachments` (single-column is OK here because attachments is workspace-scoped and the composite `(workspace_id, file_attachment_id)` is also needed — use composite).
 
 - [ ] **Step 3: Verification baseline + spot-check**
 
@@ -1290,14 +1290,14 @@ Folio's data model is documented in full at
 document is the high-level narrative; the spec is the authoritative
 column listing.
 
-## Identity and tenancy
+## Identity and workspace
 
-- **Tenants** own all financial data. Financial rows carry `tenant_id`.
-- **Users** authenticate into a tenant. v1 enforces one user per tenant
-  via `users.tenant_id UNIQUE`.
-- Tenant isolation is enforced by **composite foreign keys** (every
-  tenant-scoped table has `UNIQUE (tenant_id, id)`; every FK from
-  another tenant-scoped table is composite).
+- **Workspaces** own all financial data. Financial rows carry `workspace_id`.
+- **Users** authenticate into a workspace. v1 enforces one user per workspace
+  via `users.workspace_id UNIQUE`.
+- Workspace isolation is enforced by **composite foreign keys** (every
+  workspace-scoped table has `UNIQUE (workspace_id, id)`; every FK from
+  another workspace-scoped table is composite).
 
 ## Money and currency
 
@@ -1352,7 +1352,7 @@ The schema separates three layers:
 - `provider_connections` holds encrypted tokens for external sources
   (GoCardless, IBKR Flex, crypto addresses).
 - `import_batches` records each file or sync run.
-- Dedupe keys live in `source_refs` (polymorphic, tenant-scoped).
+- Dedupe keys live in `source_refs` (polymorphic, workspace-scoped).
 
 ## Planning, goals, investments, assets, travel, wishlist
 
@@ -1364,7 +1364,7 @@ The schema separates three layers:
 - **Goals**: hierarchical goals, multi-account allocations, savings
   rules with priority-ordered evaluation.
 - **Investments**: global `instruments` + `instrument_prices`;
-  tenant-scoped trades, lots, lot_consumptions, dividends, corporate
+  workspace-scoped trades, lots, lot_consumptions, dividends, corporate
   actions, and a materialized `investment_positions` cache.
 - **Physical assets & retirement**: `assets` are 1:1 with asset-kind
   accounts; valuations drive networth. `mortgage_schedules` and
@@ -1378,7 +1378,7 @@ The schema separates three layers:
 
 ## Cross-cutting
 
-- **Attachments**: deduped by `(tenant_id, sha256)`; linked to any
+- **Attachments**: deduped by `(workspace_id, sha256)`; linked to any
   entity via the polymorphic `attachment_links`.
 - **Audit**: `audit_events` is append-only; triggers on every audited
   table record create/update/delete with before/after JSON. Actor is
@@ -1395,7 +1395,7 @@ The schema separates three layers:
 - A transaction's `category_id` must reference a leaf category
   (trigger).
 - A transaction cannot have both `category_id` and lines (trigger).
-- Tenant isolation is composite-FK-enforced at the DB layer.
+- Workspace isolation is composite-FK-enforced at the DB layer.
 - Archived accounts are excluded from sums by default (query helper).
 ```
 
@@ -1477,7 +1477,7 @@ psql "$DATABASE_URL" -c "
 "
 ```
 
-Expected output includes `FOREIGN KEY (tenant_id, account_id) REFERENCES accounts(tenant_id, id)`.
+Expected output includes `FOREIGN KEY (workspace_id, account_id) REFERENCES accounts(workspace_id, id)`.
 
 - [ ] **Step 6: Spot-check triggers**
 
@@ -1523,11 +1523,11 @@ If step 8 shows unexpected modified files, investigate and commit — this shoul
 - [ ] `docs/domain.md` rewritten (Task 16).
 - [ ] No `pg_uuidv7` or `gen_random_uuid()` anywhere in the migrations — all IDs supplied by caller.
 - [ ] Every `currency` column uses the `money_currency` domain.
-- [ ] Every tenant-scoped table has `UNIQUE (tenant_id, id)`.
-- [ ] Every cross-table FK to a tenant-scoped parent is composite.
+- [ ] Every workspace-scoped table has `UNIQUE (workspace_id, id)`.
+- [ ] Every cross-table FK to a workspace-scoped parent is composite.
 - [ ] Self-FKs (`categories.parent_id`, `goals.parent_goal_id`, `goals.auto_redirect_on_reach_goal_id`, `allocation_buckets.parent_bucket_id`) are composite.
-- [ ] User FKs on tenant-scoped tables are composite (audit_events, saved_searches, report_exports, attachments, attachment_links, notification_preferences, transfer/refund_matches.matched_by_user_id, import_batches.created_by_user_id, category_history.actor_user_id).
-- [ ] `source_refs` unique index includes `tenant_id`.
+- [ ] User FKs on workspace-scoped tables are composite (audit_events, saved_searches, report_exports, attachments, attachment_links, notification_preferences, transfer/refund_matches.matched_by_user_id, import_batches.created_by_user_id, category_history.actor_user_id).
+- [ ] `source_refs` unique index includes `workspace_id`.
 - [ ] `categorization_suggestions` declared exactly once (in Task 5).
 - [ ] `planned_event_matches` declared exactly once (in Task 7).
 - [ ] No XOR on `(category_id, transaction_lines)` — only the "no double classification" trigger.

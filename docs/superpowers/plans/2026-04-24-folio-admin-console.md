@@ -2,17 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land the instance-admin console — CLI bootstrap, `users.is_admin` grant/revoke, `/api/v1/admin/…` HTTP surface, and the `/admin/…` Next.js screens — so a Folio operator can debug tenants/users, inspect the audit feed, and retry River jobs without SQL.
+**Goal:** Land the instance-admin console — CLI bootstrap, `users.is_admin` grant/revoke, `/api/v1/admin/…` HTTP surface, and the `/admin/…` Next.js screens — so a Folio operator can debug workspaces/users, inspect the audit feed, and retry River jobs without SQL.
 
-**Architecture:** `users.is_admin` is a boolean orthogonal to tenant roles; admins have no default access to financial data. Granting goes through the `folio-admin` CLI (self-host primary) or the `ADMIN_BOOTSTRAP_EMAIL` env-var first-run hook (wired into plan 1's `auth.Service.Signup`). `auth.RequireAdmin` returns **404** on a miss so admin-ness is not enumerable. All write endpoints sit behind `RequireFreshReauth(5m)`; both reads and writes emit `admin.*` audit events. A last-admin guard in the CLI and the HTTP revoke endpoint parallels the last-owner tenant invariant.
+**Architecture:** `users.is_admin` is a boolean orthogonal to workspace roles; admins have no default access to financial data. Granting goes through the `folio-admin` CLI (self-host primary) or the `ADMIN_BOOTSTRAP_EMAIL` env-var first-run hook (wired into plan 1's `auth.Service.Signup`). `auth.RequireAdmin` returns **404** on a miss so admin-ness is not enumerable. All write endpoints sit behind `RequireFreshReauth(5m)`; both reads and writes emit `admin.*` audit events. A last-admin guard in the CLI and the HTTP revoke endpoint parallels the last-owner workspace invariant.
 
 **Tech Stack:** Go 1.25; `github.com/spf13/cobra` for CLI subcommands; `github.com/go-chi/chi/v5` for routing; `github.com/jackc/pgx/v5` for Postgres; Next.js 16 (App Router) + React Query on the web side.
 
-**Spec:** docs/superpowers/specs/2026-04-24-folio-auth-and-tenancy-design.md (§11 primary; §8.3 `admin.*` audit actions; §13 web layout)
+**Spec:** docs/superpowers/specs/2026-04-24-folio-auth-and-workspace-design.md (§11 primary; §8.3 `admin.*` audit actions; §13 web layout)
 
 **Prior plans in series:**
 - `docs/superpowers/plans/2026-04-24-folio-auth-foundation.md` (plan 1) — `auth` package, `identity` package, `users.is_admin` column, `RequireSession`, `RequireFreshReauth` stub, `auth.Service.Signup` with optional `AdminBootstrapHook` parameter
-- `docs/superpowers/plans/2026-04-24-folio-invites-and-tenant-lifecycle.md` (plan 2) — invite flows, tenant soft delete, `identity.InviteService`
+- `docs/superpowers/plans/2026-04-24-folio-invites-and-workspace-lifecycle.md` (plan 2) — invite flows, workspace soft delete, `identity.InviteService`
 - `docs/superpowers/plans/2026-04-24-folio-email-infrastructure.md` (plan 3) — `mailer.ResendMailer`, `jobs.Client` for River, transactional email tables
 - `docs/superpowers/plans/2026-04-24-folio-mfa.md` (plan 4) — MFA, real `RequireFreshReauth`, step-up reauth endpoint
 
@@ -109,7 +109,7 @@ Plan 1 leaves `auth.Service.Signup` with an optional `AdminBootstrapHook func(ct
 Create `backend/internal/admin/bootstrap_test.go`. Cover three cases:
 
 1. `ADMIN_BOOTSTRAP_EMAIL` unset → `EnsureBootstrapAdmin` is a no-op; `users.is_admin` stays false; no audit row.
-2. Env matches user email (case-insensitive, trimmed) → `users.is_admin=true`; one `admin.bootstrap_granted` audit row with `actor_user_id = NULL` and `tenant_id = NULL`.
+2. Env matches user email (case-insensitive, trimmed) → `users.is_admin=true`; one `admin.bootstrap_granted` audit row with `actor_user_id = NULL` and `workspace_id = NULL`.
 3. Called twice with same matching email → second call is a no-op; still exactly one audit row.
 
 Use plan 1's `testdb.New(t)` + a helper that creates a user and sets `ADMIN_BOOTSTRAP_EMAIL` via `t.Setenv`.
@@ -135,7 +135,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Service owns writes for admin grants, read queries for tenants/users/audit/jobs,
+// Service owns writes for admin grants, read queries for workspaces/users/audit/jobs,
 // and operational actions (retry job, resend email). All methods audit.
 type Service struct {
 	pool   *pgxpool.Pool
@@ -184,7 +184,7 @@ func (s *Service) EnsureBootstrapAdmin(ctx context.Context, userID uuid.UUID, em
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		insert into audit_events (id, tenant_id, actor_user_id, entity_type, entity_id, action, before_jsonb, after_jsonb, occurred_at)
+		insert into audit_events (id, workspace_id, actor_user_id, entity_type, entity_id, action, before_jsonb, after_jsonb, occurred_at)
 		values ($1, null, null, 'user', $2, 'admin.bootstrap_granted', null, jsonb_build_object('is_admin', true), now())
 	`, uuid.Must(uuid.NewV7()), userID); err != nil {
 		return err
@@ -201,7 +201,9 @@ In the server entry point that constructs `auth.Service` (plan 1), pass the hook
 
 ```go
 adminSvc := admin.NewService(db)
-authSvc := auth.NewService(db, auth.WithAdminBootstrapHook(adminSvc.EnsureBootstrapAdmin))
+authSvc := auth.NewService(db, identitySvc, auth.Config{
+    AdminBootstrapHook: adminSvc.EnsureBootstrapAdmin,
+})
 ```
 
 Expected: existing plan 1 tests continue to pass; new integration test: signup with a matching `ADMIN_BOOTSTRAP_EMAIL` produces a user whose `GET /api/v1/me` reports `isAdmin: true`.
@@ -285,7 +287,7 @@ In `backend/internal/admin/filters_test.go`:
 - `AdminListFilter{Limit: 0}.Normalize()` returns `Limit: 50, MaxLimit: 200`.
 - `AdminListFilter{Limit: 500}.Normalize()` clamps to `Limit: 200`.
 - `AdminListFilter{Cursor: "xyz"}.Decode()` returns an error on malformed cursor.
-- `(TenantListFilter|UserListFilter|AuditFilter|JobFilter)` each round-trip via encode/decode.
+- `(WorkspaceListFilter|UserListFilter|AuditFilter|JobFilter)` each round-trip via encode/decode.
 
 - [ ] **Step 2: Green — filters + pagination**
 
@@ -324,8 +326,8 @@ func (f AdminListFilter) Normalize() AdminListFilter {
 	return f
 }
 
-// TenantListFilter: search by name/slug/id substring, include soft-deleted.
-type TenantListFilter struct {
+// WorkspaceListFilter: search by name/slug/id substring, include soft-deleted.
+type WorkspaceListFilter struct {
 	AdminListFilter
 	Search          string
 	IncludeDeleted  bool
@@ -338,11 +340,11 @@ type UserListFilter struct {
 	IsAdminOnly bool
 }
 
-// AuditFilter: filter the audit feed across all tenants.
+// AuditFilter: filter the audit feed across all workspaces.
 type AuditFilter struct {
 	AdminListFilter
 	ActorUserID *uuid.UUID
-	TenantID    *uuid.UUID
+	WorkspaceID    *uuid.UUID
 	Action      string
 	Since       *time.Time
 	Until       *time.Time
@@ -372,34 +374,34 @@ git commit -m "feat(admin): add shared list filters and opaque cursor"
 
 ---
 
-## Task 4: Admin service — `ListTenants` + `TenantDetail`
+## Task 4: Admin service — `ListWorkspaces` + `WorkspaceDetail`
 
-**Spec:** §11.2 tenant list + detail (metadata only, no financial rows).
+**Spec:** §11.2 workspace list + detail (metadata only, no financial rows).
 
 **Files:**
-- Create: `backend/internal/admin/tenants.go`
-- Create: `backend/internal/admin/tenants_test.go`
+- Create: `backend/internal/admin/workspaces.go`
+- Create: `backend/internal/admin/workspaces_test.go`
 
 - [ ] **Step 1: Red — write the tests**
 
-In `backend/internal/admin/tenants_test.go`:
+In `backend/internal/admin/workspaces_test.go`:
 
-- Seed three tenants; one soft-deleted via `update tenants set deleted_at = now()`.
-- `ListTenants(ctx, TenantListFilter{IncludeDeleted: false})` returns 2, ordered by `created_at desc`.
-- `ListTenants(ctx, TenantListFilter{IncludeDeleted: true})` returns 3.
-- `ListTenants(ctx, TenantListFilter{Search: "<slug>"})` narrows correctly (name/slug/id substring match).
-- `TenantDetail(ctx, tenantID)` returns member count (seed 2 memberships), settings, `DeletedAt`, `LastActivityAt` (max of `updated_at` across tenant-scoped tables — start simple: `max(audit_events.occurred_at)` where `tenant_id = $1`).
-- `TenantDetail` emits an `admin.viewed_tenant` audit row keyed to the caller.
-- Regression guard: a test seeding a transaction + account for the tenant asserts the `TenantDetail` return value does **not** include any financial fields (use reflection to assert no `decimal` or money-typed fields exist).
+- Seed three workspaces; one soft-deleted via `update workspaces set deleted_at = now()`.
+- `ListWorkspaces(ctx, WorkspaceListFilter{IncludeDeleted: false})` returns 2, ordered by `created_at desc`.
+- `ListWorkspaces(ctx, WorkspaceListFilter{IncludeDeleted: true})` returns 3.
+- `ListWorkspaces(ctx, WorkspaceListFilter{Search: "<slug>"})` narrows correctly (name/slug/id substring match).
+- `WorkspaceDetail(ctx, workspaceID)` returns member count (seed 2 memberships), settings, `DeletedAt`, `LastActivityAt` (max of `updated_at` across workspace-scoped tables — start simple: `max(audit_events.occurred_at)` where `workspace_id = $1`).
+- `WorkspaceDetail` emits an `admin.viewed_workspace` audit row keyed to the caller.
+- Regression guard: a test seeding a transaction + account for the workspace asserts the `WorkspaceDetail` return value does **not** include any financial fields (use reflection to assert no `decimal` or money-typed fields exist).
 
-**Note:** `ListTenants` / `TenantDetail` return metadata only — never joins `accounts`, `transactions`, or other financial tables.
+**Note:** `ListWorkspaces` / `WorkspaceDetail` return metadata only — never joins `accounts`, `transactions`, or other financial tables.
 
 - [ ] **Step 2: Green — implement**
 
-Create `backend/internal/admin/tenants.go`:
+Create `backend/internal/admin/workspaces.go`:
 
 ```go
-func (s *Service) ListTenants(ctx context.Context, filter TenantListFilter) ([]identity.Tenant, pagination, error) {
+func (s *Service) ListWorkspaces(ctx context.Context, filter WorkspaceListFilter) ([]identity.Workspace, pagination, error) {
 	filter.AdminListFilter = filter.Normalize()
 	// Build WHERE: (deleted_at is null OR $includeDeleted) AND
 	// (search empty OR name ILIKE $s OR slug ILIKE $s OR id::text = $s).
@@ -407,36 +409,36 @@ func (s *Service) ListTenants(ctx context.Context, filter TenantListFilter) ([]i
 	// Return up to filter.Limit rows + encoded cursor for the spillover.
 }
 
-type TenantDetail struct {
-	Tenant         identity.Tenant `json:"tenant"`
+type WorkspaceDetail struct {
+	Workspace         identity.Workspace `json:"workspace"`
 	MemberCount    int             `json:"memberCount"`
 	DeletedAt      *time.Time      `json:"deletedAt,omitempty"`
 	LastActivityAt *time.Time      `json:"lastActivityAt,omitempty"`
 }
 
-func (s *Service) TenantDetail(ctx context.Context, tenantID uuid.UUID, actorUserID uuid.UUID) (TenantDetail, error) {
-	// 1. SELECT tenant row (including deleted_at).
-	// 2. SELECT count(*) FROM tenant_memberships WHERE tenant_id = $1.
-	// 3. SELECT max(occurred_at) FROM audit_events WHERE tenant_id = $1.
-	// 4. INSERT into audit_events (..., action='admin.viewed_tenant', actor_user_id=$2, ...).
+func (s *Service) WorkspaceDetail(ctx context.Context, workspaceID uuid.UUID, actorUserID uuid.UUID) (WorkspaceDetail, error) {
+	// 1. SELECT workspace row (including deleted_at).
+	// 2. SELECT count(*) FROM workspace_memberships WHERE workspace_id = $1.
+	// 3. SELECT max(occurred_at) FROM audit_events WHERE workspace_id = $1.
+	// 4. INSERT into audit_events (..., action='admin.viewed_workspace', actor_user_id=$2, ...).
 	// 5. return.
 }
 ```
 
-SQL queries use `references tenants(id)` unchanged — no soft-delete filter so admins can still see deleted tenants.
+SQL queries use `references workspaces(id)` unchanged — no soft-delete filter so admins can still see deleted workspaces.
 
 Expected: tests green.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add backend/internal/admin/tenants.go backend/internal/admin/tenants_test.go
+git add backend/internal/admin/workspaces.go backend/internal/admin/workspaces_test.go
 git commit -m "$(cat <<'EOF'
-feat(admin): add ListTenants and TenantDetail
+feat(admin): add ListWorkspaces and WorkspaceDetail
 
-Includes soft-deleted tenants; detail returns metadata only (member
+Includes soft-deleted workspaces; detail returns metadata only (member
 count, last activity) — never joins financial tables. Emits
-admin.viewed_tenant on every detail read.
+admin.viewed_workspace on every detail read.
 EOF
 )"
 ```
@@ -456,7 +458,7 @@ EOF
 Cases:
 - `ListUsers(Search: "alice")` filters by `email ILIKE '%alice%'`.
 - `ListUsers(IsAdminOnly: true)` returns only admins.
-- `UserDetail(ctx, userID, actorUserID)` returns `Memberships` from `tenant_memberships` join `tenants` (slug, name, role), active `sessions` rows where `expires_at > now()`, MFA state from plan 4's `webauthn_credentials` + `totp_credentials` tables (counts + booleans), and `users.last_login_at`.
+- `UserDetail(ctx, userID, actorUserID)` returns `Memberships` from `workspace_memberships` join `workspaces` (slug, name, role), active `sessions` rows where `expires_at > now()`, MFA state from plan 4's `webauthn_credentials` + `totp_credentials` tables (counts + booleans), and `users.last_login_at`.
 - `UserDetail` emits an `admin.viewed_user` audit row.
 - Regression: seeding a user with `is_admin=true` exposes it in `IsAdminOnly=true` and flips a field on `UserDetail.User.IsAdmin`.
 
@@ -464,9 +466,9 @@ Cases:
 
 ```go
 type MembershipSummary struct {
-	TenantID   uuid.UUID `json:"tenantId"`
-	TenantName string    `json:"tenantName"`
-	TenantSlug string    `json:"tenantSlug"`
+	WorkspaceID   uuid.UUID `json:"workspaceId"`
+	WorkspaceName string    `json:"workspaceName"`
+	WorkspaceSlug string    `json:"workspaceSlug"`
 	Role       string    `json:"role"`
 	JoinedAt   time.Time `json:"joinedAt"`
 }
@@ -510,7 +512,7 @@ git commit -m "feat(admin): add ListUsers and UserDetail with audit.viewed_user"
 
 ## Task 6: Admin service — `ListAudit`
 
-**Spec:** §11.2 cross-tenant audit feed.
+**Spec:** §11.2 cross-workspace audit feed.
 
 **Files:**
 - Create: `backend/internal/admin/audit.go`
@@ -519,8 +521,8 @@ git commit -m "feat(admin): add ListUsers and UserDetail with audit.viewed_user"
 - [ ] **Step 1: Red — write the tests**
 
 Cases:
-- Cross-tenant query — seeding audit rows under two tenants returns rows from both.
-- Filters by `ActorUserID`, `TenantID`, `Action` substring (LIKE `action_prefix%`), `Since`, `Until` each narrow results correctly.
+- Cross-workspace query — seeding audit rows under two workspaces returns rows from both.
+- Filters by `ActorUserID`, `WorkspaceID`, `Action` substring (LIKE `action_prefix%`), `Since`, `Until` each narrow results correctly.
 - Combined filters intersect (e.g. `ActorUserID + Action='user.login_succeeded'`).
 - Emits exactly one `admin.viewed_audit` audit row per call (with filter params captured in `after_jsonb` for forensic reconstruction).
 - Pagination: seeding 60 rows and calling with `Limit: 25` returns 25 + a non-empty `nextCursor`; second call with that cursor returns the next 25.
@@ -530,7 +532,7 @@ Cases:
 ```go
 type AuditEvent struct {
 	ID           uuid.UUID       `json:"id"`
-	TenantID     *uuid.UUID      `json:"tenantId,omitempty"`
+	WorkspaceID     *uuid.UUID      `json:"workspaceId,omitempty"`
 	ActorUserID  *uuid.UUID      `json:"actorUserId,omitempty"`
 	EntityType   string          `json:"entityType"`
 	EntityID     uuid.UUID       `json:"entityId"`
@@ -554,7 +556,7 @@ SQL uses `audit_events_entity_idx` where applicable.
 
 ```bash
 git add backend/internal/admin/audit.go backend/internal/admin/audit_test.go
-git commit -m "feat(admin): add cross-tenant ListAudit with filter capture"
+git commit -m "feat(admin): add cross-workspace ListAudit with filter capture"
 ```
 
 ---
@@ -655,7 +657,7 @@ func (s *Service) GrantAdmin(ctx context.Context, userID, actorUserID uuid.UUID)
 }
 ```
 
-Where `writeAdminAudit` is a package-private helper that inserts a row into `audit_events` with `tenant_id = NULL`.
+Where `writeAdminAudit` is a package-private helper that inserts a row into `audit_events` with `workspace_id = NULL`.
 
 - [ ] **Step 3: Red — `RevokeAdmin` tests**
 
@@ -684,11 +686,15 @@ func (s *Service) RevokeAdmin(ctx context.Context, userID, actorUserID uuid.UUID
 	if err != nil { return err }
 	if !isAdmin { return tx.Commit(ctx) }
 
-	var adminCount int
-	if err := tx.QueryRow(ctx,
-		`select count(*) from users where is_admin = true`).Scan(&adminCount); err != nil {
+	rows, err := tx.Query(ctx,
+		`select id from users where is_admin = true order by id for update`)
+	if err != nil {
 		return err
 	}
+	var adminCount int
+	for rows.Next() { adminCount++ }
+	if err := rows.Err(); err != nil { rows.Close(); return err }
+	rows.Close()
 	if adminCount <= 1 {
 		return ErrLastAdmin
 	}
@@ -705,7 +711,7 @@ func (s *Service) RevokeAdmin(ctx context.Context, userID, actorUserID uuid.UUID
 }
 ```
 
-`for update` on the user row serialises concurrent revokes; the `count(*)` read then sees a consistent view. Run; green.
+Locking all current admin rows serialises concurrent revokes of different admins before counting, preventing two revokes from both observing `adminCount > 1`. Run; green.
 
 - [ ] **Step 5: Red — `RetryJob` + `ResendEmail` tests**
 
@@ -759,7 +765,7 @@ git commit -m "$(cat <<'EOF'
 feat(admin): add GrantAdmin/RevokeAdmin + RetryJob/ResendEmail
 
 GrantAdmin is idempotent. RevokeAdmin has a last-admin guard
-(ErrLastAdmin) parallel to the last-owner tenant invariant. RetryJob
+(ErrLastAdmin) parallel to the last-owner workspace invariant. RetryJob
 delegates to River; ResendEmail re-enqueues the transactional email job.
 EOF
 )"
@@ -782,8 +788,8 @@ For each endpoint in the table below, seed a suitable fixture, issue a `httptest
 
 | Method | Route | Handler func | Middleware |
 |---|---|---|---|
-| GET | `/api/v1/admin/tenants` | `ListTenantsHandler` | Session + Admin |
-| GET | `/api/v1/admin/tenants/{tenantId}` | `TenantDetailHandler` | Session + Admin |
+| GET | `/api/v1/admin/workspaces` | `ListWorkspacesHandler` | Session + Admin |
+| GET | `/api/v1/admin/workspaces/{workspaceId}` | `WorkspaceDetailHandler` | Session + Admin |
 | GET | `/api/v1/admin/users` | `ListUsersHandler` | Session + Admin |
 | GET | `/api/v1/admin/users/{userId}` | `UserDetailHandler` | Session + Admin |
 | GET | `/api/v1/admin/audit` | `ListAuditHandler` | Session + Admin |
@@ -818,8 +824,8 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // middleware chain (RequireSession + RequireAdmin); Mount itself adds
 // RequireFreshReauth(5m) to the write subrouter.
 func (h *Handler) Mount(r chi.Router, requireFreshReauth func(http.Handler) http.Handler) {
-	r.Get("/tenants",            h.listTenants)
-	r.Get("/tenants/{tenantId}", h.tenantDetail)
+	r.Get("/workspaces",            h.listWorkspaces)
+	r.Get("/workspaces/{workspaceId}", h.workspaceDetail)
 	r.Get("/users",              h.listUsers)
 	r.Get("/users/{userId}",     h.userDetail)
 	r.Get("/audit",              h.listAudit)
@@ -841,7 +847,7 @@ Each handler parses URL params + query string, calls the Service method, maps er
 - `httpx.ValidationError` → 400.
 - Everything else → `httpx.WriteServiceError` → 500.
 
-Response bodies are the typed structs (`identity.Tenant`, `admin.UserDetail`, etc.) with an envelope:
+Response bodies are the typed structs (`identity.Workspace`, `admin.UserDetail`, etc.) with an envelope:
 
 ```json
 {"data": [...], "pagination": {"limit": 50, "nextCursor": "..."}}
@@ -856,8 +862,8 @@ adminSvc := admin.NewService(d.DB).WithJobs(d.Jobs).WithMailer(d.Mailer)
 adminH := admin.NewHandler(adminSvc)
 
 r.Route("/admin", func(r chi.Router) {
-    r.Use(auth.RequireSession)
-    r.Use(auth.RequireAdmin)
+    r.Use(authSvc.RequireSession)
+    r.Use(authSvc.RequireAdmin)
     adminH.Mount(r, auth.RequireFreshReauth(5*time.Minute))
 })
 ```
@@ -869,9 +875,9 @@ r.Route("/admin", func(r chi.Router) {
 Run the server locally; sign in as an admin user (plan 1's login endpoint); paste the resulting cookie into:
 
 ```bash
-# List tenants — expect 200 with data array
+# List workspaces — expect 200 with data array
 curl -s -b 'folio_session=<token>' -H 'X-Folio-Request: 1' \
-  http://localhost:8080/api/v1/admin/tenants | jq .
+  http://localhost:8080/api/v1/admin/workspaces | jq .
 
 # Revoke self when only admin — expect 409 last_admin
 curl -s -b 'folio_session=<token>' -H 'X-Folio-Request: 1' -X POST \
@@ -879,7 +885,7 @@ curl -s -b 'folio_session=<token>' -H 'X-Folio-Request: 1' -X POST \
 
 # As non-admin — expect 404 not_found
 curl -s -b 'folio_session=<non-admin token>' \
-  http://localhost:8080/api/v1/admin/tenants | jq .
+  http://localhost:8080/api/v1/admin/workspaces | jq .
 ```
 
 - [ ] **Step 5: Commit**
@@ -1101,11 +1107,11 @@ EOF
 Under `components.schemas`, add:
 
 ```yaml
-TenantDetail:
+WorkspaceDetail:
   type: object
-  required: [tenant, memberCount]
+  required: [workspace, memberCount]
   properties:
-    tenant:     { $ref: '#/components/schemas/Tenant' }
+    workspace:     { $ref: '#/components/schemas/Workspace' }
     memberCount: { type: integer }
     deletedAt:  { type: string, format: date-time, nullable: true }
     lastActivityAt: { type: string, format: date-time, nullable: true }
@@ -1125,7 +1131,7 @@ AuditEvent:
   required: [id, entityType, entityId, action, occurredAt]
   properties:
     id:           { type: string, format: uuid }
-    tenantId:     { type: string, format: uuid, nullable: true }
+    workspaceId:     { type: string, format: uuid, nullable: true }
     actorUserId:  { type: string, format: uuid, nullable: true }
     entityType:   { type: string }
     entityId:     { type: string, format: uuid }
@@ -1156,7 +1162,7 @@ Pagination:
 
 - [ ] **Step 2: Add paths**
 
-Under `paths`, add the 10 routes from Task 9's endpoint table with matching OperationIds (`adminListTenants`, `adminGetTenant`, `adminListUsers`, `adminGetUser`, `adminListAudit`, `adminListJobs`, `adminRetryJob`, `adminResendEmail`, `adminGrantAdmin`, `adminRevokeAdmin`).
+Under `paths`, add the 10 routes from Task 9's endpoint table with matching OperationIds (`adminListWorkspaces`, `adminGetWorkspace`, `adminListUsers`, `adminGetUser`, `adminListAudit`, `adminListJobs`, `adminRetryJob`, `adminResendEmail`, `adminGrantAdmin`, `adminRevokeAdmin`).
 
 Each response envelope is:
 
@@ -1231,7 +1237,7 @@ import { useAdminGuard } from "@/lib/hooks/use-admin-guard";
 import { Badge } from "@/components/ui/badge";
 
 const NAV = [
-  { href: "/admin/tenants", label: "Tenants" },
+  { href: "/admin/workspaces", label: "Workspaces" },
   { href: "/admin/users",   label: "Users" },
   { href: "/admin/audit",   label: "Audit" },
   { href: "/admin/jobs",    label: "Jobs" },
@@ -1280,7 +1286,7 @@ Edit plan 1's user-menu component. Add inside the dropdown:
   <>
     <DropdownMenuSeparator />
     <DropdownMenuItem asChild>
-      <Link href="/admin/tenants" className="flex items-center gap-2">
+      <Link href="/admin/workspaces" className="flex items-center gap-2">
         <Badge variant="destructive" className="text-[10px] px-1.5 py-0">Admin</Badge>
         <span>Admin console</span>
       </Link>
@@ -1300,7 +1306,7 @@ pnpm typecheck
 pnpm build
 ```
 
-Manually: sign in as a non-admin → no Admin link in menu; visiting `/admin/tenants` directly → redirected by `useAdminGuard` to the 404 page. Sign in as admin → Admin link visible; navigation works.
+Manually: sign in as a non-admin → no Admin link in menu; visiting `/admin/workspaces` directly → redirected by `useAdminGuard` to the 404 page. Sign in as admin → Admin link visible; navigation works.
 
 - [ ] **Step 5: Commit**
 
@@ -1311,11 +1317,11 @@ git commit -m "feat(admin): add /admin layout + conditional user-menu link"
 
 ---
 
-## Task 13: Web — tenants list + detail page
+## Task 13: Web — workspaces list + detail page
 
 **Files:**
-- Create: `web/app/admin/tenants/page.tsx`
-- Create: `web/app/admin/tenants/[tenantId]/page.tsx`
+- Create: `web/app/admin/workspaces/page.tsx`
+- Create: `web/app/admin/workspaces/[workspaceId]/page.tsx`
 - Create: `web/lib/admin/client.ts` (React Query hooks bundle)
 
 - [ ] **Step 1: Add admin API client hooks**
@@ -1327,34 +1333,34 @@ import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api/client";
 import type { paths } from "@/lib/api/schema";
 
-type TenantsResp = paths["/api/v1/admin/tenants"]["get"]["responses"]["200"]["content"]["application/json"];
-type TenantDetailResp = paths["/api/v1/admin/tenants/{tenantId}"]["get"]["responses"]["200"]["content"]["application/json"];
+type WorkspacesResp = paths["/api/v1/admin/workspaces"]["get"]["responses"]["200"]["content"]["application/json"];
+type WorkspaceDetailResp = paths["/api/v1/admin/workspaces/{workspaceId}"]["get"]["responses"]["200"]["content"]["application/json"];
 
-export function useAdminTenants(params: { search?: string; includeDeleted?: boolean; cursor?: string }) {
+export function useAdminWorkspaces(params: { search?: string; includeDeleted?: boolean; cursor?: string }) {
   return useQuery({
-    queryKey: ["admin", "tenants", params],
-    queryFn: () => apiGet<TenantsResp>("/api/v1/admin/tenants", { params }),
+    queryKey: ["admin", "workspaces", params],
+    queryFn: () => apiGet<WorkspacesResp>("/api/v1/admin/workspaces", { params }),
   });
 }
 
-export function useAdminTenantDetail(tenantId: string) {
+export function useAdminWorkspaceDetail(workspaceId: string) {
   return useQuery({
-    queryKey: ["admin", "tenant", tenantId],
-    queryFn: () => apiGet<TenantDetailResp>(`/api/v1/admin/tenants/${tenantId}`),
-    enabled: !!tenantId,
+    queryKey: ["admin", "workspace", workspaceId],
+    queryFn: () => apiGet<WorkspaceDetailResp>(`/api/v1/admin/workspaces/${workspaceId}`),
+    enabled: !!workspaceId,
   });
 }
 ```
 
 Repeat the pattern for `useAdminUsers`, `useAdminUserDetail`, `useAdminAudit`, `useAdminJobs`, and mutations `useAdminGrantAdmin`, `useAdminRevokeAdmin`, `useAdminRetryJob`, `useAdminResendEmail` (these use plan 4's step-up-aware wrapper that auto-opens the re-auth modal on 403 reauth_required).
 
-- [ ] **Step 2: Tenants list page**
+- [ ] **Step 2: Workspaces list page**
 
-`web/app/admin/tenants/page.tsx`: search input, include-deleted toggle, table with columns `Name | Slug | Created | Deleted | Members`. Row click → `/admin/tenants/{id}`. Use `<Table>` from shadcn.
+`web/app/admin/workspaces/page.tsx`: search input, include-deleted toggle, table with columns `Name | Slug | Created | Deleted | Members`. Row click → `/admin/workspaces/{id}`. Use `<Table>` from shadcn.
 
-- [ ] **Step 3: Tenant detail page**
+- [ ] **Step 3: Workspace detail page**
 
-`web/app/admin/tenants/[tenantId]/page.tsx`: top section shows tenant meta (name, slug, base currency, cycle anchor, created/updated/deleted); "Deleted" banner if `deletedAt`. Sections: Members (count + link to `/admin/users?tenant={id}` — future enhancement), Last activity timestamp. **No financial data is fetched or rendered.**
+`web/app/admin/workspaces/[workspaceId]/page.tsx`: top section shows workspace meta (name, slug, base currency, cycle anchor, created/updated/deleted); "Deleted" banner if `deletedAt`. Sections: Members (count + link to `/admin/users?workspace={id}` — future enhancement), Last activity timestamp. **No financial data is fetched or rendered.**
 
 - [ ] **Step 4: Verify + commit**
 
@@ -1364,8 +1370,8 @@ pnpm lint && pnpm typecheck && pnpm build
 ```
 
 ```bash
-git add web/app/admin/tenants/ web/lib/admin/client.ts
-git commit -m "feat(admin): add tenants list + detail pages"
+git add web/app/admin/workspaces/ web/lib/admin/client.ts
+git commit -m "feat(admin): add workspaces list + detail pages"
 ```
 
 ---
@@ -1384,7 +1390,7 @@ Search by email input, is-admin filter toggle. Table columns: `Email | Name | Ad
 
 Sections:
 - User card: email, display name, `emailVerifiedAt`, `isAdmin` badge, created/last login.
-- Memberships table: tenant name, role, joined date.
+- Memberships table: workspace name, role, joined date.
 - Active sessions: device / IP / last seen / revoke button (disabled — admins don't revoke user sessions; future plan).
 - MFA summary: passkey count + labels, TOTP enabled yes/no, recovery codes remaining.
 - **Grant / Revoke admin buttons** at the top-right of the user card:
@@ -1414,7 +1420,7 @@ git commit -m "feat(admin): add users list + detail with grant/revoke"
 
 - [ ] **Step 1: Audit feed page**
 
-Filters in a top row: actor email autocomplete (hits `/api/v1/admin/users?search=`), tenant search, action substring, since/until date pickers. Default view: most recent 50 events, newest first. Each row shows `occurredAt | actor email | tenant slug or "—" | action | entityType/id`; click expands to show before/after JSON in a collapsible.
+Filters in a top row: actor email autocomplete (hits `/api/v1/admin/users?search=`), workspace search, action substring, since/until date pickers. Default view: most recent 50 events, newest first. Each row shows `occurredAt | actor email | workspace slug or "—" | action | entityType/id`; click expands to show before/after JSON in a collapsible.
 
 Support infinite-scroll via `useInfiniteQuery` using the `nextCursor` pagination envelope.
 
@@ -1471,9 +1477,9 @@ Start the API server. Sign in as a non-admin; confirm every `/api/v1/admin/*` ro
 Sign in as admin (via env bootstrap on fresh DB). Curl:
 
 ```bash
-# Should list tenants
+# Should list workspaces
 curl -s -b 'folio_session=<admin token>' -H 'X-Folio-Request: 1' \
-  http://localhost:8080/api/v1/admin/tenants | jq '.data | length'
+  http://localhost:8080/api/v1/admin/workspaces | jq '.data | length'
 
 # Grant without fresh reauth — expect 403 reauth_required
 curl -s -b 'folio_session=<admin token>' -H 'X-Folio-Request: 1' -X POST \
@@ -1497,7 +1503,7 @@ psql "$DATABASE_URL" -c "
 "
 ```
 
-Expected: rows for `admin.granted`, `admin.revoked`, `admin.bootstrap_granted`, `admin.viewed_tenant`, `admin.viewed_user`, `admin.viewed_audit`, `admin.retried_job`, `admin.resent_email` as exercised.
+Expected: rows for `admin.granted`, `admin.revoked`, `admin.bootstrap_granted`, `admin.viewed_workspace`, `admin.viewed_user`, `admin.viewed_audit`, `admin.retried_job`, `admin.resent_email` as exercised.
 
 - [ ] **Step 5: Web build**
 
@@ -1526,9 +1532,9 @@ Expected: clean working tree.
 - [ ] Spec §11.1 last-admin guard covered in both CLI (Task 10) and HTTP service/handler (Tasks 8 and 9).
 - [ ] Spec §11.2 all 10 routes mounted with the correct middleware chain (Task 9).
 - [ ] Spec §11.2 `RequireAdmin` returns 404, not 403 (Task 2; asserted by Task 9 tests).
-- [ ] Spec §11.3 audit on every admin action, reads and writes — emitted by service-layer helpers (Tasks 4, 5, 6, 7 for reads; Task 8 for writes); verified in Task 16 step 4. All 8 `admin.*` actions from §8.3 exercised (`granted`, `revoked`, `bootstrap_granted`, `viewed_user`, `viewed_tenant`, `viewed_audit`, `retried_job`, `resent_email`).
-- [ ] Spec §13 web: `/admin/layout.tsx` (Task 12); `/admin/tenants` + detail (Task 13); `/admin/users` + detail (Task 14); `/admin/audit` + `/admin/jobs` (Task 15); conditional Admin link in user menu (Task 12).
-- [ ] Tenant detail returns metadata only — no financial data joins (Task 4; asserted in test).
+- [ ] Spec §11.3 audit on every admin action, reads and writes — emitted by service-layer helpers (Tasks 4, 5, 6, 7 for reads; Task 8 for writes); verified in Task 16 step 4. All 8 `admin.*` actions from §8.3 exercised (`granted`, `revoked`, `bootstrap_granted`, `viewed_user`, `viewed_workspace`, `viewed_audit`, `retried_job`, `resent_email`).
+- [ ] Spec §13 web: `/admin/layout.tsx` (Task 12); `/admin/workspaces` + detail (Task 13); `/admin/users` + detail (Task 14); `/admin/audit` + `/admin/jobs` (Task 15); conditional Admin link in user menu (Task 12).
+- [ ] Workspace detail returns metadata only — no financial data joins (Task 4; asserted in test).
 - [ ] OpenAPI updated with admin paths and schemas (Task 11).
 - [ ] Makefile gains `admin-cli` target (Task 10 step 4).
 - [ ] `.env.example` documents `ADMIN_BOOTSTRAP_EMAIL` (Setup §0.3).
@@ -1547,7 +1553,7 @@ Expected: clean working tree.
 
 ## Gaps deferred
 
-1. **Admin impersonation** ("view this tenant as a member") — spec §2 non-goal; not in this plan. Listed as a future spec.
+1. **Admin impersonation** ("view this workspace as a member") — spec §2 non-goal; not in this plan. Listed as a future spec.
 2. **Revoking user sessions from the admin UI** — the user-detail page shows sessions read-only. A future plan adds the revoke mutation.
 3. **Bulk actions** on audit/jobs (export, bulk retry) — not in scope; single-row actions only.
 4. **Admin audit-feed export** (CSV / ndjson download) — spec §14 lists `Org-level audit exports` as open. This plan's `/admin/audit` is browse-only.

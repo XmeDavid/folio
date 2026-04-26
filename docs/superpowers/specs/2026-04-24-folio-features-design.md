@@ -10,7 +10,7 @@ This document captures **everything Folio intends to be**. It is domain-organise
 
 ## 1. Overview & principles
 
-Folio is a self-hosted personal finance & planning app. Single-user per tenant (multi-tenant at the platform level — each user is isolated, no shared data).
+Folio is a self-hosted personal finance & planning app. Single-user per workspace (workspace-scoped at the platform level — each user is isolated, no shared data).
 
 **Core principles:**
 
@@ -664,7 +664,7 @@ Beyond prebaked events, user can define custom rules:
 - One-click backup (pg_dump to user-configured target: local disk, S3-compatible, etc.).
 - Restore from backup.
 - Upgrade path that handles migrations.
-- Admin panel for the self-host owner (tenant list, resource usage).
+- Admin panel for the self-host owner (workspace list, resource usage).
 
 ---
 
