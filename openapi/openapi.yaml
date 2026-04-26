@@ -165,6 +165,92 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Account" }
 
+  /api/v1/accounts/order:
+    put:
+      tags: [accounts]
+      summary: Reorder account groups and accounts
+      security:
+        - tenantHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountReorderInput" }
+      responses:
+        "204":
+          description: Reordered
+
+  /api/v1/accounts/groups:
+    get:
+      tags: [accounts]
+      summary: List account groups for current tenant
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: includeArchived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Account groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AccountGroup" }
+    post:
+      tags: [accounts]
+      summary: Create an account group
+      security:
+        - tenantHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountGroupCreateInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountGroup" }
+
+  /api/v1/accounts/groups/{groupId}:
+    patch:
+      tags: [accounts]
+      summary: Update an account group
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountGroupUpdateInput" }
+      responses:
+        "200":
+          description: Updated account group
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountGroup" }
+    delete:
+      tags: [accounts]
+      summary: Delete an account group
+      security:
+        - tenantHeader: []
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Deleted
+
   /api/v1/accounts/{accountId}:
     get:
       tags: [accounts]
@@ -883,7 +969,7 @@ components:
 
     Account:
       type: object
-      required: [id, tenantId, name, kind, currency, openDate, openingBalance, openingBalanceDate, includeInNetworth, includeInSavingsRate, createdAt, updatedAt, balance]
+      required: [id, tenantId, name, kind, currency, accountSortOrder, openDate, openingBalance, openingBalanceDate, includeInNetworth, includeInSavingsRate, createdAt, updatedAt, balance]
       properties:
         id:                   { type: string, format: uuid }
         tenantId:             { type: string, format: uuid }
@@ -892,6 +978,8 @@ components:
         kind:                 { $ref: "#/components/schemas/AccountKind" }
         currency:             { type: string }
         institution:          { type: string, nullable: true }
+        accountGroupId:       { type: string, format: uuid, nullable: true }
+        accountSortOrder:     { type: integer }
         openDate:             { type: string, format: date-time }
         closeDate:            { type: string, format: date-time, nullable: true }
         openingBalance:       { type: string, description: "Decimal as string" }
@@ -913,6 +1001,7 @@ components:
         kind:                 { $ref: "#/components/schemas/AccountKind" }
         currency:             { type: string }
         institution:          { type: string, nullable: true }
+        accountGroupId:       { type: string, format: uuid, nullable: true }
         openDate:             { type: string, format: date }
         openingBalance:       { type: string, default: "0" }
         openingBalanceDate:   { type: string, format: date }
@@ -925,10 +1014,58 @@ components:
         name:                 { type: string }
         nickname:             { type: string, nullable: true, description: "Send empty string to clear." }
         institution:          { type: string, nullable: true, description: "Send empty string to clear." }
+        accountGroupId:       { type: string, format: uuid, nullable: true, description: "Send empty string to clear." }
+        accountSortOrder:     { type: integer }
         includeInNetworth:    { type: boolean }
         includeInSavingsRate: { type: boolean }
         closeDate:            { type: string, format: date, nullable: true, description: "Send empty string to clear." }
         archived:             { type: boolean }
+
+    AccountGroup:
+      type: object
+      required: [id, tenantId, name, sortOrder, createdAt, updatedAt]
+      properties:
+        id:          { type: string, format: uuid }
+        tenantId:    { type: string, format: uuid }
+        name:        { type: string }
+        sortOrder:   { type: integer }
+        archivedAt:  { type: string, format: date-time, nullable: true }
+        createdAt:   { type: string, format: date-time }
+        updatedAt:   { type: string, format: date-time }
+
+    AccountGroupCreateInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+
+    AccountGroupUpdateInput:
+      type: object
+      properties:
+        name:      { type: string }
+        sortOrder: { type: integer }
+        archived:  { type: boolean }
+
+    AccountReorderInput:
+      type: object
+      properties:
+        groups:
+          type: array
+          items:
+            type: object
+            required: [id, sortOrder]
+            properties:
+              id:        { type: string, format: uuid }
+              sortOrder: { type: integer }
+        accounts:
+          type: array
+          items:
+            type: object
+            required: [id, sortOrder]
+            properties:
+              id:             { type: string, format: uuid }
+              accountGroupId: { type: string, format: uuid, nullable: true }
+              sortOrder:      { type: integer }
 
     TransactionStatus:
       type: string

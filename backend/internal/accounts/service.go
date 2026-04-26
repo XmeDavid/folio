@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
@@ -49,6 +50,8 @@ type Account struct {
 	Kind                 string     `json:"kind"`
 	Currency             string     `json:"currency"`
 	Institution          *string    `json:"institution,omitempty"`
+	AccountGroupID       *uuid.UUID `json:"accountGroupId,omitempty"`
+	AccountSortOrder     int        `json:"accountSortOrder"`
 	OpenDate             time.Time  `json:"openDate"`
 	CloseDate            *time.Time `json:"closeDate,omitempty"`
 	OpeningBalance       string     `json:"openingBalance"`
@@ -69,6 +72,7 @@ type CreateInput struct {
 	Kind                 string
 	Currency             string
 	Institution          *string
+	AccountGroupID       *uuid.UUID
 	OpenDate             time.Time
 	OpeningBalance       decimal.Decimal
 	OpeningBalanceDate   *time.Time
@@ -119,6 +123,8 @@ type PatchInput struct {
 	Nickname             *string
 	Kind                 *string
 	Institution          *string
+	AccountGroupID       **uuid.UUID
+	AccountSortOrder     *int
 	IncludeInNetworth    *bool
 	IncludeInSavingsRate *bool
 	CloseDate            *string // RFC3339 date; "" to clear
@@ -156,6 +162,236 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, now: time.Now}
 }
 
+type AccountGroup struct {
+	ID         uuid.UUID  `json:"id"`
+	TenantID   uuid.UUID  `json:"tenantId"`
+	Name       string     `json:"name"`
+	SortOrder  int        `json:"sortOrder"`
+	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	UpdatedAt  time.Time  `json:"updatedAt"`
+}
+
+type CreateGroupInput struct {
+	Name string
+}
+
+type PatchGroupInput struct {
+	Name      *string
+	SortOrder *int
+	Archived  *bool
+}
+
+type GroupOrderInput struct {
+	ID        uuid.UUID
+	SortOrder int
+}
+
+type AccountOrderInput struct {
+	ID             uuid.UUID
+	AccountGroupID *uuid.UUID
+	SortOrder      int
+}
+
+type ReorderInput struct {
+	Groups   []GroupOrderInput
+	Accounts []AccountOrderInput
+}
+
+func scanAccountGroup(row interface{ Scan(...any) error }, g *AccountGroup) error {
+	return row.Scan(
+		&g.ID, &g.TenantID, &g.Name, &g.SortOrder, &g.ArchivedAt,
+		&g.CreatedAt, &g.UpdatedAt,
+	)
+}
+
+func (s *Service) ListGroups(ctx context.Context, tenantID uuid.UUID, includeArchived bool) ([]AccountGroup, error) {
+	q := `
+		select id, tenant_id, name, sort_order, archived_at, created_at, updated_at
+		from account_groups
+		where tenant_id = $1
+	`
+	if !includeArchived {
+		q += ` and archived_at is null`
+	}
+	q += ` order by sort_order, created_at`
+
+	rows, err := s.pool.Query(ctx, q, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("query account groups: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]AccountGroup, 0)
+	for rows.Next() {
+		var g AccountGroup
+		if err := scanAccountGroup(rows, &g); err != nil {
+			return nil, fmt.Errorf("scan account group: %w", err)
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+func (s *Service) CreateGroup(ctx context.Context, tenantID uuid.UUID, raw CreateGroupInput) (*AccountGroup, error) {
+	name := strings.TrimSpace(raw.Name)
+	if name == "" {
+		return nil, httpx.NewValidationError("name is required")
+	}
+
+	groupID := uuidx.New()
+	var g AccountGroup
+	err := s.pool.QueryRow(ctx, `
+		insert into account_groups (id, tenant_id, name, sort_order)
+		values (
+			$1, $2, $3,
+			coalesce((select max(sort_order) + 1000 from account_groups where tenant_id = $2), 1000)
+		)
+		returning id, tenant_id, name, sort_order, archived_at, created_at, updated_at
+	`, groupID, tenantID, name).Scan(
+		&g.ID, &g.TenantID, &g.Name, &g.SortOrder, &g.ArchivedAt, &g.CreatedAt, &g.UpdatedAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, httpx.NewValidationError("account group name already exists")
+		}
+		return nil, fmt.Errorf("insert account group: %w", err)
+	}
+	return &g, nil
+}
+
+func (s *Service) UpdateGroup(ctx context.Context, tenantID, groupID uuid.UUID, in PatchGroupInput) (*AccountGroup, error) {
+	sets := make([]string, 0, 3)
+	args := []any{tenantID, groupID}
+	next := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	if in.Name != nil {
+		name := strings.TrimSpace(*in.Name)
+		if name == "" {
+			return nil, httpx.NewValidationError("name cannot be empty")
+		}
+		sets = append(sets, "name = "+next(name))
+	}
+	if in.SortOrder != nil {
+		sets = append(sets, "sort_order = "+next(*in.SortOrder))
+	}
+	if in.Archived != nil {
+		if *in.Archived {
+			sets = append(sets, "archived_at = "+next(s.now().UTC()))
+		} else {
+			sets = append(sets, "archived_at = "+next(nil))
+		}
+	}
+	if len(sets) == 0 {
+		return s.GetGroup(ctx, tenantID, groupID)
+	}
+
+	var g AccountGroup
+	err := s.pool.QueryRow(ctx, fmt.Sprintf(`
+		update account_groups set %s
+		where tenant_id = $1 and id = $2
+		returning id, tenant_id, name, sort_order, archived_at, created_at, updated_at
+	`, strings.Join(sets, ", ")), args...).Scan(
+		&g.ID, &g.TenantID, &g.Name, &g.SortOrder, &g.ArchivedAt, &g.CreatedAt, &g.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, httpx.NewNotFoundError("account group")
+		}
+		if isUniqueViolation(err) {
+			return nil, httpx.NewValidationError("account group name already exists")
+		}
+		return nil, fmt.Errorf("update account group: %w", err)
+	}
+	return &g, nil
+}
+
+func (s *Service) GetGroup(ctx context.Context, tenantID, groupID uuid.UUID) (*AccountGroup, error) {
+	var g AccountGroup
+	err := scanAccountGroup(s.pool.QueryRow(ctx, `
+		select id, tenant_id, name, sort_order, archived_at, created_at, updated_at
+		from account_groups
+		where tenant_id = $1 and id = $2
+	`, tenantID, groupID), &g)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, httpx.NewNotFoundError("account group")
+		}
+		return nil, err
+	}
+	return &g, nil
+}
+
+func (s *Service) DeleteGroup(ctx context.Context, tenantID, groupID uuid.UUID) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete account group: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `
+		update accounts
+		set account_group_id = null
+		where tenant_id = $1 and account_group_id = $2
+	`, tenantID, groupID); err != nil {
+		return fmt.Errorf("clear account group membership: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `delete from account_groups where tenant_id = $1 and id = $2`, tenantID, groupID)
+	if err != nil {
+		return fmt.Errorf("delete account group: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return httpx.NewNotFoundError("account group")
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Service) Reorder(ctx context.Context, tenantID uuid.UUID, in ReorderInput) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin reorder accounts: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	for _, group := range in.Groups {
+		tag, err := tx.Exec(ctx, `
+			update account_groups
+			set sort_order = $3
+			where tenant_id = $1 and id = $2
+		`, tenantID, group.ID, group.SortOrder)
+		if err != nil {
+			return fmt.Errorf("reorder account group: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return httpx.NewNotFoundError("account group")
+		}
+	}
+
+	for _, account := range in.Accounts {
+		tag, err := tx.Exec(ctx, `
+			update accounts
+			set account_group_id = $3, account_sort_order = $4
+			where tenant_id = $1 and id = $2
+		`, tenantID, account.ID, account.AccountGroupID, account.SortOrder)
+		if err != nil {
+			return fmt.Errorf("reorder account: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return httpx.NewNotFoundError("account")
+		}
+	}
+
+	return tx.Commit(ctx)
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
 // Create inserts an account and its opening balance snapshot in one tx.
 // tenantID MUST be taken from request context — never from the request body.
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, raw CreateInput) (*Account, error) {
@@ -188,21 +424,31 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, raw CreateInpu
 	err = tx.QueryRow(ctx, `
 		insert into accounts (
 			id, tenant_id, name, nickname, kind, currency, institution,
+			account_group_id, account_sort_order,
 			open_date, opening_balance, opening_balance_date,
 			include_in_networth, include_in_savings_rate
 		) values (
 			$1, $2, $3, $4, $5::account_kind, $6, $7,
-			$8, $9::numeric, $10,
-			$11, $12
+			$8,
+			coalesce((
+				select max(account_sort_order) + 1000
+				from accounts
+				where tenant_id = $2
+				  and account_group_id is not distinct from $8::uuid
+			), 1000),
+			$9, $10::numeric, $11,
+			$12, $13
 		)
 		returning id, tenant_id, name, nickname, kind::text, currency, institution,
+		          account_group_id, account_sort_order,
 		          open_date, close_date, opening_balance::text, opening_balance_date,
 		          include_in_networth, include_in_savings_rate, archived_at,
 		          created_at, updated_at
 	`, accountID, tenantID, in.Name, in.Nickname, in.Kind, in.Currency, in.Institution,
-		in.OpenDate, openingBalanceStr, *in.OpeningBalanceDate,
+		in.AccountGroupID, in.OpenDate, openingBalanceStr, *in.OpeningBalanceDate,
 		*in.IncludeInNetworth, *in.IncludeInSavingsRate).
 		Scan(&acc.ID, &acc.TenantID, &acc.Name, &acc.Nickname, &acc.Kind, &acc.Currency, &acc.Institution,
+			&acc.AccountGroupID, &acc.AccountSortOrder,
 			&acc.OpenDate, &acc.CloseDate, &balance, &acc.OpeningBalanceDate,
 			&acc.IncludeInNetworth, &acc.IncludeInSavingsRate, &acc.ArchivedAt,
 			&acc.CreatedAt, &acc.UpdatedAt)
@@ -248,6 +494,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, raw CreateInpu
 // need revisiting — an end-of-day snapshot would require `>` not `>=`.
 const derivedBalanceSelect = `
 	a.id, a.tenant_id, a.name, a.nickname, a.kind::text, a.currency, a.institution,
+	a.account_group_id, a.account_sort_order,
 	a.open_date, a.close_date, a.opening_balance::text, a.opening_balance_date,
 	a.include_in_networth, a.include_in_savings_rate, a.archived_at,
 	a.created_at, a.updated_at,
@@ -284,6 +531,7 @@ func scanAccount(row interface{ Scan(...any) error }, a *Account) error {
 	var balance string
 	if err := row.Scan(
 		&a.ID, &a.TenantID, &a.Name, &a.Nickname, &a.Kind, &a.Currency, &a.Institution,
+		&a.AccountGroupID, &a.AccountSortOrder,
 		&a.OpenDate, &a.CloseDate, &a.OpeningBalance, &a.OpeningBalanceDate,
 		&a.IncludeInNetworth, &a.IncludeInSavingsRate, &a.ArchivedAt,
 		&a.CreatedAt, &a.UpdatedAt, &asOf, &balance,
@@ -302,7 +550,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, includeArchived 
 	if !includeArchived {
 		q += ` and a.archived_at is null`
 	}
-	q += ` order by a.created_at`
+	q += ` order by a.account_group_id nulls first, a.account_sort_order, a.created_at`
 
 	rows, err := s.pool.Query(ctx, q, tenantID)
 	if err != nil {
@@ -388,6 +636,20 @@ func (s *Service) Update(ctx context.Context, tenantID, accountID uuid.UUID, raw
 			args[len(args)-1] = *in.Institution
 		}
 		sets = append(sets, "institution = "+ph)
+	}
+	if in.AccountGroupID != nil {
+		ph := next()
+		if *in.AccountGroupID == nil {
+			args[len(args)-1] = nil
+		} else {
+			args[len(args)-1] = **in.AccountGroupID
+		}
+		sets = append(sets, "account_group_id = "+ph)
+	}
+	if in.AccountSortOrder != nil {
+		ph := next()
+		args[len(args)-1] = *in.AccountSortOrder
+		sets = append(sets, "account_sort_order = "+ph)
 	}
 	if in.IncludeInNetworth != nil {
 		ph := next()

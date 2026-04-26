@@ -4,851 +4,1968 @@
  */
 
 export interface paths {
-  "/healthz": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Liveness probe */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description OK */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": {
-              status?: string;
+    "/healthz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Liveness probe */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
             };
-          };
-        };
-      };
-    };
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/v1/version": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Build info */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description Version */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["Version"];
-          };
-        };
-      };
-    };
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/v1/onboarding/bootstrap": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Bootstrap a tenant and its first user
-     * @description Creates the first tenant/user pair. Password auth is intentionally not implemented yet.
-     */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["BootstrapInput"];
-        };
-      };
-      responses: {
-        /** @description Bootstrapped */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["BootstrapResult"];
-          };
-        };
-      };
-    };
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/v1/auth/register": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Create a new user account */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["RegisterInput"];
-        };
-      };
-      responses: {
-        /** @description Registered */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["User"];
-          };
-        };
-      };
-    };
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/v1/auth/login": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Password login → sets session cookie */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["LoginInput"];
-        };
-      };
-      responses: {
-        /** @description Logged in */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["User"];
-          };
-        };
-      };
-    };
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/v1/auth/logout": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Clear session */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description No content */
-        204: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content?: never;
-        };
-      };
-    };
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/v1/me": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Current tenant user */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description Current user and tenant */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["MeResult"];
-          };
-        };
-      };
-    };
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/v1/accounts": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List accounts for current tenant */
-    get: {
-      parameters: {
-        query?: {
-          includeArchived?: boolean;
-        };
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description Accounts */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["Account"][];
-          };
-        };
-      };
-    };
-    put?: never;
-    /** Create an account and opening balance snapshot */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["AccountCreateInput"];
-        };
-      };
-      responses: {
-        /** @description Created */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["Account"];
-          };
-        };
-      };
-    };
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/v1/accounts/{accountId}": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get an account */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          accountId: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description Account */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["Account"];
-          };
-        };
-      };
-    };
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    /** Update mutable account fields */
-    patch: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          accountId: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["AccountUpdateInput"];
-        };
-      };
-      responses: {
-        /** @description Updated account */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["Account"];
-          };
-        };
-      };
-    };
-    trace?: never;
-  };
-  "/api/v1/transactions": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * List transactions for current tenant
-     * @description Tenant is taken from the `X-Tenant-ID` context — never from the body.
-     *     Results are ordered by `bookedAt DESC, id DESC`.
-     */
-    get: {
-      parameters: {
-        query?: {
-          accountId?: string;
-          from?: string;
-          to?: string;
-          status?: components["schemas"]["TransactionStatus"];
-          limit?: number;
-        };
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description Transactions */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["Transaction"][];
-          };
-        };
-      };
-    };
-    put?: never;
-    /**
-     * Create a manual transaction
-     * @description Manual ledger entry. `tenantId` is resolved from `X-Tenant-ID`.
-     *     `currency` must match the account currency (also enforced by a
-     *     database trigger). Status defaults to `posted`.
-     */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["TransactionCreateInput"];
-        };
-      };
-      responses: {
-        /** @description Created */
-        201: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["Transaction"];
-          };
-        };
-      };
-    };
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/v1/transactions/{transactionId}": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get a transaction */
-    get: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          transactionId: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description Transaction */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["Transaction"];
-          };
-        };
-      };
-    };
-    put?: never;
-    post?: never;
-    /** Hard-delete a transaction (v1 — replace with soft-delete later) */
-    delete: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          transactionId: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description No content */
-        204: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content?: never;
-        };
-      };
-    };
-    options?: never;
-    head?: never;
-    /**
-     * Update mutable transaction fields
-     * @description `accountId` is immutable in this slice. Nullable fields (categoryId,
-     *     merchantId, counterpartyRaw, description, notes, valueAt, postedAt)
-     *     accept an empty string to clear. `countAsExpense` accepts `true`,
-     *     `false`, or `null` to clear.
-     */
-    patch: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          transactionId: string;
-        };
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": components["schemas"]["TransactionUpdateInput"];
-        };
-      };
-      responses: {
-        /** @description Updated transaction */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": components["schemas"]["Transaction"];
-          };
-        };
-      };
-    };
-    trace?: never;
-  };
-  "/api/v1/providers/gocardless/requisitions": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Start a GoCardless bank connection (returns a consent URL) */
-    post: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody: {
-        content: {
-          "application/json": {
-            institutionId: string;
-            label?: string;
-          };
-        };
-      };
-      responses: {
-        /** @description Consent link */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": {
-              requisitionId?: string;
-              /** Format: uri */
-              consentUrl?: string;
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            status?: string;
+                        };
+                    };
+                };
             };
-          };
         };
-      };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
+    "/api/v1/version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Build info */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Version */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Version"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/onboarding/bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bootstrap a tenant and its first user
+         * @description Creates the first tenant/user pair. Password auth is intentionally not implemented yet.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BootstrapInput"];
+                };
+            };
+            responses: {
+                /** @description Bootstrapped */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BootstrapResult"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a new user account */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RegisterInput"];
+                };
+            };
+            responses: {
+                /** @description Registered */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["User"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Password login → sets session cookie */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LoginInput"];
+                };
+            };
+            responses: {
+                /** @description Logged in */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["User"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clear session */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description No content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Current tenant user */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Current user and tenant */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MeResult"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List accounts for current tenant */
+        get: {
+            parameters: {
+                query?: {
+                    includeArchived?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Accounts */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Account"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create an account and opening balance snapshot */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AccountCreateInput"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Account"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/accounts/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Reorder account groups and accounts */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AccountReorderInput"];
+                };
+            };
+            responses: {
+                /** @description Reordered */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/accounts/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List account groups for current tenant */
+        get: {
+            parameters: {
+                query?: {
+                    includeArchived?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Account groups */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AccountGroup"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create an account group */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AccountGroupCreateInput"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AccountGroup"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/accounts/groups/{groupId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete an account group */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    groupId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Update an account group */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    groupId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AccountGroupUpdateInput"];
+                };
+            };
+            responses: {
+                /** @description Updated account group */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AccountGroup"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/accounts/{accountId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get an account */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    accountId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Account */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Account"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update mutable account fields */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    accountId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AccountUpdateInput"];
+                };
+            };
+            responses: {
+                /** @description Updated account */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Account"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/transactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List transactions for current tenant
+         * @description Tenant is taken from the `X-Tenant-ID` context — never from the body.
+         *     Results are ordered by `bookedAt DESC, id DESC`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    accountId?: string;
+                    categoryId?: string;
+                    merchantId?: string;
+                    from?: string;
+                    to?: string;
+                    status?: components["schemas"]["TransactionStatus"];
+                    /** @description Case-insensitive search over description, raw counterparty, and notes. */
+                    search?: string;
+                    /** @description Signed decimal lower bound in the transaction currency. */
+                    minAmount?: string;
+                    /** @description Signed decimal upper bound in the transaction currency. */
+                    maxAmount?: string;
+                    /**
+                     * @description When true, return only transactions with `category_id IS NULL`
+                     *     AND no `transaction_lines` for the transaction. Split
+                     *     transactions are considered categorized via their lines and are
+                     *     excluded.
+                     */
+                    uncategorized?: boolean;
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Transactions */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Transaction"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Create a manual transaction
+         * @description Manual ledger entry. `tenantId` is resolved from `X-Tenant-ID`.
+         *     `currency` must match the account currency (also enforced by a
+         *     database trigger). Status defaults to `posted`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TransactionCreateInput"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Transaction"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/transactions/{transactionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a transaction */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    transactionId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Transaction */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Transaction"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Hard-delete a transaction (v1 — replace with soft-delete later) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    transactionId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description No content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Update mutable transaction fields
+         * @description `accountId` is immutable in this slice. Nullable fields (categoryId,
+         *     merchantId, counterpartyRaw, description, notes, valueAt, postedAt)
+         *     accept an empty string to clear. `countAsExpense` accepts `true`,
+         *     `false`, or `null` to clear.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    transactionId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TransactionUpdateInput"];
+                };
+            };
+            responses: {
+                /** @description Updated transaction */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Transaction"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/transactions/{transactionId}/tags/{tagId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Apply a tag to a transaction
+         * @description Idempotent: applying an already-applied tag returns 204 without
+         *     creating a duplicate row.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    transactionId: string;
+                    tagId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Applied */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        /**
+         * Remove a tag from a transaction
+         * @description Idempotent: removing an unapplied tag returns 204.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    transactionId: string;
+                    tagId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Removed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List categories for current tenant */
+        get: {
+            parameters: {
+                query?: {
+                    includeArchived?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Categories */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Category"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a category */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CategoryCreateInput"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Category"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/categories/{categoryId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a category */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Category */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Category"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /**
+         * Archive a category (soft delete)
+         * @description Sets `archivedAt` to the current time. Idempotent: archiving an
+         *     already-archived category returns 204 without overwriting the
+         *     timestamp.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Archived */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Update a category */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CategoryUpdateInput"];
+                };
+            };
+            responses: {
+                /** @description Updated category */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Category"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/merchants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List merchants for current tenant */
+        get: {
+            parameters: {
+                query?: {
+                    includeArchived?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Merchants */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Merchant"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a merchant */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["MerchantCreateInput"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Merchant"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/merchants/{merchantId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a merchant */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    merchantId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Merchant */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Merchant"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Archive a merchant (soft delete) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    merchantId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Archived */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Update a merchant */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    merchantId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["MerchantUpdateInput"];
+                };
+            };
+            responses: {
+                /** @description Updated merchant */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Merchant"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List tags for current tenant */
+        get: {
+            parameters: {
+                query?: {
+                    includeArchived?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Tags */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Tag"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a tag */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TagCreateInput"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Tag"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tags/{tagId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a tag */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    tagId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Tag */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Tag"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Archive a tag (soft delete) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    tagId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Archived */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Update a tag */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    tagId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TagUpdateInput"];
+                };
+            };
+            responses: {
+                /** @description Updated tag */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Tag"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/categorization-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List categorization rules for current tenant
+         * @description Rules are returned ordered by `priority` ascending, then `createdAt`
+         *     ascending. All rules (enabled and disabled) are listed by default.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /**
+                     * @description Optional filter. When `true`, only enabled rules are returned;
+                     *     when `false`, only disabled rules. Any other value is ignored.
+                     */
+                    enabled?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Rules */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CategorizationRule"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a categorization rule */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CategorizationRuleCreateInput"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CategorizationRule"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/categorization-rules/{ruleId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a categorization rule */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    ruleId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Rule */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CategorizationRule"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /**
+         * Delete a categorization rule
+         * @description Hard-deletes the rule row. Rules are configuration; the audit table
+         *     records the deletion.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    ruleId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Update a categorization rule
+         * @description `when` and `then` are replaced wholesale when present; partial DSL
+         *     merge is intentionally out of scope.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    ruleId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CategorizationRuleUpdateInput"];
+                };
+            };
+            responses: {
+                /** @description Updated rule */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CategorizationRule"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/transactions/{transactionId}/apply-categorization-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply the first matching categorization rule to a transaction
+         * @description Evaluates enabled rules in `priority` ASC, then `createdAt` ASC order
+         *     and applies the first match. Manual overrides win: `categoryId`,
+         *     `merchantId`, and `countAsExpense` on the transaction are written
+         *     only when they are currently null. Tags in `addTagIds` are always
+         *     added idempotently. On match, the rule's `lastMatchedAt` is stamped
+         *     with the current time. When no rule matches, the transaction is
+         *     returned unchanged with `matched: false`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    transactionId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Apply result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RuleApplyResult"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/gocardless/requisitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a GoCardless bank connection (returns a consent URL) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        institutionId: string;
+                        label?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Consent link */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            requisitionId?: string;
+                            /** Format: uri */
+                            consentUrl?: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
-  schemas: {
-    Version: {
-      name: string;
-      version: string;
+    schemas: {
+        Version: {
+            name: string;
+            version: string;
+        };
+        User: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            /** Format: email */
+            email: string;
+            displayName: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        Tenant: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @example CHF */
+            baseCurrency: string;
+            cycleAnchorDay: number;
+            /** @example en-CH */
+            locale: string;
+            /** @example Europe/Zurich */
+            timezone: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        BootstrapInput: {
+            tenantName: string;
+            /** @example CHF */
+            baseCurrency: string;
+            /** @default 1 */
+            cycleAnchorDay: number;
+            /** @example en-CH */
+            locale: string;
+            /**
+             * @default UTC
+             * @example Europe/Zurich
+             */
+            timezone: string;
+            /** Format: email */
+            email: string;
+            displayName: string;
+        };
+        BootstrapResult: {
+            tenant: components["schemas"]["Tenant"];
+            user: components["schemas"]["User"];
+        };
+        MeResult: {
+            tenant: components["schemas"]["Tenant"];
+            user: components["schemas"]["User"];
+        };
+        RegisterInput: {
+            /** Format: email */
+            email: string;
+            password: string;
+            displayName: string;
+            /** @default CHF */
+            baseCurrency: string;
+        };
+        LoginInput: {
+            /** Format: email */
+            email: string;
+            password: string;
+        };
+        /** @enum {string} */
+        AccountKind: "checking" | "savings" | "cash" | "credit_card" | "brokerage" | "crypto_wallet" | "loan" | "mortgage" | "asset" | "pillar_2" | "pillar_3a" | "other";
+        Account: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            name: string;
+            nickname?: string | null;
+            kind: components["schemas"]["AccountKind"];
+            currency: string;
+            institution?: string | null;
+            /** Format: uuid */
+            accountGroupId?: string | null;
+            accountSortOrder: number;
+            /** Format: date-time */
+            openDate: string;
+            /** Format: date-time */
+            closeDate?: string | null;
+            /** @description Decimal as string */
+            openingBalance: string;
+            /** Format: date-time */
+            openingBalanceDate: string;
+            includeInNetworth: boolean;
+            includeInSavingsRate: boolean;
+            /** Format: date-time */
+            archivedAt?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /** @description Derived balance as decimal string: latest snapshot + posted/reconciled transactions booked on or after the snapshot's UTC date. */
+            balance: string;
+            /**
+             * Format: date-time
+             * @description as_of of the latest balance snapshot anchoring the derivation.
+             */
+            balanceAsOf?: string | null;
+        };
+        AccountCreateInput: {
+            name: string;
+            nickname?: string | null;
+            kind: components["schemas"]["AccountKind"];
+            currency: string;
+            institution?: string | null;
+            /** Format: uuid */
+            accountGroupId?: string | null;
+            /** Format: date */
+            openDate: string;
+            /** @default 0 */
+            openingBalance: string;
+            /** Format: date */
+            openingBalanceDate?: string;
+            includeInNetworth?: boolean;
+            includeInSavingsRate?: boolean;
+        };
+        AccountUpdateInput: {
+            name?: string;
+            /** @description Send empty string to clear. */
+            nickname?: string | null;
+            /** @description Send empty string to clear. */
+            institution?: string | null;
+            /**
+             * Format: uuid
+             * @description Send empty string to clear.
+             */
+            accountGroupId?: string | null;
+            accountSortOrder?: number;
+            includeInNetworth?: boolean;
+            includeInSavingsRate?: boolean;
+            /**
+             * Format: date
+             * @description Send empty string to clear.
+             */
+            closeDate?: string | null;
+            archived?: boolean;
+        };
+        AccountGroup: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            name: string;
+            sortOrder: number;
+            /** Format: date-time */
+            archivedAt?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AccountGroupCreateInput: {
+            name: string;
+        };
+        AccountGroupUpdateInput: {
+            name?: string;
+            sortOrder?: number;
+            archived?: boolean;
+        };
+        AccountReorderInput: {
+            groups?: {
+                /** Format: uuid */
+                id: string;
+                sortOrder: number;
+            }[];
+            accounts?: {
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                accountGroupId?: string | null;
+                sortOrder: number;
+            }[];
+        };
+        /** @enum {string} */
+        TransactionStatus: "draft" | "posted" | "reconciled" | "voided";
+        Transaction: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            /** Format: uuid */
+            accountId: string;
+            status: components["schemas"]["TransactionStatus"];
+            /** Format: date */
+            bookedAt: string;
+            /** Format: date */
+            valueAt?: string | null;
+            /** Format: date-time */
+            postedAt?: string | null;
+            /** @description Signed decimal as string, always in the account currency. */
+            amount: string;
+            /** @description Must match the account currency. */
+            currency: string;
+            /** @description Pre-FX amount when booked in a foreign currency. */
+            originalAmount?: string | null;
+            originalCurrency?: string | null;
+            /** Format: uuid */
+            merchantId?: string | null;
+            /** Format: uuid */
+            categoryId?: string | null;
+            counterpartyRaw?: string | null;
+            description?: string | null;
+            notes?: string | null;
+            /** @description User override. null defers to the derived rule. */
+            countAsExpense?: boolean | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        TransactionCreateInput: {
+            /** Format: uuid */
+            accountId: string;
+            /** @default posted */
+            status: components["schemas"]["TransactionStatus"];
+            /** Format: date */
+            bookedAt: string;
+            /** Format: date */
+            valueAt?: string | null;
+            /** Format: date-time */
+            postedAt?: string | null;
+            /** @description Signed decimal as string. */
+            amount: string;
+            currency: string;
+            /** Format: uuid */
+            categoryId?: string | null;
+            /** Format: uuid */
+            merchantId?: string | null;
+            counterpartyRaw?: string | null;
+            description?: string | null;
+            notes?: string | null;
+            countAsExpense?: boolean | null;
+        };
+        /**
+         * @description All fields optional. Send empty string on nullable string/date/uuid
+         *     fields to clear them (valueAt, postedAt, categoryId, merchantId,
+         *     counterpartyRaw, description, notes). countAsExpense accepts true,
+         *     false, or null to clear. accountId is not patchable.
+         */
+        TransactionUpdateInput: {
+            status?: components["schemas"]["TransactionStatus"];
+            /** Format: date */
+            bookedAt?: string;
+            /** Format: date */
+            valueAt?: string | null;
+            /** Format: date-time */
+            postedAt?: string | null;
+            amount?: string;
+            currency?: string;
+            /** Format: uuid */
+            categoryId?: string | null;
+            /** Format: uuid */
+            merchantId?: string | null;
+            counterpartyRaw?: string | null;
+            description?: string | null;
+            notes?: string | null;
+            countAsExpense?: boolean | null;
+        };
+        Category: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            /** Format: uuid */
+            parentId?: string | null;
+            name: string;
+            color?: string | null;
+            sortOrder: number;
+            /** Format: date-time */
+            archivedAt?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        CategoryCreateInput: {
+            /** Format: uuid */
+            parentId?: string | null;
+            name: string;
+            color?: string | null;
+            /** @default 0 */
+            sortOrder: number;
+        };
+        /**
+         * @description All fields optional. `parentId` accepts an empty string to promote
+         *     the category to a root. `color` accepts an empty string to clear.
+         *     `archived: true` archives; `archived: false` unarchives.
+         */
+        CategoryUpdateInput: {
+            /** Format: uuid */
+            parentId?: string | null;
+            name?: string;
+            color?: string | null;
+            sortOrder?: number;
+            archived?: boolean;
+        };
+        Merchant: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            canonicalName: string;
+            logoUrl?: string | null;
+            /** Format: uuid */
+            defaultCategoryId?: string | null;
+            industry?: string | null;
+            website?: string | null;
+            notes?: string | null;
+            /** Format: date-time */
+            archivedAt?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        MerchantCreateInput: {
+            canonicalName: string;
+            logoUrl?: string | null;
+            /** Format: uuid */
+            defaultCategoryId?: string | null;
+            industry?: string | null;
+            website?: string | null;
+            notes?: string | null;
+        };
+        /**
+         * @description All fields optional. Nullable string fields accept empty strings to
+         *     clear. `archived: true` archives; `archived: false` unarchives.
+         */
+        MerchantUpdateInput: {
+            canonicalName?: string;
+            logoUrl?: string | null;
+            /** Format: uuid */
+            defaultCategoryId?: string | null;
+            industry?: string | null;
+            website?: string | null;
+            notes?: string | null;
+            archived?: boolean;
+        };
+        Tag: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            name: string;
+            color?: string | null;
+            /** Format: date-time */
+            archivedAt?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        TagCreateInput: {
+            name: string;
+            color?: string | null;
+        };
+        /**
+         * @description All fields optional. `color` accepts empty string to clear.
+         *     `archived: true` archives; `archived: false` unarchives.
+         */
+        TagUpdateInput: {
+            name?: string;
+            color?: string | null;
+            archived?: boolean;
+        };
+        /**
+         * @description v1 match DSL. At least one field must be set. All provided fields are
+         *     ANDed. Amount bounds are inclusive. `counterpartyContains` and
+         *     `descriptionContains` are case-insensitive substring matches against
+         *     the transaction's `counterpartyRaw` / `description`. `amountSign` is
+         *     `"debit"` (amount < 0) or `"credit"` (amount > 0).
+         */
+        CategorizationRuleWhen: {
+            /** Format: uuid */
+            accountId?: string;
+            /** Format: uuid */
+            merchantId?: string;
+            counterpartyContains?: string;
+            descriptionContains?: string;
+            /** @description Decimal as string (inclusive). */
+            amountMin?: string;
+            /** @description Decimal as string (inclusive). */
+            amountMax?: string;
+            /** @enum {string} */
+            amountSign?: "debit" | "credit";
+        };
+        /**
+         * @description v1 action DSL. At least one field must be set. `countAsExpense`
+         *     accepts `true`, `false`, or `null`. During apply, manual overrides
+         *     win: category, merchant, and count-as-expense are only written when
+         *     the transaction currently has no value; tags are added idempotently.
+         */
+        CategorizationRuleThen: {
+            /** Format: uuid */
+            categoryId?: string;
+            /** Format: uuid */
+            merchantId?: string;
+            addTagIds?: string[];
+            countAsExpense?: boolean | null;
+        };
+        CategorizationRule: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            /** @description Lower numbers match first. */
+            priority: number;
+            when: components["schemas"]["CategorizationRuleWhen"];
+            then: components["schemas"]["CategorizationRuleThen"];
+            enabled: boolean;
+            /** Format: date-time */
+            lastMatchedAt?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        CategorizationRuleCreateInput: {
+            /** @default 1000 */
+            priority: number;
+            /** @default true */
+            enabled: boolean;
+            when: components["schemas"]["CategorizationRuleWhen"];
+            then: components["schemas"]["CategorizationRuleThen"];
+        };
+        /**
+         * @description All fields optional. `when` and `then`, when present, replace the
+         *     stored DSL wholesale; partial merge is out of scope for v1.
+         */
+        CategorizationRuleUpdateInput: {
+            priority?: number;
+            enabled?: boolean;
+            when?: components["schemas"]["CategorizationRuleWhen"];
+            then?: components["schemas"]["CategorizationRuleThen"];
+        };
+        RuleApplyResult: {
+            matched: boolean;
+            /**
+             * Format: uuid
+             * @description Set when matched is true.
+             */
+            ruleId?: string | null;
+            /** @description Post-apply transaction snapshot. */
+            transaction?: components["schemas"]["Transaction"];
+        };
     };
-    User: {
-      /** Format: uuid */
-      id: string;
-      /** Format: uuid */
-      tenantId: string;
-      /** Format: email */
-      email: string;
-      displayName: string;
-      /** Format: date-time */
-      createdAt: string;
-    };
-    Tenant: {
-      /** Format: uuid */
-      id: string;
-      name: string;
-      /** @example CHF */
-      baseCurrency: string;
-      cycleAnchorDay: number;
-      /** @example en-CH */
-      locale: string;
-      /** @example Europe/Zurich */
-      timezone: string;
-      /** Format: date-time */
-      createdAt: string;
-    };
-    BootstrapInput: {
-      tenantName: string;
-      /** @example CHF */
-      baseCurrency: string;
-      /** @default 1 */
-      cycleAnchorDay: number;
-      /** @example en-CH */
-      locale: string;
-      /**
-       * @default UTC
-       * @example Europe/Zurich
-       */
-      timezone: string;
-      /** Format: email */
-      email: string;
-      displayName: string;
-    };
-    BootstrapResult: {
-      tenant: components["schemas"]["Tenant"];
-      user: components["schemas"]["User"];
-    };
-    MeResult: {
-      tenant: components["schemas"]["Tenant"];
-      user: components["schemas"]["User"];
-    };
-    RegisterInput: {
-      /** Format: email */
-      email: string;
-      password: string;
-      displayName: string;
-      /** @default CHF */
-      baseCurrency: string;
-    };
-    LoginInput: {
-      /** Format: email */
-      email: string;
-      password: string;
-    };
-    /** @enum {string} */
-    AccountKind:
-      | "checking"
-      | "savings"
-      | "cash"
-      | "credit_card"
-      | "brokerage"
-      | "crypto_wallet"
-      | "loan"
-      | "mortgage"
-      | "asset"
-      | "pillar_2"
-      | "pillar_3a"
-      | "other";
-    Account: {
-      /** Format: uuid */
-      id: string;
-      /** Format: uuid */
-      tenantId: string;
-      name: string;
-      nickname?: string | null;
-      kind: components["schemas"]["AccountKind"];
-      currency: string;
-      institution?: string | null;
-      /** Format: date-time */
-      openDate: string;
-      /** Format: date-time */
-      closeDate?: string | null;
-      /** @description Decimal as string */
-      openingBalance: string;
-      /** Format: date-time */
-      openingBalanceDate: string;
-      includeInNetworth: boolean;
-      includeInSavingsRate: boolean;
-      /** Format: date-time */
-      archivedAt?: string | null;
-      /** Format: date-time */
-      createdAt: string;
-      /** Format: date-time */
-      updatedAt: string;
-      /** @description Derived balance as decimal string: latest snapshot + posted/reconciled transactions booked on or after the snapshot's UTC date. */
-      balance: string;
-      /**
-       * Format: date-time
-       * @description as_of of the latest balance snapshot anchoring the derivation.
-       */
-      balanceAsOf?: string | null;
-    };
-    AccountCreateInput: {
-      name: string;
-      nickname?: string | null;
-      kind: components["schemas"]["AccountKind"];
-      currency: string;
-      institution?: string | null;
-      /** Format: date */
-      openDate: string;
-      /** @default 0 */
-      openingBalance: string;
-      /** Format: date */
-      openingBalanceDate?: string;
-      includeInNetworth?: boolean;
-      includeInSavingsRate?: boolean;
-    };
-    AccountUpdateInput: {
-      name?: string;
-      /** @description Send empty string to clear. */
-      nickname?: string | null;
-      /** @description Send empty string to clear. */
-      institution?: string | null;
-      includeInNetworth?: boolean;
-      includeInSavingsRate?: boolean;
-      /**
-       * Format: date
-       * @description Send empty string to clear.
-       */
-      closeDate?: string | null;
-      archived?: boolean;
-    };
-    /** @enum {string} */
-    TransactionStatus: "draft" | "posted" | "reconciled" | "voided";
-    Transaction: {
-      /** Format: uuid */
-      id: string;
-      /** Format: uuid */
-      tenantId: string;
-      /** Format: uuid */
-      accountId: string;
-      status: components["schemas"]["TransactionStatus"];
-      /** Format: date */
-      bookedAt: string;
-      /** Format: date */
-      valueAt?: string | null;
-      /** Format: date-time */
-      postedAt?: string | null;
-      /** @description Signed decimal as string, always in the account currency. */
-      amount: string;
-      /** @description Must match the account currency. */
-      currency: string;
-      /** @description Pre-FX amount when booked in a foreign currency. */
-      originalAmount?: string | null;
-      originalCurrency?: string | null;
-      /** Format: uuid */
-      merchantId?: string | null;
-      /** Format: uuid */
-      categoryId?: string | null;
-      counterpartyRaw?: string | null;
-      description?: string | null;
-      notes?: string | null;
-      /** @description User override. null defers to the derived rule. */
-      countAsExpense?: boolean | null;
-      /** Format: date-time */
-      createdAt: string;
-      /** Format: date-time */
-      updatedAt: string;
-    };
-    TransactionCreateInput: {
-      /** Format: uuid */
-      accountId: string;
-      /** @default posted */
-      status: components["schemas"]["TransactionStatus"];
-      /** Format: date */
-      bookedAt: string;
-      /** Format: date */
-      valueAt?: string | null;
-      /** Format: date-time */
-      postedAt?: string | null;
-      /** @description Signed decimal as string. */
-      amount: string;
-      currency: string;
-      /** Format: uuid */
-      categoryId?: string | null;
-      /** Format: uuid */
-      merchantId?: string | null;
-      counterpartyRaw?: string | null;
-      description?: string | null;
-      notes?: string | null;
-      countAsExpense?: boolean | null;
-    };
-    /**
-     * @description All fields optional. Send empty string on nullable string/date/uuid
-     *     fields to clear them (valueAt, postedAt, categoryId, merchantId,
-     *     counterpartyRaw, description, notes). countAsExpense accepts true,
-     *     false, or null to clear. accountId is not patchable.
-     */
-    TransactionUpdateInput: {
-      status?: components["schemas"]["TransactionStatus"];
-      /** Format: date */
-      bookedAt?: string;
-      /** Format: date */
-      valueAt?: string | null;
-      /** Format: date-time */
-      postedAt?: string | null;
-      amount?: string;
-      currency?: string;
-      /** Format: uuid */
-      categoryId?: string | null;
-      /** Format: uuid */
-      merchantId?: string | null;
-      counterpartyRaw?: string | null;
-      description?: string | null;
-      notes?: string | null;
-      countAsExpense?: boolean | null;
-    };
-  };
-  responses: never;
-  parameters: never;
-  requestBodies: never;
-  headers: never;
-  pathItems: never;
+    responses: never;
+    parameters: never;
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
 }
 export type $defs = Record<string, never>;
 export type operations = Record<string, never>;

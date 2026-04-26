@@ -346,6 +346,8 @@ export type AccountPatchInput = {
   nickname?: string | null;
   kind?: AccountKind;
   institution?: string | null;
+  accountGroupId?: string | null;
+  accountSortOrder?: number;
   includeInNetworth?: boolean;
   includeInSavingsRate?: boolean;
   closeDate?: string | null;
@@ -369,6 +371,61 @@ export async function deleteAccount(
 ): Promise<void> {
   return request<void>(`/api/v1/t/${tenantId}/accounts/${accountId}`, {
     method: "DELETE",
+  });
+}
+
+export async function fetchAccountGroups(
+  tenantId: string,
+  opts: { includeArchived?: boolean } = {}
+): Promise<AccountGroup[]> {
+  return request<AccountGroup[]>(
+    `/api/v1/t/${tenantId}/accounts/groups${buildQuery({
+      includeArchived: opts.includeArchived,
+    })}`,
+    { method: "GET" }
+  );
+}
+
+export async function createAccountGroup(
+  tenantId: string,
+  body: AccountGroupCreateInput
+): Promise<AccountGroup> {
+  return request<AccountGroup>(`/api/v1/t/${tenantId}/accounts/groups`, {
+    method: "POST",
+    json: body,
+  });
+}
+
+export async function updateAccountGroup(
+  tenantId: string,
+  groupId: string,
+  body: AccountGroupUpdateInput
+): Promise<AccountGroup> {
+  return request<AccountGroup>(
+    `/api/v1/t/${tenantId}/accounts/groups/${groupId}`,
+    {
+      method: "PATCH",
+      json: body,
+    }
+  );
+}
+
+export async function deleteAccountGroup(
+  tenantId: string,
+  groupId: string
+): Promise<void> {
+  return request<void>(`/api/v1/t/${tenantId}/accounts/groups/${groupId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function reorderAccounts(
+  tenantId: string,
+  body: AccountReorderInput
+): Promise<void> {
+  return request<void>(`/api/v1/t/${tenantId}/accounts/order`, {
+    method: "PUT",
+    json: body,
   });
 }
 
@@ -698,6 +755,12 @@ export async function fetchMerchants(
 export type Account = components["schemas"]["Account"];
 export type AccountKind = components["schemas"]["AccountKind"];
 export type AccountCreateInput = components["schemas"]["AccountCreateInput"];
+export type AccountGroup = components["schemas"]["AccountGroup"];
+export type AccountGroupCreateInput =
+  components["schemas"]["AccountGroupCreateInput"];
+export type AccountGroupUpdateInput =
+  components["schemas"]["AccountGroupUpdateInput"];
+export type AccountReorderInput = components["schemas"]["AccountReorderInput"];
 export type Transaction = components["schemas"]["Transaction"];
 export type TransactionStatus = components["schemas"]["TransactionStatus"];
 export type TransactionCreateInput =

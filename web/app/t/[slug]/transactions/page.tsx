@@ -325,7 +325,7 @@ function TransactionTable({
               : "No matches"}
             {hasFilters ? " after filters" : ""}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="secondary"
               size="sm"
@@ -352,6 +352,12 @@ function TransactionTable({
                 </option>
               ))}
             </Select>
+            <PaginationControls
+              page={page}
+              hasNextPage={hasNextPage}
+              onPageChange={onPageChange}
+              compact
+            />
           </div>
         </div>
         {transactions.length > 0 ? (
@@ -443,26 +449,11 @@ function TransactionTable({
             Page {page + 1}
             {hasNextPage ? "" : " · end of results"}
           </div>
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={page === 0}
-              onClick={() => onPageChange(Math.max(0, page - 1))}
-            >
-              <ChevronLeft className="h-4 w-4" />
-              Previous
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={!hasNextPage}
-              onClick={() => onPageChange(page + 1)}
-            >
-              Next
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
+          <PaginationControls
+            page={page}
+            hasNextPage={hasNextPage}
+            onPageChange={onPageChange}
+          />
         </div>
       </Card>
 
@@ -480,6 +471,46 @@ function TransactionTable({
         />
       ) : null}
     </section>
+  );
+}
+
+function PaginationControls({
+  page,
+  hasNextPage,
+  onPageChange,
+  compact = false,
+}: {
+  page: number;
+  hasNextPage: boolean;
+  onPageChange: (page: number) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <Button
+        variant="secondary"
+        size={compact ? "icon" : "sm"}
+        disabled={page === 0}
+        onClick={() => onPageChange(Math.max(0, page - 1))}
+      >
+        <ChevronLeft className="h-4 w-4" />
+        {compact ? <span className="sr-only">Previous page</span> : "Previous"}
+      </Button>
+      {compact ? (
+        <span className="text-fg-faint tabular min-w-8 text-center text-[12px]">
+          {page + 1}
+        </span>
+      ) : null}
+      <Button
+        variant="secondary"
+        size={compact ? "icon" : "sm"}
+        disabled={!hasNextPage}
+        onClick={() => onPageChange(page + 1)}
+      >
+        {compact ? <span className="sr-only">Next page</span> : "Next"}
+        <ChevronRight className="h-4 w-4" />
+      </Button>
+    </div>
   );
 }
 
@@ -514,7 +545,7 @@ function TransactionFiltersPanel({
         onSearchSubmit();
       }}
     >
-      <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_160px_160px_160px]">
+      <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_minmax(140px,160px)_minmax(140px,160px)_minmax(140px,160px)]">
         <label className="text-fg-muted relative flex flex-col gap-1.5 text-[12px] font-medium">
           Search
           <Search className="text-fg-faint pointer-events-none absolute bottom-2.5 left-3 h-4 w-4" />
@@ -589,7 +620,7 @@ function TransactionFiltersPanel({
         </label>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[140px_140px_140px_140px_140px_minmax(180px,1fr)]">
+      <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-[minmax(120px,140px)_minmax(120px,140px)_minmax(120px,140px)_minmax(120px,140px)_minmax(120px,140px)_minmax(180px,1fr)]">
         <label className="text-fg-muted flex flex-col gap-1.5 text-[12px] font-medium">
           From
           <Input

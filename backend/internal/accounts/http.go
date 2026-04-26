@@ -27,9 +27,26 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/", h.list)
 	r.Post("/", h.create)
+	r.Put("/order", h.reorder)
+	r.Route("/groups", func(r chi.Router) {
+		r.Get("/", h.listGroups)
+		r.Post("/", h.createGroup)
+		r.Patch("/{groupId}", h.updateGroup)
+		r.Delete("/{groupId}", h.deleteGroup)
+	})
 	r.Get("/{accountId}", h.get)
 	r.Patch("/{accountId}", h.update)
 	r.Delete("/{accountId}", h.delete)
+}
+
+type groupReq struct {
+	Name string `json:"name"`
+}
+
+type groupPatchReq struct {
+	Name      *string `json:"name"`
+	SortOrder *int    `json:"sortOrder"`
+	Archived  *bool   `json:"archived"`
 }
 
 type createReq struct {
@@ -38,6 +55,7 @@ type createReq struct {
 	Kind                 string  `json:"kind"`
 	Currency             string  `json:"currency"`
 	Institution          *string `json:"institution"`
+	AccountGroupID       *string `json:"accountGroupId"`
 	OpenDate             string  `json:"openDate"`
 	OpeningBalance       *string `json:"openingBalance"`
 	OpeningBalanceDate   *string `json:"openingBalanceDate"`
@@ -50,10 +68,86 @@ type patchReq struct {
 	Nickname             *string `json:"nickname"`
 	Kind                 *string `json:"kind"`
 	Institution          *string `json:"institution"`
+	AccountGroupID       *string `json:"accountGroupId"`
+	AccountSortOrder     *int    `json:"accountSortOrder"`
 	IncludeInNetworth    *bool   `json:"includeInNetworth"`
 	IncludeInSavingsRate *bool   `json:"includeInSavingsRate"`
 	CloseDate            *string `json:"closeDate"`
 	Archived             *bool   `json:"archived"`
+}
+
+type reorderReq struct {
+	Groups []struct {
+		ID        string `json:"id"`
+		SortOrder int    `json:"sortOrder"`
+	} `json:"groups"`
+	Accounts []struct {
+		ID             string  `json:"id"`
+		AccountGroupID *string `json:"accountGroupId"`
+		SortOrder      int     `json:"sortOrder"`
+	} `json:"accounts"`
+}
+
+func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
+	tenantID := auth.MustTenant(r).ID
+	includeArchived := strings.EqualFold(r.URL.Query().Get("includeArchived"), "true")
+	res, err := h.svc.ListGroups(r.Context(), tenantID, includeArchived)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
+	tenantID := auth.MustTenant(r).ID
+	var req groupReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return
+	}
+	group, err := h.svc.CreateGroup(r.Context(), tenantID, CreateGroupInput{Name: req.Name})
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, group)
+}
+
+func (h *Handler) updateGroup(w http.ResponseWriter, r *http.Request) {
+	tenantID := auth.MustTenant(r).ID
+	id, err := uuid.Parse(chi.URLParam(r, "groupId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "groupId must be a UUID")
+		return
+	}
+	var req groupPatchReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return
+	}
+	group, err := h.svc.UpdateGroup(r.Context(), tenantID, id, PatchGroupInput{
+		Name: req.Name, SortOrder: req.SortOrder, Archived: req.Archived,
+	})
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, group)
+}
+
+func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) {
+	tenantID := auth.MustTenant(r).ID
+	id, err := uuid.Parse(chi.URLParam(r, "groupId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "groupId must be a UUID")
+		return
+	}
+	if err := h.svc.DeleteGroup(r.Context(), tenantID, id); err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +184,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		OpenDate:             openDate,
 		IncludeInNetworth:    req.IncludeInNetworth,
 		IncludeInSavingsRate: req.IncludeInSavingsRate,
+	}
+	if req.AccountGroupID != nil && *req.AccountGroupID != "" {
+		groupID, err := uuid.Parse(*req.AccountGroupID)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "accountGroupId must be a UUID")
+			return
+		}
+		in.AccountGroupID = &groupID
 	}
 
 	if req.OpeningBalance != nil {
@@ -149,10 +251,23 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		Nickname:             req.Nickname,
 		Kind:                 req.Kind,
 		Institution:          req.Institution,
+		AccountSortOrder:     req.AccountSortOrder,
 		IncludeInNetworth:    req.IncludeInNetworth,
 		IncludeInSavingsRate: req.IncludeInSavingsRate,
 		CloseDate:            req.CloseDate,
 		Archived:             req.Archived,
+	}
+	if req.AccountGroupID != nil {
+		var groupID *uuid.UUID
+		if *req.AccountGroupID != "" {
+			parsed, err := uuid.Parse(*req.AccountGroupID)
+			if err != nil {
+				httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "accountGroupId must be a UUID")
+				return
+			}
+			groupID = &parsed
+		}
+		in.AccountGroupID = &groupID
 	}
 	acc, err := h.svc.Update(r.Context(), tenantID, id, in)
 	if err != nil {
@@ -165,6 +280,52 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, acc)
+}
+
+func (h *Handler) reorder(w http.ResponseWriter, r *http.Request) {
+	tenantID := auth.MustTenant(r).ID
+	var req reorderReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return
+	}
+
+	in := ReorderInput{
+		Groups:   make([]GroupOrderInput, 0, len(req.Groups)),
+		Accounts: make([]AccountOrderInput, 0, len(req.Accounts)),
+	}
+	for _, group := range req.Groups {
+		id, err := uuid.Parse(group.ID)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "group id must be a UUID")
+			return
+		}
+		in.Groups = append(in.Groups, GroupOrderInput{ID: id, SortOrder: group.SortOrder})
+	}
+	for _, account := range req.Accounts {
+		id, err := uuid.Parse(account.ID)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "account id must be a UUID")
+			return
+		}
+		var groupID *uuid.UUID
+		if account.AccountGroupID != nil && *account.AccountGroupID != "" {
+			parsed, err := uuid.Parse(*account.AccountGroupID)
+			if err != nil {
+				httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "accountGroupId must be a UUID")
+				return
+			}
+			groupID = &parsed
+		}
+		in.Accounts = append(in.Accounts, AccountOrderInput{
+			ID: id, AccountGroupID: groupID, SortOrder: account.SortOrder,
+		})
+	}
+	if err := h.svc.Reorder(r.Context(), tenantID, in); err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {

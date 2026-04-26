@@ -65,6 +65,20 @@ Every balance in Folio lives on an account.
 - **Included-in-networth flag** — default on; can be turned off for specific accounts.
 - **Included-in-savings-rate flag** — default derived from type (liquid yes, asset no).
 
+### Account groups
+
+Account groups are user-created, workspace-scoped containers for organizing many
+accounts into the user's mental buckets without changing the ledger model.
+
+- **Examples** — `Crypto`, `MMF`, `Personal banking`, `Retirement`, `Debt`, `Physical assets`.
+- **Editable user data** — users can create, rename, delete, reorder, and archive groups. Folio may suggest groups during imports/onboarding, but they are not hardcoded system categories.
+- **Accounts remain the accounting truth** — transactions still post to exactly one account; groups roll accounts up for navigation, filtering, dashboards, and reports.
+- **Membership** — an account has one primary group for account-list organization. Later, optional secondary group membership can support cross-cutting views if needed.
+- **Ordering** — groups have a user-defined sort order, and accounts have a user-defined order within their primary group.
+- **Drag and drop** — the Accounts page supports dragging groups to reorder them, dragging accounts within a group to reorder them, and dragging accounts between groups to move them. Keyboard-accessible move controls must provide the same behavior.
+- **Rollups** — group headers show base-currency totals, with native account currencies preserved in the expanded rows.
+- **Imports** — import flows should suggest a target group from account kind/source, such as `crypto_wallet` → `Crypto` and MMF/brokerage cash-like accounts → `MMF`, while letting the user override before applying.
+
 ---
 
 ## 3. Connectivity & imports
@@ -517,7 +531,7 @@ Interactions:
 ## 20. Search & filters
 
 - **Full-text search** across transactions: memo, notes, merchant, raw bank description, tags, category names.
-- **Structured filters**: amount range, date range, account(s), category(ies), tag(s), merchant(s), status (planned/scheduled/paid/reconciled), has-attachment, has-receipt.
+- **Structured filters**: amount range, date range, account(s), account group(s), category(ies), tag(s), merchant(s), status (planned/scheduled/paid/reconciled), has-attachment, has-receipt.
 - **Saved searches** — user saves a filter combination with a name, pin to sidebar.
 - **Bulk operations** — select N transactions from search results, bulk re-categorise, bulk tag, bulk delete.
 
