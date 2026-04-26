@@ -7,18 +7,18 @@ principles. It intentionally ignores the current scaffold/schema.
 
 ## Problems To Resolve First
 
-### 1. Tenant vs user identity
+### 1. Workspace vs user identity
 
-The feature bible says Folio is single-user per tenant, with platform-level
-multi-tenancy. Model that explicitly:
+The feature bible says Folio is single-user per workspace, with platform-level
+isolation. Model that explicitly:
 
-- `tenants` own all financial data.
-- `users` authenticate into a tenant.
-- v1 can enforce one normal user per tenant, while still allowing future admin,
+- `workspaces` own all financial data.
+- `users` authenticate into a workspace.
+- v1 can enforce one normal user per workspace, while still allowing future admin,
   recovery, or household/member support without rewriting every table.
 
-Decision: model both `tenant_id` and `user_id`. Financial rows belong to
-`tenant_id`; audit rows record `actor_user_id`.
+Decision: model both `workspace_id` and `user_id`. Financial rows belong to
+`workspace_id`; audit rows record `actor_user_id`.
 
 ### 2. Ledger facts vs plans
 
@@ -153,19 +153,19 @@ valuations, FX rates, and checkpoints.
 
 ### Identity
 
-- `tenants`
+- `workspaces`
 - `users`
 - `user_preferences`
 - `sessions`
 - `webauthn_credentials`
 - `totp_credentials`
 
-Financial data is scoped by `tenant_id`.
+Financial data is scoped by `workspace_id`.
 
 ### Accounts And Balances
 
 - `accounts`
-  - tenant, name, kind, currency, institution, open date, close/archive date
+  - workspace, name, kind, currency, institution, open date, close/archive date
   - inclusion flags: net worth, liquid savings rate, reports
   - optional provider/import/source metadata
 - `account_balance_snapshots`
@@ -181,7 +181,7 @@ currencies distinct from the account base currency.
 ### Transactions
 
 - `transactions`
-  - tenant, account, status, dates, amount, currency, original amount/currency
+  - workspace, account, status, dates, amount, currency, original amount/currency
   - merchant, notes, raw description, source/import refs
   - reconciled source marker if matched to bank data
 - `transaction_lines`
@@ -200,7 +200,7 @@ Recommended status vocabulary:
 ### Classification
 
 - `categories`
-  - hierarchical, tenant scoped, merge/archive supported
+  - hierarchical, workspace scoped, merge/archive supported
 - `category_aliases` or `category_history`
 - `merchants`
 - `merchant_aliases`
@@ -230,7 +230,7 @@ not in the main transaction table only.
 ### Planning
 
 - `payment_cycles`
-  - tenant, period start/end, anchor, status
+  - workspace, period start/end, anchor, status
 - `income_sources`
 - `recurring_templates`
   - income, expense, transfer, investment contribution, subscription
@@ -285,7 +285,7 @@ accounting should not be forced into ordinary expense categories.
 ### Physical Assets And Retirement
 
 - `assets`
-  - tenant, linked account, type, description, purchase metadata
+  - workspace, linked account, type, description, purchase metadata
 - `asset_valuations`
 - `asset_events`
   - purchase, sale, maintenance, depreciation, appraisal

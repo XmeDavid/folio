@@ -10,7 +10,7 @@ This document captures **everything Folio intends to be**. It is domain-organise
 
 ## 1. Overview & principles
 
-Folio is a self-hosted personal finance & planning app. **Workspace-based multi-tenancy:** each tenant is a shared financial workspace (its own accounts, categories, base currency, cycle anchor) with one or more members. Users are platform-level identities that can belong to and switch between multiple workspaces. Data is isolated per workspace; sharing happens only via explicit invites.
+Folio is a self-hosted personal finance & planning app. **Workspace-scoped:** each workspace is a shared financial container (its own accounts, categories, base currency, cycle anchor) with one or more members. Users are platform-level identities that can belong to and switch between multiple workspaces. Data is isolated per workspace; sharing happens only via explicit invites.
 
 **Core principles:**
 
@@ -23,17 +23,17 @@ Folio is a self-hosted personal finance & planning app. **Workspace-based multi-
 
 ### Workspaces & membership
 
-A **workspace** (`tenant` in the schema) is the financial container. All accounts, transactions, categories, budgets, goals, trips, etc. scope to a single workspace.
+A **workspace** is the financial container. All accounts, transactions, categories, budgets, goals, trips, etc. scope to a single workspace.
 
 - **Workspace fields:** name, slug, base currency, cycle anchor day, locale, timezone.
 - **Roles:** `owner` and `member`. Owners manage workspace settings, invite/remove members, and change roles. Members read/write financial data and can self-leave. No per-resource ACLs in v1.
-- **Users vs. workspaces:** a user account is platform-level (email, password, MFA, passkeys). One user can belong to many workspaces; one workspace can have many users. `last_tenant_id` drives the default workspace on login; the UI surfaces a workspace switcher.
+- **Users vs. workspaces:** a user account is platform-level (email, password, MFA, passkeys). One user can belong to many workspaces; one workspace can have many users. `last_workspace_id` drives the default workspace on login; the UI surfaces a workspace switcher.
 - **Invites.** An owner invites by email with a target role; the invitee receives a tokenized email link. To accept, the invitee must be authenticated with a verified email matching the invite. Acceptance creates the membership row. Invites expire; the original inviter or any owner can revoke.
 - **Cold signup vs. join.** Signing up cold creates a fresh workspace with the new user as `owner`. Joining an existing workspace is always invite-mediated; there is no "search & request to join" flow.
 - **Invariants.**
   - **Last owner:** a workspace must always have ≥1 owner. The final owner cannot be removed or demoted.
   - **Last workspace:** a user must always have ≥1 workspace. Leaving your last workspace is blocked; create another first.
-- **Platform admin console.** Separate from workspace-level administration. The self-host operator sees a tenant list with member counts, last activity, and deletion state. Workspace owners cannot reach the platform admin surface.
+- **Platform admin console.** Separate from workspace-level administration. The self-host operator sees a workspace list with member counts, last activity, and deletion state. Workspace owners cannot reach the platform admin surface.
 - **Audit log scope.** Audit entries belong to a workspace and capture the acting user, so multi-member edits are attributable.
 
 ---
@@ -693,7 +693,7 @@ Beyond prebaked events, user can define custom rules:
 - One-click backup (pg_dump to user-configured target: local disk, S3-compatible, etc.).
 - Restore from backup.
 - Upgrade path that handles migrations.
-- **Platform admin console** for the self-host operator: workspace (tenant) list with member counts, last activity, deletion state; user list; resource usage. Distinct from workspace-level administration (which any owner has within their own workspace).
+- **Platform admin console** for the self-host operator: workspace list with member counts, last activity, deletion state; user list; resource usage. Distinct from workspace-level administration (which any owner has within their own workspace).
 
 ---
 
