@@ -20,6 +20,14 @@ export const CURRENCY_OPTIONS = [
   { value: "NZD", label: "NZD - New Zealand dollar" },
   { value: "MXN", label: "MXN - Mexican peso" },
   { value: "ZAR", label: "ZAR - South African rand" },
+  { value: "BTC", label: "BTC - Bitcoin" },
+  { value: "ETH", label: "ETH - Ethereum" },
+  { value: "SOL", label: "SOL - Solana" },
+  { value: "ADA", label: "ADA - Cardano" },
+  { value: "XRP", label: "XRP - XRP" },
+  { value: "DOGE", label: "DOGE - Dogecoin" },
+  { value: "USDC", label: "USDC - USD Coin" },
+  { value: "USDT", label: "USDT - Tether" },
 ] as const;
 
 export const LANGUAGE_OPTIONS = [
@@ -51,5 +59,8 @@ export function currencyOptionsWith(value: string | null | undefined) {
   ) {
     return CURRENCY_OPTIONS;
   }
-  return [{ value: normalized, label: `${normalized} - Imported currency` }, ...CURRENCY_OPTIONS];
+  return [
+    { value: normalized, label: `${normalized} - Imported currency` },
+    ...CURRENCY_OPTIONS,
+  ];
 }

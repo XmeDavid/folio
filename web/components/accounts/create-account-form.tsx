@@ -29,7 +29,7 @@ const schema = z
     currency: z
       .string()
       .trim()
-      .regex(/^[a-zA-Z]{3}$/, "ISO 4217 code, e.g. CHF"),
+      .regex(/^[a-zA-Z0-9]{3,10}$/, "3-10 letters or numbers, e.g. CHF or BTC"),
     institution: z.string().trim().max(120).optional().or(z.literal("")),
     nickname: z.string().trim().max(80).optional().or(z.literal("")),
     openDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
@@ -69,7 +69,9 @@ export function CreateAccountForm({
   const qc = useQueryClient();
   const today = React.useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [preview, setPreview] = React.useState<ImportPreview | null>(null);
-  const [createdAccount, setCreatedAccount] = React.useState<Account | null>(null);
+  const [createdAccount, setCreatedAccount] = React.useState<Account | null>(
+    null
+  );
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -179,15 +181,15 @@ export function CreateAccountForm({
   if (createdAccount && preview) {
     return (
       <div className="flex flex-col gap-5">
-        <div className="rounded-[12px] border border-border bg-surface px-5 py-4">
+        <div className="border-border bg-surface rounded-[12px] border px-5 py-4">
           <h3 className="text-[15px] font-medium">Import transactions?</h3>
-          <p className="mt-1 text-[13px] text-fg-muted">
+          <p className="text-fg-muted mt-1 text-[13px]">
             {preview.fileName || "This export"} contains{" "}
             <span className="tabular">{preview.transactionCount}</span>{" "}
             transactions from {preview.dateFrom || "the first entry"} to{" "}
             {preview.dateTo || "the last entry"}.
           </p>
-          <div className="mt-3 grid gap-2 text-[12px] text-fg-muted sm:grid-cols-3">
+          <div className="text-fg-muted mt-3 grid gap-2 text-[12px] sm:grid-cols-3">
             <span>
               Importable:{" "}
               <strong className="tabular text-fg">
@@ -320,19 +322,17 @@ export function CreateAccountForm({
       </Field>
 
       {previewMutation.isPending ? (
-        <p className="text-[13px] text-fg-muted">
-          Reading bank export...
-        </p>
+        <p className="text-fg-muted text-[13px]">Reading bank export...</p>
       ) : null}
 
       {preview ? (
-        <div className="rounded-[12px] border border-border bg-surface px-4 py-3">
+        <div className="border-border bg-surface rounded-[12px] border px-4 py-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-[13px] font-medium text-fg">
+              <p className="text-fg text-[13px] font-medium">
                 {preview.institution || "Bank export"} detected
               </p>
-              <p className="text-[12px] text-fg-muted">
+              <p className="text-fg-muted text-[12px]">
                 <span className="tabular">{preview.transactionCount}</span>{" "}
                 transactions
                 {preview.dateFrom && preview.dateTo
@@ -350,7 +350,7 @@ export function CreateAccountForm({
             </Button>
           </div>
           {preview.warnings?.length ? (
-            <ul className="mt-2 list-disc pl-4 text-[12px] text-fg-muted">
+            <ul className="text-fg-muted mt-2 list-disc pl-4 text-[12px]">
               {preview.warnings.map((warning) => (
                 <li key={warning}>{warning}</li>
               ))}
@@ -360,9 +360,7 @@ export function CreateAccountForm({
       ) : null}
 
       {previewErr ? (
-        <FormError>
-          {previewErr.body?.error || previewErr.message}
-        </FormError>
+        <FormError>{previewErr.body?.error || previewErr.message}</FormError>
       ) : null}
 
       <div className="grid gap-5 sm:grid-cols-3">

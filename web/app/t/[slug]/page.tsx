@@ -112,16 +112,12 @@ export default function TenantDashboardPage({
               ? "..."
               : networthAccounts.length === 0
                 ? "-"
-                : networth.missingCurrencies.length > 0 || fxRates.isError
-                  ? "Unavailable"
-                  : formatAmount(networth.total, baseCurrency, locale)
+                : formatAmount(networth.total, baseCurrency, locale)
           }
           detail={
-            fxRates.isError
-              ? "FX rates unavailable"
-              : networth.missingCurrencies.length > 0
-                ? `Missing ${networth.missingCurrencies.join(", ")}`
-                : "Converted to base currency"
+            networth.missingCurrencies.length > 0
+              ? `Excluding ${networth.missingCurrencies.join(", ")}`
+              : "Converted to base currency"
           }
         />
         <MetricCard
@@ -179,14 +175,14 @@ export default function TenantDashboardPage({
                     Workspace total
                   </div>
                   <div className="tabular mt-1 text-[30px] leading-tight font-normal">
-                    {fxRates.isError || networth.missingCurrencies.length > 0
-                      ? "-"
-                      : formatAmount(networth.total, baseCurrency, locale)}
+                    {formatAmount(networth.total, baseCurrency, locale)}
                   </div>
                   <div className="text-fg-faint mt-1 text-[12px]">
-                    {fxRates.data && Object.values(fxRates.data).length > 0
-                      ? `Latest FX from Frankfurter, dated ${latestFxDate(fxRates.data)}`
-                      : `All net-worth accounts are already in ${baseCurrency}`}
+                    {networth.missingCurrencies.length > 0
+                      ? `Excludes currencies without rates: ${networth.missingCurrencies.join(", ")}`
+                      : fxRates.data && Object.values(fxRates.data).length > 0
+                        ? `Latest FX from ${rateProviders(fxRates.data)}, dated ${latestFxDate(fxRates.data)}`
+                        : `All net-worth accounts are already in ${baseCurrency}`}
                   </div>
                 </div>
                 <div className="divide-border flex flex-col divide-y">
@@ -396,4 +392,15 @@ function latestFxDate(rates: Record<string, FxRate>): string {
     .map((rate) => rate.date)
     .sort();
   return dates[dates.length - 1] ?? "latest";
+}
+
+function rateProviders(rates: Record<string, FxRate>): string {
+  const providers = [
+    ...new Set(Object.values(rates).map((rate) => rate.provider)),
+  ].sort();
+  return providers
+    .map((provider) =>
+      provider === "frankfurter" ? "Frankfurter" : "Coinbase"
+    )
+    .join(" and ");
 }
