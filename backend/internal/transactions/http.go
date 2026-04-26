@@ -78,6 +78,22 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		f.AccountID = &id
 	}
+	if raw := q.Get("categoryId"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "categoryId must be a UUID")
+			return
+		}
+		f.CategoryID = &id
+	}
+	if raw := q.Get("merchantId"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "merchantId must be a UUID")
+			return
+		}
+		f.MerchantID = &id
+	}
 	if raw := q.Get("from"); raw != "" {
 		t, err := time.Parse("2006-01-02", raw)
 		if err != nil {
@@ -98,6 +114,26 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		s := strings.ToLower(strings.TrimSpace(raw))
 		f.Status = &s
 	}
+	if raw := q.Get("search"); raw != "" {
+		search := strings.TrimSpace(raw)
+		f.Search = &search
+	}
+	if raw := q.Get("minAmount"); raw != "" {
+		amt, err := decimal.NewFromString(strings.TrimSpace(raw))
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "minAmount must be a decimal string")
+			return
+		}
+		f.MinAmount = &amt
+	}
+	if raw := q.Get("maxAmount"); raw != "" {
+		amt, err := decimal.NewFromString(strings.TrimSpace(raw))
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "maxAmount must be a decimal string")
+			return
+		}
+		f.MaxAmount = &amt
+	}
 	if strings.EqualFold(q.Get("uncategorized"), "true") {
 		f.Uncategorized = true
 	}
@@ -108,6 +144,14 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.Limit = n
+	}
+	if raw := q.Get("offset"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "offset must be a non-negative integer")
+			return
+		}
+		f.Offset = n
 	}
 
 	res, err := h.svc.List(r.Context(), tenantID, f)

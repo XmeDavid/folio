@@ -217,6 +217,12 @@ paths:
         - name: accountId
           in: query
           schema: { type: string, format: uuid }
+        - name: categoryId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: merchantId
+          in: query
+          schema: { type: string, format: uuid }
         - name: from
           in: query
           schema: { type: string, format: date }
@@ -226,6 +232,18 @@ paths:
         - name: status
           in: query
           schema: { $ref: "#/components/schemas/TransactionStatus" }
+        - name: search
+          in: query
+          description: Case-insensitive search over description, raw counterparty, and notes.
+          schema: { type: string }
+        - name: minAmount
+          in: query
+          description: Signed decimal lower bound in the transaction currency.
+          schema: { type: string }
+        - name: maxAmount
+          in: query
+          description: Signed decimal upper bound in the transaction currency.
+          schema: { type: string }
         - name: uncategorized
           in: query
           description: |
@@ -237,6 +255,9 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
           description: Transactions

@@ -511,11 +511,17 @@ export async function applyAccountImportPlan(
 
 type TransactionsQuery = {
   accountId?: string;
+  categoryId?: string;
+  merchantId?: string;
   from?: string;
   to?: string;
   status?: TransactionStatus;
+  search?: string;
+  minAmount?: string;
+  maxAmount?: string;
   uncategorized?: boolean;
   limit?: number;
+  offset?: number;
 };
 
 function buildQuery(q?: Record<string, unknown>): string {
@@ -615,6 +621,20 @@ export type CategoryPatchInput = {
   archived?: boolean;
 };
 
+export type Merchant = {
+  id: string;
+  tenantId: string;
+  canonicalName: string;
+  logoUrl?: string | null;
+  defaultCategoryId?: string | null;
+  industry?: string | null;
+  website?: string | null;
+  notes?: string | null;
+  archivedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export async function fetchCategories(
   tenantId: string,
   opts: { includeArchived?: boolean } = {}
@@ -655,6 +675,18 @@ export async function archiveCategory(
   return request<void>(`/api/v1/t/${tenantId}/categories/${categoryId}`, {
     method: "DELETE",
   });
+}
+
+export async function fetchMerchants(
+  tenantId: string,
+  opts: { includeArchived?: boolean } = {}
+): Promise<Merchant[]> {
+  return request<Merchant[]>(
+    `/api/v1/t/${tenantId}/merchants${buildQuery({
+      includeArchived: opts.includeArchived,
+    })}`,
+    { method: "GET" }
+  );
 }
 
 // ---------------------------------------------------------------------------

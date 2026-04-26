@@ -399,11 +399,17 @@ func (s *Service) Get(ctx context.Context, tenantID, id uuid.UUID) (*Transaction
 // ListFilter bounds the GET /transactions listing.
 type ListFilter struct {
 	AccountID     *uuid.UUID
+	CategoryID    *uuid.UUID
+	MerchantID    *uuid.UUID
 	From          *time.Time
 	To            *time.Time
 	Status        *string
+	Search        *string
+	MinAmount     *decimal.Decimal
+	MaxAmount     *decimal.Decimal
 	Uncategorized bool
 	Limit         int
+	Offset        int
 }
 
 // List returns transactions for tenantID matching f. Ordered by booked_at desc.
@@ -424,6 +430,12 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, f ListFilter) ([
 	if f.AccountID != nil {
 		clauses = append(clauses, "account_id = "+next(*f.AccountID))
 	}
+	if f.CategoryID != nil {
+		clauses = append(clauses, "category_id = "+next(*f.CategoryID))
+	}
+	if f.MerchantID != nil {
+		clauses = append(clauses, "merchant_id = "+next(*f.MerchantID))
+	}
 	if f.From != nil {
 		clauses = append(clauses, "booked_at >= "+next(*f.From))
 	}
@@ -437,6 +449,21 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, f ListFilter) ([
 		}
 		clauses = append(clauses, "status = "+next(status)+"::transaction_status")
 	}
+	if f.Search != nil {
+		search := strings.TrimSpace(*f.Search)
+		if search != "" {
+			needle := "%" + strings.ToLower(search) + "%"
+			clauses = append(clauses, `(lower(coalesce(description, '')) like `+next(needle)+
+				` or lower(coalesce(counterparty_raw, '')) like `+next(needle)+
+				` or lower(coalesce(notes, '')) like `+next(needle)+`)`)
+		}
+	}
+	if f.MinAmount != nil {
+		clauses = append(clauses, "amount >= "+next(f.MinAmount.String())+"::numeric")
+	}
+	if f.MaxAmount != nil {
+		clauses = append(clauses, "amount <= "+next(f.MaxAmount.String())+"::numeric")
+	}
 	if f.Uncategorized {
 		// Uncategorized queue: transaction carries no category and has no
 		// per-line classifications. Split transactions (which have lines)
@@ -446,10 +473,11 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, f ListFilter) ([
 			"category_id is null and not exists (select 1 from transaction_lines tl where tl.transaction_id = transactions.id)")
 	}
 	limitPH := next(f.Limit)
+	offsetPH := next(f.Offset)
 
 	q := `select ` + transactionCols + ` from transactions where ` +
 		strings.Join(clauses, " and ") +
-		` order by booked_at desc, id desc limit ` + limitPH
+		` order by booked_at desc, id desc limit ` + limitPH + ` offset ` + offsetPH
 
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
