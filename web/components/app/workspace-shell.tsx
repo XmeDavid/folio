@@ -2,12 +2,14 @@
 
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import type { Route } from "next";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownUp,
   Banknote,
   Gauge,
+  LogOut,
   Plus,
   ReceiptText,
   Settings,
@@ -18,6 +20,7 @@ import {
 } from "lucide-react";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { Button } from "@/components/ui/button";
+import { logout } from "@/lib/api/client";
 import type { MeWorkspace } from "@/lib/hooks/use-identity";
 import { cn } from "@/lib/utils";
 
@@ -70,6 +73,7 @@ export function WorkspaceShell({
               Record transaction
             </Link>
           </Button>
+          <LogoutButton className="w-full justify-start" />
         </div>
       </aside>
 
@@ -87,6 +91,7 @@ export function WorkspaceShell({
           <div className="hidden text-[12px] text-fg-muted sm:block">
             {workspace.baseCurrency} · day {workspace.cycleAnchorDay}
           </div>
+          <LogoutButton compact className="sm:hidden" />
         </header>
 
         <div className="border-b border-border bg-surface px-3 py-2 lg:hidden">
@@ -100,6 +105,40 @@ export function WorkspaceShell({
         </main>
       </div>
     </div>
+  );
+}
+
+function LogoutButton({
+  compact = false,
+  className,
+}: {
+  compact?: boolean;
+  className?: string;
+}) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: logout,
+    onSettled: async () => {
+      queryClient.setQueryData(["me"], undefined);
+      await queryClient.invalidateQueries({ queryKey: ["me"] });
+      router.replace("/login" as Route);
+    },
+  });
+
+  return (
+    <Button
+      variant="ghost"
+      size={compact ? "icon" : "md"}
+      className={className}
+      onClick={() => mutation.mutate()}
+      disabled={mutation.isPending}
+      aria-label="Sign out"
+      title="Sign out"
+    >
+      <LogOut className="h-4 w-4" />
+      {!compact ? <span>{mutation.isPending ? "Signing out..." : "Sign out"}</span> : null}
+    </Button>
   );
 }
 

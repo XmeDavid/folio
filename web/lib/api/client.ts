@@ -87,6 +87,10 @@ export async function fetchMe(): Promise<Me> {
   return request<Me>("/api/v1/me", { method: "GET" });
 }
 
+export async function logout(): Promise<void> {
+  return request<void>("/api/v1/auth/logout", { method: "POST" });
+}
+
 export type MFAStatus = {
   totpEnrolled: boolean;
   passkeyCount: number;
