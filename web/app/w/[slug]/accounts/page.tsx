@@ -9,6 +9,8 @@ import {
   Archive,
   ArchiveRestore,
   Check,
+  ChevronDown,
+  ChevronRight,
   FileUp,
   FolderPlus,
   GripVertical,
@@ -605,6 +607,9 @@ function AccountList({
     null
   );
   const [draftGroupName, setDraftGroupName] = React.useState("");
+  const [collapsedBuckets, setCollapsedBuckets] = React.useState<Set<string>>(
+    () => new Set()
+  );
   const [dragging, setDragging] = React.useState<
     { type: "group"; id: string } | { type: "account"; id: string } | null
   >(null);
@@ -626,7 +631,9 @@ function AccountList({
   const invalidate = React.useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["accounts", workspaceId] }),
-      queryClient.invalidateQueries({ queryKey: ["account-groups", workspaceId] }),
+      queryClient.invalidateQueries({
+        queryKey: ["account-groups", workspaceId],
+      }),
     ]);
   }, [queryClient, workspaceId]);
 
@@ -698,6 +705,18 @@ function AccountList({
     source.bucket.accounts[source.index] = targetAccount;
     source.bucket.accounts[target] = currentAccount;
     persistOrder(sortedGroups, nextBuckets);
+  };
+
+  const toggleBucket = (key: string) => {
+    setCollapsedBuckets((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
   };
 
   const dropBucket = (targetGroupId: string | null) => {
@@ -803,6 +822,7 @@ function AccountList({
           const groupIndex = bucket.group
             ? sortedGroups.findIndex((group) => group.id === bucket.group?.id)
             : -1;
+          const collapsed = collapsedBuckets.has(bucket.key);
           return (
             <section
               key={bucket.key}
@@ -819,6 +839,28 @@ function AccountList({
                 onDragEnd={() => setDragging(null)}
               >
                 <div className="flex min-w-0 items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      toggleBucket(bucket.key);
+                    }}
+                    aria-expanded={!collapsed}
+                    aria-label={
+                      collapsed
+                        ? `Expand ${bucket.name}`
+                        : `Collapse ${bucket.name}`
+                    }
+                  >
+                    {collapsed ? (
+                      <ChevronRight className="h-4 w-4" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4" />
+                    )}
+                  </Button>
                   {bucket.group ? (
                     <GripVertical className="text-fg-faint h-4 w-4 shrink-0" />
                   ) : null}
@@ -926,39 +968,41 @@ function AccountList({
                   </div>
                 ) : null}
               </div>
-              <ul className="divide-border bg-surface divide-y">
-                {bucket.accounts.map((a, accountIndex) => (
-                  <AccountRow
-                    key={a.id}
-                    account={a}
-                    groups={sortedGroups}
-                    locale={locale}
-                    workspaceId={workspaceId}
-                    dragDisabled={busy}
-                    canMoveUp={accountIndex > 0}
-                    canMoveDown={accountIndex < bucket.accounts.length - 1}
-                    onMoveUp={() => moveAccount(a.id, -1)}
-                    onMoveDown={() => moveAccount(a.id, 1)}
-                    onMoveToGroup={(groupId) =>
-                      moveAccountToGroup(a.id, groupId)
-                    }
-                    onDragStart={() =>
-                      setDragging({ type: "account", id: a.id })
-                    }
-                    onDragEnd={() => setDragging(null)}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={(event) => {
-                      event.stopPropagation();
-                      dropAccount(a);
-                    }}
-                  />
-                ))}
-                {bucket.accounts.length === 0 ? (
-                  <li className="text-fg-muted px-5 py-4 text-[12px]">
-                    Drop accounts here to add them to this group.
-                  </li>
-                ) : null}
-              </ul>
+              {!collapsed ? (
+                <ul className="divide-border bg-surface divide-y">
+                  {bucket.accounts.map((a, accountIndex) => (
+                    <AccountRow
+                      key={a.id}
+                      account={a}
+                      groups={sortedGroups}
+                      locale={locale}
+                      workspaceId={workspaceId}
+                      dragDisabled={busy}
+                      canMoveUp={accountIndex > 0}
+                      canMoveDown={accountIndex < bucket.accounts.length - 1}
+                      onMoveUp={() => moveAccount(a.id, -1)}
+                      onMoveDown={() => moveAccount(a.id, 1)}
+                      onMoveToGroup={(groupId) =>
+                        moveAccountToGroup(a.id, groupId)
+                      }
+                      onDragStart={() =>
+                        setDragging({ type: "account", id: a.id })
+                      }
+                      onDragEnd={() => setDragging(null)}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => {
+                        event.stopPropagation();
+                        dropAccount(a);
+                      }}
+                    />
+                  ))}
+                  {bucket.accounts.length === 0 ? (
+                    <li className="text-fg-muted px-5 py-4 text-[12px]">
+                      Drop accounts here to add them to this group.
+                    </li>
+                  ) : null}
+                </ul>
+              ) : null}
             </section>
           );
         })}
