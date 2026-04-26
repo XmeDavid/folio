@@ -1,6 +1,6 @@
 {{ define "content" -}}
 {{ with .Data -}}
-<p>{{ .InviterName }} invited you to join <strong>{{ .TenantName }}</strong> on Folio as <strong>{{ .Role }}</strong>.</p>
+<p>{{ .InviterName }} invited you to join <strong>{{ .WorkspaceName }}</strong> on Folio as <strong>{{ .Role }}</strong>.</p>
 <p><a href="{{ .AcceptURL }}">Accept invitation</a></p>
 <p>The invite expires in 7 days.</p>
 {{- end }}

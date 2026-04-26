@@ -5,14 +5,14 @@ Folio's data model is documented in full at
 document is the high-level narrative; the spec is the authoritative
 column listing.
 
-## Identity and tenancy
+## Identity and workspace
 
-- **Tenants** own all financial data. Financial rows carry `tenant_id`.
-- **Users** authenticate into a tenant. v1 enforces one user per tenant
-  via `users.tenant_id UNIQUE`.
-- Tenant isolation is enforced by **composite foreign keys** (every
-  tenant-scoped table has `UNIQUE (tenant_id, id)`; every FK from
-  another tenant-scoped table is composite).
+- **Workspaces** own all financial data. Financial rows carry `workspace_id`.
+- **Users** authenticate into a workspace. v1 enforces one user per workspace
+  via `users.workspace_id UNIQUE`.
+- Workspace isolation is enforced by **composite foreign keys** (every
+  workspace-scoped table has `UNIQUE (workspace_id, id)`; every FK from
+  another workspace-scoped table is composite).
 
 ## Money and currency
 
@@ -67,7 +67,7 @@ The schema separates three layers:
 - `provider_connections` holds encrypted tokens for external sources
   (GoCardless, IBKR Flex, crypto addresses).
 - `import_batches` records each file or sync run.
-- Dedupe keys live in `source_refs` (polymorphic, tenant-scoped).
+- Dedupe keys live in `source_refs` (polymorphic, workspace-scoped).
 
 ## Planning, goals, investments, assets, travel, wishlist
 
@@ -79,7 +79,7 @@ The schema separates three layers:
 - **Goals**: hierarchical goals, multi-account allocations, savings
   rules with priority-ordered evaluation.
 - **Investments**: global `instruments` + `instrument_prices`;
-  tenant-scoped trades, lots, lot_consumptions, dividends, corporate
+  workspace-scoped trades, lots, lot_consumptions, dividends, corporate
   actions, and a materialized `investment_positions` cache.
 - **Physical assets & retirement**: `assets` are 1:1 with asset-kind
   accounts; valuations drive networth. `mortgage_schedules` and
@@ -93,7 +93,7 @@ The schema separates three layers:
 
 ## Cross-cutting
 
-- **Attachments**: deduped by `(tenant_id, sha256)`; linked to any
+- **Attachments**: deduped by `(workspace_id, sha256)`; linked to any
   entity via the polymorphic `attachment_links`.
 - **Audit**: `audit_events` is append-only; triggers on every audited
   table record create/update/delete with before/after JSON. Actor is
@@ -110,5 +110,5 @@ The schema separates three layers:
 - A transaction's `category_id` must reference a leaf category
   (trigger).
 - A transaction cannot have both `category_id` and lines (trigger).
-- Tenant isolation is composite-FK-enforced at the DB layer.
+- Workspace isolation is composite-FK-enforced at the DB layer.
 - Archived accounts are excluded from sums by default (query helper).
