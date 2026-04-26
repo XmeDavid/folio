@@ -17,7 +17,7 @@ import (
 // Category is the read-model returned by the API.
 type Category struct {
 	ID         uuid.UUID  `json:"id"`
-	TenantID   uuid.UUID  `json:"tenantId"`
+	WorkspaceID   uuid.UUID  `json:"workspaceId"`
 	ParentID   *uuid.UUID `json:"parentId,omitempty"`
 	Name       string     `json:"name"`
 	Color      *string    `json:"color,omitempty"`
@@ -113,7 +113,7 @@ func (in CategoryPatchInput) normalize() (categoryPatchNormalized, error) {
 }
 
 const categoryCols = `
-	id, tenant_id, parent_id, name, color, sort_order, archived_at, created_at, updated_at
+	id, workspace_id, parent_id, name, color, sort_order, archived_at, created_at, updated_at
 `
 
 type categoryRow interface {
@@ -122,32 +122,32 @@ type categoryRow interface {
 
 func scanCategory(r categoryRow, c *Category) error {
 	return r.Scan(
-		&c.ID, &c.TenantID, &c.ParentID, &c.Name, &c.Color, &c.SortOrder,
+		&c.ID, &c.WorkspaceID, &c.ParentID, &c.Name, &c.Color, &c.SortOrder,
 		&c.ArchivedAt, &c.CreatedAt, &c.UpdatedAt,
 	)
 }
 
-// CreateCategory inserts a category for tenantID and returns it.
-func (s *Service) CreateCategory(ctx context.Context, tenantID uuid.UUID, raw CategoryCreateInput) (*Category, error) {
+// CreateCategory inserts a category for workspaceID and returns it.
+func (s *Service) CreateCategory(ctx context.Context, workspaceID uuid.UUID, raw CategoryCreateInput) (*Category, error) {
 	in, err := raw.normalize()
 	if err != nil {
 		return nil, err
 	}
 
-	// Pre-validate parentId belongs to tenant so we can return a clean 400
+	// Pre-validate parentId belongs to workspace so we can return a clean 400
 	// (the composite FK would otherwise surface as a generic write error).
 	if in.ParentID != nil {
-		if err := s.assertCategoryExists(ctx, tenantID, *in.ParentID); err != nil {
+		if err := s.assertCategoryExists(ctx, workspaceID, *in.ParentID); err != nil {
 			return nil, err
 		}
 	}
 
 	id := uuidx.New()
 	row := s.pool.QueryRow(ctx, `
-		insert into categories (id, tenant_id, parent_id, name, color, sort_order)
+		insert into categories (id, workspace_id, parent_id, name, color, sort_order)
 		values ($1, $2, $3, $4, $5, coalesce($6, 0))
 		returning `+categoryCols,
-		id, tenantID, in.ParentID, in.Name, in.Color, in.SortOrder,
+		id, workspaceID, in.ParentID, in.Name, in.Color, in.SortOrder,
 	)
 	var c Category
 	if err := scanCategory(row, &c); err != nil {
@@ -157,32 +157,32 @@ func (s *Service) CreateCategory(ctx context.Context, tenantID uuid.UUID, raw Ca
 }
 
 // assertCategoryExists returns a clean validation/not-found error when
-// categoryID is missing for tenantID. Used by Create/Update to pre-validate
+// categoryID is missing for workspaceID. Used by Create/Update to pre-validate
 // parentId and by the merchants path to pre-validate defaultCategoryId.
-func (s *Service) assertCategoryExists(ctx context.Context, tenantID, categoryID uuid.UUID) error {
+func (s *Service) assertCategoryExists(ctx context.Context, workspaceID, categoryID uuid.UUID) error {
 	var exists bool
 	err := s.pool.QueryRow(ctx, `
-		select true from categories where tenant_id = $1 and id = $2
-	`, tenantID, categoryID).Scan(&exists)
+		select true from categories where workspace_id = $1 and id = $2
+	`, workspaceID, categoryID).Scan(&exists)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return httpx.NewValidationError("referenced category does not exist for this tenant")
+			return httpx.NewValidationError("referenced category does not exist for this workspace")
 		}
 		return fmt.Errorf("check category: %w", err)
 	}
 	return nil
 }
 
-// ListCategories returns categories for tenantID. Archived rows are excluded
+// ListCategories returns categories for workspaceID. Archived rows are excluded
 // unless includeArchived is true.
-func (s *Service) ListCategories(ctx context.Context, tenantID uuid.UUID, includeArchived bool) ([]Category, error) {
-	q := `select ` + categoryCols + ` from categories where tenant_id = $1`
+func (s *Service) ListCategories(ctx context.Context, workspaceID uuid.UUID, includeArchived bool) ([]Category, error) {
+	q := `select ` + categoryCols + ` from categories where workspace_id = $1`
 	if !includeArchived {
 		q += ` and archived_at is null`
 	}
 	q += ` order by sort_order, name`
 
-	rows, err := s.pool.Query(ctx, q, tenantID)
+	rows, err := s.pool.Query(ctx, q, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("query categories: %w", err)
 	}
@@ -201,11 +201,11 @@ func (s *Service) ListCategories(ctx context.Context, tenantID uuid.UUID, includ
 	return out, nil
 }
 
-// GetCategory returns a single category scoped to tenantID.
-func (s *Service) GetCategory(ctx context.Context, tenantID, id uuid.UUID) (*Category, error) {
+// GetCategory returns a single category scoped to workspaceID.
+func (s *Service) GetCategory(ctx context.Context, workspaceID, id uuid.UUID) (*Category, error) {
 	row := s.pool.QueryRow(ctx,
-		`select `+categoryCols+` from categories where tenant_id = $1 and id = $2`,
-		tenantID, id)
+		`select `+categoryCols+` from categories where workspace_id = $1 and id = $2`,
+		workspaceID, id)
 	var c Category
 	if err := scanCategory(row, &c); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -217,25 +217,25 @@ func (s *Service) GetCategory(ctx context.Context, tenantID, id uuid.UUID) (*Cat
 }
 
 // UpdateCategory applies a PATCH to a category and returns the result.
-func (s *Service) UpdateCategory(ctx context.Context, tenantID, id uuid.UUID, raw CategoryPatchInput) (*Category, error) {
+func (s *Service) UpdateCategory(ctx context.Context, workspaceID, id uuid.UUID, raw CategoryPatchInput) (*Category, error) {
 	p, err := raw.normalize()
 	if err != nil {
 		return nil, err
 	}
 
-	// Pre-validate parentId belongs to tenant (and not the category itself)
+	// Pre-validate parentId belongs to workspace (and not the category itself)
 	// before hitting the DB, so the API returns a clean 400.
 	if p.parentIDSet && !p.parentIDNull {
 		if p.parentID == id {
 			return nil, httpx.NewValidationError("category cannot be its own parent")
 		}
-		if err := s.assertCategoryExists(ctx, tenantID, p.parentID); err != nil {
+		if err := s.assertCategoryExists(ctx, workspaceID, p.parentID); err != nil {
 			return nil, err
 		}
 	}
 
 	sets := make([]string, 0, 6)
-	args := []any{tenantID, id}
+	args := []any{workspaceID, id}
 	next := func(v any) string {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
@@ -270,12 +270,12 @@ func (s *Service) UpdateCategory(ctx context.Context, tenantID, id uuid.UUID, ra
 	}
 
 	if len(sets) == 0 {
-		return s.GetCategory(ctx, tenantID, id)
+		return s.GetCategory(ctx, workspaceID, id)
 	}
 
 	q := fmt.Sprintf(`
 		update categories set %s
-		where tenant_id = $1 and id = $2
+		where workspace_id = $1 and id = $2
 		returning %s
 	`, strings.Join(sets, ", "), categoryCols)
 
@@ -291,13 +291,13 @@ func (s *Service) UpdateCategory(ctx context.Context, tenantID, id uuid.UUID, ra
 }
 
 // ArchiveCategory sets archived_at = now() for the category, idempotently.
-// Returns NotFoundError only when the row does not exist for tenantID.
-func (s *Service) ArchiveCategory(ctx context.Context, tenantID, id uuid.UUID) error {
+// Returns NotFoundError only when the row does not exist for workspaceID.
+func (s *Service) ArchiveCategory(ctx context.Context, workspaceID, id uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx, `
 		update categories
 		set archived_at = coalesce(archived_at, $3)
-		where tenant_id = $1 and id = $2
-	`, tenantID, id, s.now().UTC())
+		where workspace_id = $1 and id = $2
+	`, workspaceID, id, s.now().UTC())
 	if err != nil {
 		return fmt.Errorf("archive category: %w", err)
 	}

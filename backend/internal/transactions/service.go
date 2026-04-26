@@ -50,7 +50,7 @@ const dateOnly = "2006-01-02"
 // Transaction is the read-model representation returned by the API.
 type Transaction struct {
 	ID               uuid.UUID  `json:"id"`
-	TenantID         uuid.UUID  `json:"tenantId"`
+	WorkspaceID         uuid.UUID  `json:"workspaceId"`
 	AccountID        uuid.UUID  `json:"accountId"`
 	Status           string     `json:"status"`
 	BookedAt         time.Time  `json:"bookedAt"`
@@ -89,7 +89,7 @@ type CreateInput struct {
 
 // normalize trims, validates, and applies defaults to a CreateInput. Pure
 // function — tested without the database. It does NOT verify that account_id
-// belongs to the tenant or that currency matches the account (Service.Create
+// belongs to the workspace or that currency matches the account (Service.Create
 // does that against live data).
 func (in CreateInput) normalize() (CreateInput, error) {
 	if in.AccountID == uuid.Nil {
@@ -334,8 +334,8 @@ func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
 
 // Create inserts a new transaction. Returns 400 (ValidationError) when the
 // transaction currency does not match the account currency and 404 when the
-// account does not exist for the tenant.
-func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, raw CreateInput) (*Transaction, error) {
+// account does not exist for the workspace.
+func (s *Service) Create(ctx context.Context, workspaceID uuid.UUID, raw CreateInput) (*Transaction, error) {
 	in, err := raw.normalize()
 	if err != nil {
 		return nil, err
@@ -345,8 +345,8 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, raw CreateInpu
 	// than leaking the composite-FK or trigger exception text.
 	var accountCurrency string
 	err = s.pool.QueryRow(ctx, `
-		select currency from accounts where tenant_id = $1 and id = $2
-	`, tenantID, in.AccountID).Scan(&accountCurrency)
+		select currency from accounts where workspace_id = $1 and id = $2
+	`, workspaceID, in.AccountID).Scan(&accountCurrency)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("account")
@@ -361,7 +361,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, raw CreateInpu
 	id := uuidx.New()
 	t, err := s.scanTransaction(ctx, s.pool, `
 		insert into transactions (
-			id, tenant_id, account_id, status, booked_at, value_at, posted_at,
+			id, workspace_id, account_id, status, booked_at, value_at, posted_at,
 			amount, currency, merchant_id, category_id,
 			counterparty_raw, description, notes, count_as_expense
 		) values (
@@ -369,7 +369,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, raw CreateInpu
 			$8::numeric, $9, $10, $11,
 			$12, $13, $14, $15
 		)
-		returning `+transactionCols, id, tenantID, in.AccountID, in.Status,
+		returning `+transactionCols, id, workspaceID, in.AccountID, in.Status,
 		in.BookedAt, in.ValueAt, in.PostedAt,
 		in.Amount.String(), in.Currency, in.MerchantID, in.CategoryID,
 		in.CounterpartyRaw, in.Description, in.Notes, in.CountAsExpense,
@@ -380,13 +380,13 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, raw CreateInpu
 	return t, nil
 }
 
-// Get returns a single transaction by id, scoped to tenantID.
-func (s *Service) Get(ctx context.Context, tenantID, id uuid.UUID) (*Transaction, error) {
+// Get returns a single transaction by id, scoped to workspaceID.
+func (s *Service) Get(ctx context.Context, workspaceID, id uuid.UUID) (*Transaction, error) {
 	t, err := s.scanTransaction(ctx, s.pool, `
 		select `+transactionCols+`
 		from transactions
-		where tenant_id = $1 and id = $2
-	`, tenantID, id)
+		where workspace_id = $1 and id = $2
+	`, workspaceID, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("transaction")
@@ -412,8 +412,8 @@ type ListFilter struct {
 	Offset        int
 }
 
-// List returns transactions for tenantID matching f. Ordered by booked_at desc.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID, f ListFilter) ([]Transaction, error) {
+// List returns transactions for workspaceID matching f. Ordered by booked_at desc.
+func (s *Service) List(ctx context.Context, workspaceID uuid.UUID, f ListFilter) ([]Transaction, error) {
 	if f.Limit <= 0 {
 		f.Limit = DefaultListLimit
 	}
@@ -421,8 +421,8 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, f ListFilter) ([
 		f.Limit = MaxListLimit
 	}
 
-	args := []any{tenantID}
-	clauses := []string{"tenant_id = $1"}
+	args := []any{workspaceID}
+	clauses := []string{"workspace_id = $1"}
 	next := func(v any) string {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
@@ -501,7 +501,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, f ListFilter) ([
 
 // Update applies a PATCH to a transaction. Returns the updated Transaction.
 // accountId is intentionally immutable in this slice.
-func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, raw PatchInput) (*Transaction, error) {
+func (s *Service) Update(ctx context.Context, workspaceID, id uuid.UUID, raw PatchInput) (*Transaction, error) {
 	p, err := raw.normalize()
 	if err != nil {
 		return nil, err
@@ -509,7 +509,7 @@ func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, raw PatchI
 
 	// Load the existing row to enforce cross-field invariants before hitting
 	// the DB trigger (currency must match account currency).
-	existing, err := s.Get(ctx, tenantID, id)
+	existing, err := s.Get(ctx, workspaceID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -517,8 +517,8 @@ func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, raw PatchI
 	if p.currencySet {
 		var accountCurrency string
 		err := s.pool.QueryRow(ctx, `
-			select currency from accounts where tenant_id = $1 and id = $2
-		`, tenantID, existing.AccountID).Scan(&accountCurrency)
+			select currency from accounts where workspace_id = $1 and id = $2
+		`, workspaceID, existing.AccountID).Scan(&accountCurrency)
 		if err != nil {
 			return nil, fmt.Errorf("load account: %w", err)
 		}
@@ -529,7 +529,7 @@ func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, raw PatchI
 	}
 
 	sets := make([]string, 0, 12)
-	args := []any{tenantID, id}
+	args := []any{workspaceID, id}
 	next := func(v any) string {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
@@ -610,7 +610,7 @@ func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, raw PatchI
 
 	q := fmt.Sprintf(`
 		update transactions set %s
-		where tenant_id = $1 and id = $2
+		where workspace_id = $1 and id = $2
 		returning %s
 	`, strings.Join(sets, ", "), transactionCols)
 
@@ -625,9 +625,9 @@ func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, raw PatchI
 }
 
 // Delete hard-deletes a transaction. Returns NotFoundError when no row
-// matches (tenantID, id).
-func (s *Service) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
-	tag, err := s.pool.Exec(ctx, `delete from transactions where tenant_id = $1 and id = $2`, tenantID, id)
+// matches (workspaceID, id).
+func (s *Service) Delete(ctx context.Context, workspaceID, id uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx, `delete from transactions where workspace_id = $1 and id = $2`, workspaceID, id)
 	if err != nil {
 		return fmt.Errorf("delete transaction: %w", err)
 	}
@@ -640,7 +640,7 @@ func (s *Service) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 // transactionCols is the canonical SELECT/RETURNING column list so that
 // scanTransaction/scanRow can stay in lock-step.
 const transactionCols = `
-	id, tenant_id, account_id, status::text, booked_at, value_at, posted_at,
+	id, workspace_id, account_id, status::text, booked_at, value_at, posted_at,
 	amount::text, currency, original_amount::text, original_currency::text,
 	merchant_id, category_id, counterparty_raw, description, notes,
 	count_as_expense, created_at, updated_at
@@ -663,7 +663,7 @@ type rowScanner interface{ Scan(dest ...any) error }
 
 func scanRow(r rowScanner, t *Transaction) error {
 	return r.Scan(
-		&t.ID, &t.TenantID, &t.AccountID, &t.Status,
+		&t.ID, &t.WorkspaceID, &t.AccountID, &t.Status,
 		&t.BookedAt, &t.ValueAt, &t.PostedAt,
 		&t.Amount, &t.Currency, &t.OriginalAmount, &t.OriginalCurrency,
 		&t.MerchantID, &t.CategoryID,
@@ -682,7 +682,7 @@ func mapInsertError(err error) error {
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "23503": // foreign_key_violation
-			return httpx.NewValidationError("referenced entity does not exist for this tenant")
+			return httpx.NewValidationError("referenced entity does not exist for this workspace")
 		case "23514": // check_violation
 			return httpx.NewValidationError(pgErr.Message)
 		case "P0001": // raise_exception from triggers (currency mismatch, leaf, etc.)

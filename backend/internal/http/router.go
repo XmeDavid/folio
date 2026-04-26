@@ -88,7 +88,7 @@ func NewRouter(d Deps) http.Handler {
 		// POST /auth/invites/{token}/accept (RequireSession).
 		inviteH.MountPublicInvites(r)
 
-		// Authenticated, non-tenant-scoped: /me, POST /tenants
+		// Authenticated, non-workspace-scoped: /me, POST /workspaces
 		r.Group(func(r chi.Router) {
 			r.Use(authSvc.RequireSession)
 			authH.MountAuthed(r)
@@ -100,19 +100,19 @@ func NewRouter(d Deps) http.Handler {
 			adminH.Mount(r, auth.RequireFreshReauth(authSvc.Config().ReauthWindow))
 		})
 
-		// Restore is tenant-scoped but must see soft-deleted tenants, so it
+		// Restore is workspace-scoped but must see soft-deleted workspaces, so it
 		// cannot sit behind RequireMembership (which hides deleted rows).
-		r.With(authSvc.RequireSession, auth.RequireFreshReauth(authSvc.Config().ReauthWindow), authSvc.RequireTenantOwnerIncludingDeleted).
-			Post("/t/{tenantId}/restore", authH.RestoreTenant)
+		r.With(authSvc.RequireSession, auth.RequireFreshReauth(authSvc.Config().ReauthWindow), authSvc.RequireWorkspaceOwnerIncludingDeleted).
+			Post("/t/{workspaceId}/restore", authH.RestoreWorkspace)
 
-		// Tenant-scoped active-tenant routes: /api/v1/t/{tenantId}/...
-		r.Route("/t/{tenantId}", func(r chi.Router) {
+		// Workspace-scoped active-workspace routes: /api/v1/t/{workspaceId}/...
+		r.Route("/t/{workspaceId}", func(r chi.Router) {
 			r.Use(authSvc.RequireSession)
 			r.Use(authSvc.RequireMembership)
 
-			authH.MountTenantScoped(r) // /members
-			authH.MountTenantAdmin(r)  // PATCH /, DELETE / — owner-gated
-			r.With(authSvc.RequireEmailVerified).Route("/invites", inviteH.MountTenantInvites)
+			authH.MountWorkspaceScoped(r) // /members
+			authH.MountWorkspaceAdmin(r)  // PATCH /, DELETE / — owner-gated
+			r.With(authSvc.RequireEmailVerified).Route("/invites", inviteH.MountWorkspaceInvites)
 
 			r.Route("/accounts", func(r chi.Router) {
 				importH.MountAccountRoutes(r)

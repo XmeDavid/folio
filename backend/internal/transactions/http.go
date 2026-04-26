@@ -23,7 +23,7 @@ type Handler struct {
 // NewHandler returns a Handler for svc.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-// Mount installs the routes under a tenant-scoped subrouter rooted at
+// Mount installs the routes under a workspace-scoped subrouter rooted at
 // /transactions.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/", h.list)
@@ -65,7 +65,7 @@ type patchReq struct {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 
 	q := r.URL.Query()
 	f := ListFilter{}
@@ -154,7 +154,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		f.Offset = n
 	}
 
-	res, err := h.svc.List(r.Context(), tenantID, f)
+	res, err := h.svc.List(r.Context(), workspaceID, f)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -163,7 +163,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	var req createReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
@@ -246,7 +246,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		in.MerchantID = &id
 	}
 
-	res, err := h.svc.Create(r.Context(), tenantID, in)
+	res, err := h.svc.Create(r.Context(), workspaceID, in)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -255,13 +255,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	id, err := uuid.Parse(chi.URLParam(r, "transactionId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "transactionId must be a UUID")
 		return
 	}
-	res, err := h.svc.Get(r.Context(), tenantID, id)
+	res, err := h.svc.Get(r.Context(), workspaceID, id)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -270,7 +270,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	id, err := uuid.Parse(chi.URLParam(r, "transactionId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "transactionId must be a UUID")
@@ -295,7 +295,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		Notes:           req.Notes,
 		CountAsExpense:  req.CountAsExpense,
 	}
-	res, err := h.svc.Update(r.Context(), tenantID, id, in)
+	res, err := h.svc.Update(r.Context(), workspaceID, id, in)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -304,13 +304,13 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	id, err := uuid.Parse(chi.URLParam(r, "transactionId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "transactionId must be a UUID")
 		return
 	}
-	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.Delete(r.Context(), workspaceID, id); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}

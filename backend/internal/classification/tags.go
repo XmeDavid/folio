@@ -17,7 +17,7 @@ import (
 // Tag is the read-model returned by the API.
 type Tag struct {
 	ID         uuid.UUID  `json:"id"`
-	TenantID   uuid.UUID  `json:"tenantId"`
+	WorkspaceID   uuid.UUID  `json:"workspaceId"`
 	Name       string     `json:"name"`
 	Color      *string    `json:"color,omitempty"`
 	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
@@ -83,27 +83,27 @@ func (in TagPatchInput) normalize() (tagPatchNormalized, error) {
 }
 
 const tagCols = `
-	id, tenant_id, name, color, archived_at, created_at, updated_at
+	id, workspace_id, name, color, archived_at, created_at, updated_at
 `
 
 func scanTag(r interface{ Scan(dest ...any) error }, t *Tag) error {
 	return r.Scan(
-		&t.ID, &t.TenantID, &t.Name, &t.Color, &t.ArchivedAt, &t.CreatedAt, &t.UpdatedAt,
+		&t.ID, &t.WorkspaceID, &t.Name, &t.Color, &t.ArchivedAt, &t.CreatedAt, &t.UpdatedAt,
 	)
 }
 
-// CreateTag inserts a tag for tenantID and returns it.
-func (s *Service) CreateTag(ctx context.Context, tenantID uuid.UUID, raw TagCreateInput) (*Tag, error) {
+// CreateTag inserts a tag for workspaceID and returns it.
+func (s *Service) CreateTag(ctx context.Context, workspaceID uuid.UUID, raw TagCreateInput) (*Tag, error) {
 	in, err := raw.normalize()
 	if err != nil {
 		return nil, err
 	}
 	id := uuidx.New()
 	row := s.pool.QueryRow(ctx, `
-		insert into tags (id, tenant_id, name, color)
+		insert into tags (id, workspace_id, name, color)
 		values ($1, $2, $3, $4)
 		returning `+tagCols,
-		id, tenantID, in.Name, in.Color,
+		id, workspaceID, in.Name, in.Color,
 	)
 	var t Tag
 	if err := scanTag(row, &t); err != nil {
@@ -112,16 +112,16 @@ func (s *Service) CreateTag(ctx context.Context, tenantID uuid.UUID, raw TagCrea
 	return &t, nil
 }
 
-// ListTags returns tags for tenantID. Archived rows are excluded unless
+// ListTags returns tags for workspaceID. Archived rows are excluded unless
 // includeArchived is true.
-func (s *Service) ListTags(ctx context.Context, tenantID uuid.UUID, includeArchived bool) ([]Tag, error) {
-	q := `select ` + tagCols + ` from tags where tenant_id = $1`
+func (s *Service) ListTags(ctx context.Context, workspaceID uuid.UUID, includeArchived bool) ([]Tag, error) {
+	q := `select ` + tagCols + ` from tags where workspace_id = $1`
 	if !includeArchived {
 		q += ` and archived_at is null`
 	}
 	q += ` order by name`
 
-	rows, err := s.pool.Query(ctx, q, tenantID)
+	rows, err := s.pool.Query(ctx, q, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("query tags: %w", err)
 	}
@@ -140,11 +140,11 @@ func (s *Service) ListTags(ctx context.Context, tenantID uuid.UUID, includeArchi
 	return out, nil
 }
 
-// GetTag returns a single tag scoped to tenantID.
-func (s *Service) GetTag(ctx context.Context, tenantID, id uuid.UUID) (*Tag, error) {
+// GetTag returns a single tag scoped to workspaceID.
+func (s *Service) GetTag(ctx context.Context, workspaceID, id uuid.UUID) (*Tag, error) {
 	row := s.pool.QueryRow(ctx,
-		`select `+tagCols+` from tags where tenant_id = $1 and id = $2`,
-		tenantID, id)
+		`select `+tagCols+` from tags where workspace_id = $1 and id = $2`,
+		workspaceID, id)
 	var t Tag
 	if err := scanTag(row, &t); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -156,14 +156,14 @@ func (s *Service) GetTag(ctx context.Context, tenantID, id uuid.UUID) (*Tag, err
 }
 
 // UpdateTag applies a PATCH and returns the result.
-func (s *Service) UpdateTag(ctx context.Context, tenantID, id uuid.UUID, raw TagPatchInput) (*Tag, error) {
+func (s *Service) UpdateTag(ctx context.Context, workspaceID, id uuid.UUID, raw TagPatchInput) (*Tag, error) {
 	p, err := raw.normalize()
 	if err != nil {
 		return nil, err
 	}
 
 	sets := make([]string, 0, 3)
-	args := []any{tenantID, id}
+	args := []any{workspaceID, id}
 	next := func(v any) string {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
@@ -188,12 +188,12 @@ func (s *Service) UpdateTag(ctx context.Context, tenantID, id uuid.UUID, raw Tag
 	}
 
 	if len(sets) == 0 {
-		return s.GetTag(ctx, tenantID, id)
+		return s.GetTag(ctx, workspaceID, id)
 	}
 
 	q := fmt.Sprintf(`
 		update tags set %s
-		where tenant_id = $1 and id = $2
+		where workspace_id = $1 and id = $2
 		returning %s
 	`, strings.Join(sets, ", "), tagCols)
 
@@ -209,12 +209,12 @@ func (s *Service) UpdateTag(ctx context.Context, tenantID, id uuid.UUID, raw Tag
 }
 
 // ArchiveTag sets archived_at = now() idempotently.
-func (s *Service) ArchiveTag(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *Service) ArchiveTag(ctx context.Context, workspaceID, id uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx, `
 		update tags
 		set archived_at = coalesce(archived_at, $3)
-		where tenant_id = $1 and id = $2
-	`, tenantID, id, s.now().UTC())
+		where workspace_id = $1 and id = $2
+	`, workspaceID, id, s.now().UTC())
 	if err != nil {
 		return fmt.Errorf("archive tag: %w", err)
 	}

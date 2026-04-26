@@ -93,7 +93,7 @@ func NewService(pool *pgxpool.Pool, identitySvc *identity.Service, cfg Config) *
 	})
 	if err != nil {
 		// Don't fail-fast: webauthn is only required for passkey-using
-		// tenants. But we must surface the misconfiguration loudly so a
+		// workspaces. But we must surface the misconfiguration loudly so a
 		// bad RPID/origin doesn't silently disable passkey login.
 		slog.Default().Error("webauthn init failed; passkey flows disabled",
 			"err", err, "rpid", cfg.WebAuthnRPID, "origins", cfg.WebAuthnOrigins)

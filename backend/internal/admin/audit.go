@@ -18,7 +18,7 @@ type auditCursor struct {
 
 type AuditEvent struct {
 	ID          uuid.UUID       `json:"id"`
-	TenantID    *uuid.UUID      `json:"tenantId,omitempty"`
+	WorkspaceID    *uuid.UUID      `json:"workspaceId,omitempty"`
 	ActorUserID *uuid.UUID      `json:"actorUserId,omitempty"`
 	EntityType  string          `json:"entityType"`
 	EntityID    uuid.UUID       `json:"entityId"`
@@ -38,18 +38,18 @@ func (s *Service) ListAudit(ctx context.Context, filter AuditFilter, actorUserID
 	}
 	action := strings.TrimSpace(filter.Action)
 	rows, err := s.pool.Query(ctx, `
-		select id, tenant_id, actor_user_id, entity_type, entity_id, action,
+		select id, workspace_id, actor_user_id, entity_type, entity_id, action,
 		       before_jsonb, after_jsonb, occurred_at
 		from audit_events
 		where ($1::uuid is null or actor_user_id = $1)
-		  and ($2::uuid is null or tenant_id = $2)
+		  and ($2::uuid is null or workspace_id = $2)
 		  and ($3::text = '' or action like $3 || '%')
 		  and ($4::timestamptz is null or occurred_at >= $4)
 		  and ($5::timestamptz is null or occurred_at <= $5)
 		  and ($6::timestamptz is null or (occurred_at, id) < ($6, $7))
 		order by occurred_at desc, id desc
 		limit $8
-	`, filter.ActorUserID, filter.TenantID, action, filter.Since, filter.Until, nullTime(cur.OccurredAt), nullUUID(cur.ID), filter.Limit+1)
+	`, filter.ActorUserID, filter.WorkspaceID, action, filter.Since, filter.Until, nullTime(cur.OccurredAt), nullUUID(cur.ID), filter.Limit+1)
 	if err != nil {
 		return nil, Pagination{}, err
 	}
@@ -57,7 +57,7 @@ func (s *Service) ListAudit(ctx context.Context, filter AuditFilter, actorUserID
 	events := make([]AuditEvent, 0, filter.Limit)
 	for rows.Next() {
 		var e AuditEvent
-		if err := rows.Scan(&e.ID, &e.TenantID, &e.ActorUserID, &e.EntityType, &e.EntityID, &e.Action, &e.BeforeJSONB, &e.AfterJSONB, &e.OccurredAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.WorkspaceID, &e.ActorUserID, &e.EntityType, &e.EntityID, &e.Action, &e.BeforeJSONB, &e.AfterJSONB, &e.OccurredAt); err != nil {
 			return nil, Pagination{}, err
 		}
 		events = append(events, e)
@@ -71,7 +71,7 @@ func (s *Service) ListAudit(ctx context.Context, filter AuditFilter, actorUserID
 	}
 	_ = s.writeAdminAuditRow(ctx, "admin.viewed_audit", actorUserID, "audit", uuid.New(), nil, map[string]any{
 		"actorUserId": filter.ActorUserID,
-		"tenantId":    filter.TenantID,
+		"workspaceId":    filter.WorkspaceID,
 		"action":      action,
 		"since":       filter.Since,
 		"until":       filter.Until,

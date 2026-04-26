@@ -28,7 +28,7 @@ func (f AdminListFilter) Normalize() AdminListFilter {
 	return f
 }
 
-type TenantListFilter struct {
+type WorkspaceListFilter struct {
 	AdminListFilter
 	Search         string
 	IncludeDeleted bool
@@ -43,7 +43,7 @@ type UserListFilter struct {
 type AuditFilter struct {
 	AdminListFilter
 	ActorUserID *uuid.UUID
-	TenantID    *uuid.UUID
+	WorkspaceID    *uuid.UUID
 	Action      string
 	Since       *time.Time
 	Until       *time.Time

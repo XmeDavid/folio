@@ -12,8 +12,8 @@ import (
 	"github.com/xmedavid/folio/backend/internal/identity"
 )
 
-// RequireMembership extracts `{tenantId}` from the URL, verifies membership,
-// attaches Tenant + Role to context. 404 on miss (spec §4.5).
+// RequireMembership extracts `{workspaceId}` from the URL, verifies membership,
+// attaches Workspace + Role to context. 404 on miss (spec §4.5).
 func (s *Service) RequireMembership(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := UserFromCtx(r.Context())
@@ -21,24 +21,24 @@ func (s *Service) RequireMembership(next http.Handler) http.Handler {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
 			return
 		}
-		raw := chi.URLParam(r, "tenantId")
+		raw := chi.URLParam(r, "workspaceId")
 		tid, err := uuid.Parse(raw)
 		if err != nil {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
 			return
 		}
 
-		var tenant identity.Tenant
+		var workspace identity.Workspace
 		var role identity.Role
 		err = s.pool.QueryRow(r.Context(), `
 			select t.id, t.name, t.slug, t.base_currency, t.cycle_anchor_day,
 			       t.locale, t.timezone, t.deleted_at, t.created_at, m.role
-			from tenants t
-			join tenant_memberships m on m.tenant_id = t.id
+			from workspaces t
+			join workspace_memberships m on m.workspace_id = t.id
 			where t.id = $1 and m.user_id = $2 and t.deleted_at is null
-		`, tid, user.ID).Scan(&tenant.ID, &tenant.Name, &tenant.Slug, &tenant.BaseCurrency,
-			&tenant.CycleAnchorDay, &tenant.Locale, &tenant.Timezone, &tenant.DeletedAt,
-			&tenant.CreatedAt, &role)
+		`, tid, user.ID).Scan(&workspace.ID, &workspace.Name, &workspace.Slug, &workspace.BaseCurrency,
+			&workspace.CycleAnchorDay, &workspace.Locale, &workspace.Timezone, &workspace.DeletedAt,
+			&workspace.CreatedAt, &role)
 		if err != nil && errors.Is(err, pgx.ErrNoRows) {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
 			return
@@ -48,41 +48,41 @@ func (s *Service) RequireMembership(next http.Handler) http.Handler {
 			return
 		}
 
-		ctx := WithTenant(r.Context(), tenant)
+		ctx := WithWorkspace(r.Context(), workspace)
 		ctx = WithRole(ctx, role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-// RequireTenantOwnerIncludingDeleted verifies that the authenticated user is
-// an owner of `{tenantId}` and attaches the tenant even when it is soft-deleted.
+// RequireWorkspaceOwnerIncludingDeleted verifies that the authenticated user is
+// an owner of `{workspaceId}` and attaches the workspace even when it is soft-deleted.
 // This is intentionally narrower than RequireMembership: it exists for
-// restore, where the active-tenant middleware would hide the row.
-func (s *Service) RequireTenantOwnerIncludingDeleted(next http.Handler) http.Handler {
+// restore, where the active-workspace middleware would hide the row.
+func (s *Service) RequireWorkspaceOwnerIncludingDeleted(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := UserFromCtx(r.Context())
 		if !ok {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
 			return
 		}
-		raw := chi.URLParam(r, "tenantId")
+		raw := chi.URLParam(r, "workspaceId")
 		tid, err := uuid.Parse(raw)
 		if err != nil {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
 			return
 		}
 
-		var tenant identity.Tenant
+		var workspace identity.Workspace
 		var role identity.Role
 		err = s.pool.QueryRow(r.Context(), `
 			select t.id, t.name, t.slug, t.base_currency, t.cycle_anchor_day,
 			       t.locale, t.timezone, t.deleted_at, t.created_at, m.role
-			from tenants t
-			join tenant_memberships m on m.tenant_id = t.id
+			from workspaces t
+			join workspace_memberships m on m.workspace_id = t.id
 			where t.id = $1 and m.user_id = $2 and m.role = 'owner'
-		`, tid, user.ID).Scan(&tenant.ID, &tenant.Name, &tenant.Slug, &tenant.BaseCurrency,
-			&tenant.CycleAnchorDay, &tenant.Locale, &tenant.Timezone, &tenant.DeletedAt,
-			&tenant.CreatedAt, &role)
+		`, tid, user.ID).Scan(&workspace.ID, &workspace.Name, &workspace.Slug, &workspace.BaseCurrency,
+			&workspace.CycleAnchorDay, &workspace.Locale, &workspace.Timezone, &workspace.DeletedAt,
+			&workspace.CreatedAt, &role)
 		if err != nil && errors.Is(err, pgx.ErrNoRows) {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
 			return
@@ -92,7 +92,7 @@ func (s *Service) RequireTenantOwnerIncludingDeleted(next http.Handler) http.Han
 			return
 		}
 
-		ctx := WithTenant(r.Context(), tenant)
+		ctx := WithWorkspace(r.Context(), workspace)
 		ctx = WithRole(ctx, role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

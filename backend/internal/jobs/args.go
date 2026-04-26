@@ -9,6 +9,6 @@ type SendEmailArgs struct {
 
 func (SendEmailArgs) Kind() string { return "send_email" }
 
-type SweepSoftDeletedTenantsArgs struct{}
+type SweepSoftDeletedWorkspacesArgs struct{}
 
-func (SweepSoftDeletedTenantsArgs) Kind() string { return "sweep_soft_deleted_tenants" }
+func (SweepSoftDeletedWorkspacesArgs) Kind() string { return "sweep_soft_deleted_workspaces" }

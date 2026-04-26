@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Role is the per-tenant membership role. Matches the Postgres `tenant_role` enum.
+// Role is the per-workspace membership role. Matches the Postgres `workspace_role` enum.
 type Role string
 
 const (
@@ -17,8 +17,8 @@ const (
 // Valid reports whether r is a known role.
 func (r Role) Valid() bool { return r == RoleOwner || r == RoleMember }
 
-// Tenant is the wire/read-model shape of a tenant row.
-type Tenant struct {
+// Workspace is the wire/read-model shape of a workspace row.
+type Workspace struct {
 	ID             uuid.UUID  `json:"id"`
 	Name           string     `json:"name"`
 	Slug           string     `json:"slug"`
@@ -37,20 +37,20 @@ type User struct {
 	DisplayName     string     `json:"displayName"`
 	EmailVerifiedAt *time.Time `json:"emailVerifiedAt,omitempty"`
 	IsAdmin         bool       `json:"isAdmin"`
-	LastTenantID    *uuid.UUID `json:"lastTenantId,omitempty"`
+	LastWorkspaceID    *uuid.UUID `json:"lastWorkspaceId,omitempty"`
 	CreatedAt       time.Time  `json:"createdAt"`
 }
 
-// Membership is a (tenant, user, role) triple.
+// Membership is a (workspace, user, role) triple.
 type Membership struct {
-	TenantID  uuid.UUID `json:"tenantId"`
+	WorkspaceID  uuid.UUID `json:"workspaceId"`
 	UserID    uuid.UUID `json:"userId"`
 	Role      Role      `json:"role"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
 // MemberWithUser is a Membership enriched with the user's display fields.
-// Returned by Service.ListMembers so the tenant members page in Plan 2
+// Returned by Service.ListMembers so the workspace members page in Plan 2
 // renders email + name in one round-trip.
 type MemberWithUser struct {
 	Membership
@@ -75,9 +75,9 @@ type MembersResponse struct {
 	PendingInvites []PendingInvite  `json:"pendingInvites"`
 }
 
-// TenantWithRole attaches the caller's role on a tenant for the /me response.
-type TenantWithRole struct {
-	Tenant
+// WorkspaceWithRole attaches the caller's role on a workspace for the /me response.
+type WorkspaceWithRole struct {
+	Workspace
 	Role Role `json:"role"`
 }
 
@@ -85,7 +85,7 @@ type TenantWithRole struct {
 // Plan 1 leaves it unused.
 type Invite struct {
 	ID              uuid.UUID  `json:"id"`
-	TenantID        uuid.UUID  `json:"tenantId"`
+	WorkspaceID        uuid.UUID  `json:"workspaceId"`
 	Email           string     `json:"email"`
 	Role            Role       `json:"role"`
 	InvitedByUserID uuid.UUID  `json:"invitedByUserId"`

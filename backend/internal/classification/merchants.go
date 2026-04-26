@@ -17,7 +17,7 @@ import (
 // Merchant is the read-model returned by the API.
 type Merchant struct {
 	ID                uuid.UUID  `json:"id"`
-	TenantID          uuid.UUID  `json:"tenantId"`
+	WorkspaceID          uuid.UUID  `json:"workspaceId"`
 	CanonicalName     string     `json:"canonicalName"`
 	LogoURL           *string    `json:"logoUrl,omitempty"`
 	DefaultCategoryID *uuid.UUID `json:"defaultCategoryId,omitempty"`
@@ -146,26 +146,26 @@ func (in MerchantPatchInput) normalize() (merchantPatchNormalized, error) {
 }
 
 const merchantCols = `
-	id, tenant_id, canonical_name, logo_url, default_category_id,
+	id, workspace_id, canonical_name, logo_url, default_category_id,
 	industry, website, notes, archived_at, created_at, updated_at
 `
 
 func scanMerchant(r interface{ Scan(dest ...any) error }, m *Merchant) error {
 	return r.Scan(
-		&m.ID, &m.TenantID, &m.CanonicalName, &m.LogoURL, &m.DefaultCategoryID,
+		&m.ID, &m.WorkspaceID, &m.CanonicalName, &m.LogoURL, &m.DefaultCategoryID,
 		&m.Industry, &m.Website, &m.Notes, &m.ArchivedAt, &m.CreatedAt, &m.UpdatedAt,
 	)
 }
 
-// CreateMerchant inserts a merchant for tenantID and returns it.
-func (s *Service) CreateMerchant(ctx context.Context, tenantID uuid.UUID, raw MerchantCreateInput) (*Merchant, error) {
+// CreateMerchant inserts a merchant for workspaceID and returns it.
+func (s *Service) CreateMerchant(ctx context.Context, workspaceID uuid.UUID, raw MerchantCreateInput) (*Merchant, error) {
 	in, err := raw.normalize()
 	if err != nil {
 		return nil, err
 	}
 
 	if in.DefaultCategoryID != nil {
-		if err := s.assertCategoryExists(ctx, tenantID, *in.DefaultCategoryID); err != nil {
+		if err := s.assertCategoryExists(ctx, workspaceID, *in.DefaultCategoryID); err != nil {
 			return nil, err
 		}
 	}
@@ -173,11 +173,11 @@ func (s *Service) CreateMerchant(ctx context.Context, tenantID uuid.UUID, raw Me
 	id := uuidx.New()
 	row := s.pool.QueryRow(ctx, `
 		insert into merchants (
-			id, tenant_id, canonical_name, logo_url, default_category_id,
+			id, workspace_id, canonical_name, logo_url, default_category_id,
 			industry, website, notes
 		) values ($1, $2, $3, $4, $5, $6, $7, $8)
 		returning `+merchantCols,
-		id, tenantID, in.CanonicalName, in.LogoURL, in.DefaultCategoryID,
+		id, workspaceID, in.CanonicalName, in.LogoURL, in.DefaultCategoryID,
 		in.Industry, in.Website, in.Notes,
 	)
 	var m Merchant
@@ -187,16 +187,16 @@ func (s *Service) CreateMerchant(ctx context.Context, tenantID uuid.UUID, raw Me
 	return &m, nil
 }
 
-// ListMerchants returns merchants for tenantID. Archived rows are excluded
+// ListMerchants returns merchants for workspaceID. Archived rows are excluded
 // unless includeArchived is true.
-func (s *Service) ListMerchants(ctx context.Context, tenantID uuid.UUID, includeArchived bool) ([]Merchant, error) {
-	q := `select ` + merchantCols + ` from merchants where tenant_id = $1`
+func (s *Service) ListMerchants(ctx context.Context, workspaceID uuid.UUID, includeArchived bool) ([]Merchant, error) {
+	q := `select ` + merchantCols + ` from merchants where workspace_id = $1`
 	if !includeArchived {
 		q += ` and archived_at is null`
 	}
 	q += ` order by canonical_name`
 
-	rows, err := s.pool.Query(ctx, q, tenantID)
+	rows, err := s.pool.Query(ctx, q, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("query merchants: %w", err)
 	}
@@ -215,11 +215,11 @@ func (s *Service) ListMerchants(ctx context.Context, tenantID uuid.UUID, include
 	return out, nil
 }
 
-// GetMerchant returns a single merchant scoped to tenantID.
-func (s *Service) GetMerchant(ctx context.Context, tenantID, id uuid.UUID) (*Merchant, error) {
+// GetMerchant returns a single merchant scoped to workspaceID.
+func (s *Service) GetMerchant(ctx context.Context, workspaceID, id uuid.UUID) (*Merchant, error) {
 	row := s.pool.QueryRow(ctx,
-		`select `+merchantCols+` from merchants where tenant_id = $1 and id = $2`,
-		tenantID, id)
+		`select `+merchantCols+` from merchants where workspace_id = $1 and id = $2`,
+		workspaceID, id)
 	var m Merchant
 	if err := scanMerchant(row, &m); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -231,20 +231,20 @@ func (s *Service) GetMerchant(ctx context.Context, tenantID, id uuid.UUID) (*Mer
 }
 
 // UpdateMerchant applies a PATCH and returns the result.
-func (s *Service) UpdateMerchant(ctx context.Context, tenantID, id uuid.UUID, raw MerchantPatchInput) (*Merchant, error) {
+func (s *Service) UpdateMerchant(ctx context.Context, workspaceID, id uuid.UUID, raw MerchantPatchInput) (*Merchant, error) {
 	p, err := raw.normalize()
 	if err != nil {
 		return nil, err
 	}
 
 	if p.defaultCategoryIDSet && !p.defaultCategoryIDNull {
-		if err := s.assertCategoryExists(ctx, tenantID, p.defaultCategoryID); err != nil {
+		if err := s.assertCategoryExists(ctx, workspaceID, p.defaultCategoryID); err != nil {
 			return nil, err
 		}
 	}
 
 	sets := make([]string, 0, 8)
-	args := []any{tenantID, id}
+	args := []any{workspaceID, id}
 	next := func(v any) string {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
@@ -297,12 +297,12 @@ func (s *Service) UpdateMerchant(ctx context.Context, tenantID, id uuid.UUID, ra
 	}
 
 	if len(sets) == 0 {
-		return s.GetMerchant(ctx, tenantID, id)
+		return s.GetMerchant(ctx, workspaceID, id)
 	}
 
 	q := fmt.Sprintf(`
 		update merchants set %s
-		where tenant_id = $1 and id = $2
+		where workspace_id = $1 and id = $2
 		returning %s
 	`, strings.Join(sets, ", "), merchantCols)
 
@@ -318,12 +318,12 @@ func (s *Service) UpdateMerchant(ctx context.Context, tenantID, id uuid.UUID, ra
 }
 
 // ArchiveMerchant sets archived_at = now() idempotently.
-func (s *Service) ArchiveMerchant(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *Service) ArchiveMerchant(ctx context.Context, workspaceID, id uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx, `
 		update merchants
 		set archived_at = coalesce(archived_at, $3)
-		where tenant_id = $1 and id = $2
-	`, tenantID, id, s.now().UTC())
+		where workspace_id = $1 and id = $2
+	`, workspaceID, id, s.now().UTC())
 	if err != nil {
 		return fmt.Errorf("archive merchant: %w", err)
 	}

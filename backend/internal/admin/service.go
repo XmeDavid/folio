@@ -49,7 +49,7 @@ func writeAdminAudit(ctx context.Context, tx pgx.Tx, action string, actorUserID 
 		return err
 	}
 	_, err = tx.Exec(ctx, `
-		insert into audit_events (id, tenant_id, actor_user_id, entity_type, entity_id, action, before_jsonb, after_jsonb, occurred_at)
+		insert into audit_events (id, workspace_id, actor_user_id, entity_type, entity_id, action, before_jsonb, after_jsonb, occurred_at)
 		values ($1, null, $2, $3, $4, $5, $6, $7, now())
 	`, uuidx.New(), actor, entityType, entityID, action, beforeJSON, afterJSON)
 	return err

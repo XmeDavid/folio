@@ -1,5 +1,5 @@
 // Command folio-sweeper is a one-shot cron-invokable entry point that
-// hard-deletes tenants past their 30-day soft-delete grace period.
+// hard-deletes workspaces past their 30-day soft-delete grace period.
 //
 // Plan 2 ships this as a standalone binary so the sweeper works without
 // River. Plan 3 wires River to call cleanup.Run directly inside the
@@ -21,7 +21,7 @@ import (
 )
 
 func main() {
-	grace := flag.Duration("grace", 30*24*time.Hour, "grace period before hard-deleting soft-deleted tenants")
+	grace := flag.Duration("grace", 30*24*time.Hour, "grace period before hard-deleting soft-deleted workspaces")
 	flag.Parse()
 
 	// Load .env if we're running from a checkout; no-op if not present.

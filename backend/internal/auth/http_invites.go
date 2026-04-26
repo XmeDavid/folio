@@ -15,7 +15,7 @@ import (
 	"github.com/xmedavid/folio/backend/internal/mailer"
 )
 
-// InviteHandler owns the tenant-scoped invite CRUD routes plus the public
+// InviteHandler owns the workspace-scoped invite CRUD routes plus the public
 // preview/accept endpoints (wired under /api/v1/auth/invites/{token}).
 // Lives in the auth package to keep the identity <- auth import direction
 // one-way (identity never imports auth).
@@ -32,12 +32,12 @@ func NewInviteHandler(authSvc *Service, invites *identity.InviteService, mail ma
 	return &InviteHandler{auth: authSvc, invites: invites, mail: mail}
 }
 
-// MountTenantInvites mounts tenant-scoped invite routes at /invites under
-// the tenant path. The caller wires RequireSession + RequireMembership
+// MountWorkspaceInvites mounts workspace-scoped invite routes at /invites under
+// the workspace path. The caller wires RequireSession + RequireMembership
 // upstream. Role rules are enforced inside each handler because the "only
 // owners can invite owners" rule depends on the target role in the body.
 // RequireFreshReauth is deliberately deferred to Plan 4 (spec §0.2 adjust).
-func (h *InviteHandler) MountTenantInvites(r chi.Router) {
+func (h *InviteHandler) MountWorkspaceInvites(r chi.Router) {
 	r.Post("/", h.createInvite)
 	r.Delete("/{inviteId}", h.revokeInvite)
 }
@@ -60,7 +60,7 @@ type createInviteReq struct {
 
 func (h *InviteHandler) createInvite(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	tenant := MustTenant(r)
+	workspace := MustWorkspace(r)
 	inviter := MustUser(r)
 	callerRole, _ := RoleFromCtx(r.Context())
 
@@ -80,7 +80,7 @@ func (h *InviteHandler) createInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inv, plaintext, err := h.invites.Create(r.Context(), tenant.ID, inviter.ID, body.Email, role)
+	inv, plaintext, err := h.invites.Create(r.Context(), workspace.ID, inviter.ID, body.Email, role)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -95,17 +95,17 @@ func (h *InviteHandler) createInvite(w http.ResponseWriter, r *http.Request) {
 			Template: "invite",
 			Data: map[string]any{
 				"InviterName": inviter.DisplayName,
-				"TenantName":  tenant.Name,
+				"WorkspaceName":  workspace.Name,
 				"Role":        string(inv.Role),
 				"AcceptURL":   inviteURL(plaintext),
 			},
-			TenantID: tenant.ID.String(),
+			WorkspaceID: workspace.ID.String(),
 		}); err != nil {
 			slog.Default().Warn("mailer.send_failed", "err", err, "invite_id", inv.ID)
 		}
 	}
 
-	h.auth.WriteAudit(r.Context(), tenant.ID, inviter.ID,
+	h.auth.WriteAudit(r.Context(), workspace.ID, inviter.ID,
 		"member.invited", "invite", inv.ID, nil,
 		map[string]any{"email": inv.Email, "role": string(inv.Role)})
 
@@ -113,7 +113,7 @@ func (h *InviteHandler) createInvite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *InviteHandler) revokeInvite(w http.ResponseWriter, r *http.Request) {
-	tenant := MustTenant(r)
+	workspace := MustWorkspace(r)
 	requester := MustUser(r)
 	inviteID, err := uuid.Parse(chi.URLParam(r, "inviteId"))
 	if err != nil {
@@ -121,20 +121,20 @@ func (h *InviteHandler) revokeInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.invites.Revoke(r.Context(), tenant.ID, inviteID, requester.ID)
+	err = h.invites.Revoke(r.Context(), workspace.ID, inviteID, requester.ID)
 	switch {
 	case errors.Is(err, identity.ErrInviteNotFound):
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "invite not found")
 		return
 	case errors.Is(err, identity.ErrNotAuthorized):
 		httpx.WriteError(w, http.StatusForbidden, "forbidden",
-			"only the inviter or a tenant owner can revoke this invite")
+			"only the inviter or a workspace owner can revoke this invite")
 		return
 	case err != nil:
 		httpx.WriteServiceError(w, err)
 		return
 	}
-	h.auth.WriteAudit(r.Context(), tenant.ID, requester.ID,
+	h.auth.WriteAudit(r.Context(), workspace.ID, requester.ID,
 		"member.invite_revoked", "invite", inviteID, nil, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -150,7 +150,7 @@ func inviteURL(plaintext string) string {
 }
 
 // previewInvite is the no-auth endpoint that returns sanitized invite
-// metadata (tenant name, inviter, role, expiry, invited email) so the
+// metadata (workspace name, inviter, role, expiry, invited email) so the
 // landing page can show "Alice invited you to join Household as a member".
 // Invalid/expired/revoked/consumed invites return 410 with a typed code.
 func (h *InviteHandler) previewInvite(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +206,7 @@ func (h *InviteHandler) acceptInvite(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteServiceError(w, err)
 		return
 	}
-	h.auth.WriteAudit(r.Context(), mem.TenantID, user.ID,
+	h.auth.WriteAudit(r.Context(), mem.WorkspaceID, user.ID,
 		"member.invite_accepted", "membership", mem.UserID, nil,
 		map[string]any{"role": string(mem.Role)})
 	httpx.WriteJSON(w, http.StatusOK, mem)

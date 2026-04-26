@@ -152,9 +152,9 @@ func TestSignup_AdminBootstrapInsideTx_RollsBackOnError(t *testing.T) {
 	email := "bootstrap+" + uuid.New().String() + "@example.com"
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = pool.Exec(ctx, `delete from tenant_memberships where user_id in (select id from users where email = $1)`, email)
+		_, _ = pool.Exec(ctx, `delete from workspace_memberships where user_id in (select id from users where email = $1)`, email)
 		_, _ = pool.Exec(ctx,
-			`delete from tenants where id in (select last_tenant_id from users where email = $1)`, email)
+			`delete from workspaces where id in (select last_workspace_id from users where email = $1)`, email)
 		_, _ = pool.Exec(ctx, `delete from users where email = $1`, email)
 	})
 	svc := NewService(pool, identity.NewService(pool), Config{
@@ -191,9 +191,9 @@ func TestSignup_AdminBootstrapGranted_FirstResponseHasIsAdmin(t *testing.T) {
 	email := "granted+" + uuid.New().String() + "@example.com"
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = pool.Exec(ctx, `delete from tenant_memberships where user_id in (select id from users where email = $1)`, email)
+		_, _ = pool.Exec(ctx, `delete from workspace_memberships where user_id in (select id from users where email = $1)`, email)
 		_, _ = pool.Exec(ctx,
-			`delete from tenants where id in (select last_tenant_id from users where email = $1)`, email)
+			`delete from workspaces where id in (select last_workspace_id from users where email = $1)`, email)
 		_, _ = pool.Exec(ctx, `delete from users where email = $1`, email)
 	})
 	svc := NewService(pool, identity.NewService(pool), Config{
@@ -222,9 +222,9 @@ func TestSignup_InviteOnlyAllowsFirstUserWithoutInvite(t *testing.T) {
 	email := "first-invite-only+" + uuid.New().String() + "@example.com"
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = pool.Exec(ctx, `delete from tenant_memberships where user_id in (select id from users where email = $1)`, email)
+		_, _ = pool.Exec(ctx, `delete from workspace_memberships where user_id in (select id from users where email = $1)`, email)
 		_, _ = pool.Exec(ctx,
-			`delete from tenants where id in (select last_tenant_id from users where email = $1)`, email)
+			`delete from workspaces where id in (select last_workspace_id from users where email = $1)`, email)
 		_, _ = pool.Exec(ctx, `delete from users where email = $1`, email)
 	})
 	svc := NewService(pool, identity.NewService(pool), Config{

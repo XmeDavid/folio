@@ -16,7 +16,7 @@ type Message struct {
 	ReplyTo  string
 	Template string         // template name; mailer looks it up
 	Data     map[string]any // template data
-	TenantID string         // optional — for audit / inbound routing
+	WorkspaceID string         // optional — for audit / inbound routing
 }
 
 // Mailer sends transactional email. Implementations MUST be safe for

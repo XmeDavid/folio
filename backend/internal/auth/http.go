@@ -41,7 +41,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 	})
 }
 
-// MountAuthed mounts authenticated, non-tenant-scoped routes (session required).
+// MountAuthed mounts authenticated, non-workspace-scoped routes (session required).
 func (h *Handler) MountAuthed(r chi.Router) {
 	r.Get("/me", h.me)
 	r.Get("/me/mfa", h.mfaStatus)
@@ -59,12 +59,12 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.With(RateLimitByIP(10, 10*time.Minute)).Post("/auth/reauth", h.reauth)
 	r.With(RateLimitByIP(10, 10*time.Minute)).Post("/auth/reauth/webauthn/begin", h.beginReauthWebauthn)
 	r.With(RateLimitByIP(10, 10*time.Minute)).Post("/auth/reauth/webauthn/complete", h.completeReauthWebauthn)
-	r.Post("/tenants", h.createTenant)
+	r.Post("/workspaces", h.createWorkspace)
 }
 
-// MountTenantScoped mounts routes under /t/{tenantId} that need a membership.
+// MountWorkspaceScoped mounts routes under /t/{workspaceId} that need a membership.
 // Caller wires RequireSession + RequireMembership upstream.
-func (h *Handler) MountTenantScoped(r chi.Router) {
+func (h *Handler) MountWorkspaceScoped(r chi.Router) {
 	r.Get("/members", h.listMembers)
 }
 
@@ -72,7 +72,7 @@ type signupReq struct {
 	Email          string `json:"email"`
 	Password       string `json:"password"`
 	DisplayName    string `json:"displayName"`
-	TenantName     string `json:"tenantName,omitempty"`
+	WorkspaceName     string `json:"workspaceName,omitempty"`
 	BaseCurrency   string `json:"baseCurrency,omitempty"`
 	CycleAnchorDay int    `json:"cycleAnchorDay,omitempty"`
 	Locale         string `json:"locale,omitempty"`
@@ -90,7 +90,7 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 	ip := parseIPForStorage(ipFromRequest(r))
 	out, err := h.svc.Signup(r.Context(), SignupInput{
 		Email: body.Email, Password: body.Password, DisplayName: body.DisplayName,
-		TenantName: body.TenantName, BaseCurrency: body.BaseCurrency,
+		WorkspaceName: body.WorkspaceName, BaseCurrency: body.BaseCurrency,
 		CycleAnchorDay: body.CycleAnchorDay, Locale: body.Locale, Timezone: body.Timezone,
 		InviteToken: body.InviteToken, IP: ip, UserAgent: r.UserAgent(),
 	})
@@ -101,7 +101,7 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 	SetSessionCookie(w, out.SessionToken, h.svc.cfg.SecureCookies)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"user":        out.User,
-		"tenant":      out.Tenant,
+		"workspace":      out.Workspace,
 		"membership":  out.Membership,
 		"mfaRequired": false,
 	})
@@ -210,18 +210,18 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	user := MustUser(r)
-	_, tenants, err := h.svc.identity.Me(r.Context(), user.ID)
+	_, workspaces, err := h.svc.identity.Me(r.Context(), user.ID)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":    user,
-		"tenants": tenants,
+		"workspaces": workspaces,
 	})
 }
 
-type createTenantReq struct {
+type createWorkspaceReq struct {
 	Name           string `json:"name"`
 	BaseCurrency   string `json:"baseCurrency"`
 	CycleAnchorDay int    `json:"cycleAnchorDay,omitempty"`
@@ -229,15 +229,15 @@ type createTenantReq struct {
 	Timezone       string `json:"timezone,omitempty"`
 }
 
-func (h *Handler) createTenant(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	user := MustUser(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB cap on auth payloads
-	var body createTenantReq
+	var body createWorkspaceReq
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
 		return
 	}
-	t, m, err := h.svc.identity.CreateTenant(r.Context(), user.ID, identity.CreateTenantInput{
+	t, m, err := h.svc.identity.CreateWorkspace(r.Context(), user.ID, identity.CreateWorkspaceInput{
 		Name: body.Name, BaseCurrency: body.BaseCurrency,
 		CycleAnchorDay: body.CycleAnchorDay, Locale: body.Locale, Timezone: body.Timezone,
 	})
@@ -246,14 +246,14 @@ func (h *Handler) createTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
-		"tenant":     t,
+		"workspace":     t,
 		"membership": m,
 	})
 }
 
 func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
-	tenant := MustTenant(r)
-	resp, err := h.svc.identity.ListMembers(r.Context(), tenant.ID)
+	workspace := MustWorkspace(r)
+	resp, err := h.svc.identity.ListMembers(r.Context(), workspace.ID)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return

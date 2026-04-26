@@ -3,7 +3,7 @@
 // classification-shaped filters that the transactions listing consumes
 // (e.g. the uncategorized queue).
 //
-// tenant_id always comes from request context. IDs are generated app-side
+// workspace_id always comes from request context. IDs are generated app-side
 // (UUIDv7) via internal/uuidx. Deletes on categories/merchants/tags archive
 // rather than hard-delete.
 package classification
@@ -34,7 +34,7 @@ func NewService(pool *pgxpool.Pool) *Service {
 // mapWriteError translates Postgres errors into clean ValidationError /
 // NotFoundError where practical. Unique-violation (duplicate name, duplicate
 // (parent, name)) and foreign-key-violation (parent / default category does
-// not belong to tenant) are the two cases worth rewriting; everything else
+// not belong to workspace) are the two cases worth rewriting; everything else
 // falls through as a generic internal error.
 func mapWriteError(resource string, err error) error {
 	if err == nil {
@@ -46,7 +46,7 @@ func mapWriteError(resource string, err error) error {
 		case "23505": // unique_violation
 			return httpx.NewValidationError(fmt.Sprintf("%s with this name already exists", resource))
 		case "23503": // foreign_key_violation
-			return httpx.NewValidationError("referenced entity does not exist for this tenant")
+			return httpx.NewValidationError("referenced entity does not exist for this workspace")
 		case "23514": // check_violation
 			return httpx.NewValidationError(pgErr.Message)
 		case "P0001": // raise_exception from triggers

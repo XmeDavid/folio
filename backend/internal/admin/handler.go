@@ -20,8 +20,8 @@ type Handler struct {
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 func (h *Handler) Mount(r chi.Router, requireFreshReauth func(http.Handler) http.Handler) {
-	r.Get("/tenants", h.listTenants)
-	r.Get("/tenants/{tenantId}", h.tenantDetail)
+	r.Get("/workspaces", h.listWorkspaces)
+	r.Get("/workspaces/{workspaceId}", h.workspaceDetail)
 	r.Get("/users", h.listUsers)
 	r.Get("/users/{userId}", h.userDetail)
 	r.Get("/audit", h.listAudit)
@@ -35,9 +35,9 @@ func (h *Handler) Mount(r chi.Router, requireFreshReauth func(http.Handler) http
 	})
 }
 
-func (h *Handler) listTenants(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	rows, p, err := h.svc.ListTenants(r.Context(), TenantListFilter{
+	rows, p, err := h.svc.ListWorkspaces(r.Context(), WorkspaceListFilter{
 		AdminListFilter: AdminListFilter{Limit: intQuery(q.Get("limit")), Cursor: q.Get("cursor")},
 		Search:          q.Get("search"),
 		IncludeDeleted:  boolQuery(q.Get("includeDeleted")),
@@ -45,13 +45,13 @@ func (h *Handler) listTenants(w http.ResponseWriter, r *http.Request) {
 	writeList(w, rows, p, err)
 }
 
-func (h *Handler) tenantDetail(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "tenantId"))
+func (h *Handler) workspaceDetail(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "workspaceId"))
 	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "invalid tenant id")
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "invalid workspace id")
 		return
 	}
-	out, err := h.svc.TenantDetail(r.Context(), id, auth.MustUser(r).ID)
+	out, err := h.svc.WorkspaceDetail(r.Context(), id, auth.MustUser(r).ID)
 	writeOne(w, out, err)
 }
 
@@ -86,13 +86,13 @@ func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
 		}
 		filter.ActorUserID = &id
 	}
-	if v := q.Get("tenantId"); v != "" {
+	if v := q.Get("workspaceId"); v != "" {
 		id, err := uuid.Parse(v)
 		if err != nil {
-			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "invalid tenant id")
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "invalid workspace id")
 			return
 		}
-		filter.TenantID = &id
+		filter.WorkspaceID = &id
 	}
 	if v := q.Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)

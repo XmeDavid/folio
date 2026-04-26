@@ -18,9 +18,9 @@ type userCursor struct {
 }
 
 type MembershipSummary struct {
-	TenantID   uuid.UUID `json:"tenantId"`
-	TenantName string    `json:"tenantName"`
-	TenantSlug string    `json:"tenantSlug"`
+	WorkspaceID   uuid.UUID `json:"workspaceId"`
+	WorkspaceName string    `json:"workspaceName"`
+	WorkspaceSlug string    `json:"workspaceSlug"`
 	Role       string    `json:"role"`
 	JoinedAt   time.Time `json:"joinedAt"`
 }
@@ -63,7 +63,7 @@ func (s *Service) ListUsers(ctx context.Context, filter UserListFilter) ([]ident
 	}
 	search := strings.TrimSpace(filter.Search)
 	rows, err := s.pool.Query(ctx, `
-		select id, email::text, display_name, email_verified_at, is_admin, last_tenant_id, created_at
+		select id, email::text, display_name, email_verified_at, is_admin, last_workspace_id, created_at
 		from users
 		where ($1::text = '' or email::text ilike $2 or display_name ilike $2 or id::text ilike $2)
 		  and (not $3::bool or is_admin = true)
@@ -78,7 +78,7 @@ func (s *Service) ListUsers(ctx context.Context, filter UserListFilter) ([]ident
 	users := make([]identity.User, 0, filter.Limit)
 	for rows.Next() {
 		var u identity.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.EmailVerifiedAt, &u.IsAdmin, &u.LastTenantID, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.EmailVerifiedAt, &u.IsAdmin, &u.LastWorkspaceID, &u.CreatedAt); err != nil {
 			return nil, Pagination{}, err
 		}
 		users = append(users, u)
@@ -92,9 +92,9 @@ func (s *Service) ListUsers(ctx context.Context, filter UserListFilter) ([]ident
 func (s *Service) UserDetail(ctx context.Context, userID uuid.UUID, actorUserID uuid.UUID) (UserDetail, error) {
 	var d UserDetail
 	err := s.pool.QueryRow(ctx, `
-		select id, email::text, display_name, email_verified_at, is_admin, last_tenant_id, created_at, last_login_at
+		select id, email::text, display_name, email_verified_at, is_admin, last_workspace_id, created_at, last_login_at
 		from users where id = $1
-	`, userID).Scan(&d.User.ID, &d.User.Email, &d.User.DisplayName, &d.User.EmailVerifiedAt, &d.User.IsAdmin, &d.User.LastTenantID, &d.User.CreatedAt, &d.LastLoginAt)
+	`, userID).Scan(&d.User.ID, &d.User.Email, &d.User.DisplayName, &d.User.EmailVerifiedAt, &d.User.IsAdmin, &d.User.LastWorkspaceID, &d.User.CreatedAt, &d.LastLoginAt)
 	if errorsIsNoRows(err) {
 		return d, httpx.NewNotFoundError("user")
 	}
@@ -113,7 +113,7 @@ func (s *Service) UserDetail(ctx context.Context, userID uuid.UUID, actorUserID 
 func (s *Service) loadUserDetailChildren(ctx context.Context, userID uuid.UUID, d *UserDetail) error {
 	rows, err := s.pool.Query(ctx, `
 		select t.id, t.name, t.slug::text, tm.role::text, tm.created_at
-		from tenant_memberships tm join tenants t on t.id = tm.tenant_id
+		from workspace_memberships tm join workspaces t on t.id = tm.workspace_id
 		where tm.user_id = $1 order by tm.created_at desc
 	`, userID)
 	if err != nil {
@@ -122,7 +122,7 @@ func (s *Service) loadUserDetailChildren(ctx context.Context, userID uuid.UUID, 
 	defer rows.Close()
 	for rows.Next() {
 		var m MembershipSummary
-		if err := rows.Scan(&m.TenantID, &m.TenantName, &m.TenantSlug, &m.Role, &m.JoinedAt); err != nil {
+		if err := rows.Scan(&m.WorkspaceID, &m.WorkspaceName, &m.WorkspaceSlug, &m.Role, &m.JoinedAt); err != nil {
 			return err
 		}
 		d.Memberships = append(d.Memberships, m)

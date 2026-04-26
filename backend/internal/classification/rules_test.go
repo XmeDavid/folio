@@ -230,7 +230,7 @@ func TestMarshalWhenThenRoundTrip(t *testing.T) {
 func snap(txMods ...func(*transactionSnapshot)) *transactionSnapshot {
 	s := &transactionSnapshot{
 		ID:        uuid.New(),
-		TenantID:  uuid.New(),
+		WorkspaceID:  uuid.New(),
 		AccountID: uuid.New(),
 		Amount:    decimal.NewFromFloat(-42.50),
 	}

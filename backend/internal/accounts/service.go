@@ -44,7 +44,7 @@ func defaultIncludeInSavingsRate(kind string) bool {
 // opening balance.
 type Account struct {
 	ID                   uuid.UUID  `json:"id"`
-	TenantID             uuid.UUID  `json:"tenantId"`
+	WorkspaceID             uuid.UUID  `json:"workspaceId"`
 	Name                 string     `json:"name"`
 	Nickname             *string    `json:"nickname,omitempty"`
 	Kind                 string     `json:"kind"`
@@ -164,7 +164,7 @@ func NewService(pool *pgxpool.Pool) *Service {
 
 type AccountGroup struct {
 	ID         uuid.UUID  `json:"id"`
-	TenantID   uuid.UUID  `json:"tenantId"`
+	WorkspaceID   uuid.UUID  `json:"workspaceId"`
 	Name       string     `json:"name"`
 	SortOrder  int        `json:"sortOrder"`
 	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
@@ -200,23 +200,23 @@ type ReorderInput struct {
 
 func scanAccountGroup(row interface{ Scan(...any) error }, g *AccountGroup) error {
 	return row.Scan(
-		&g.ID, &g.TenantID, &g.Name, &g.SortOrder, &g.ArchivedAt,
+		&g.ID, &g.WorkspaceID, &g.Name, &g.SortOrder, &g.ArchivedAt,
 		&g.CreatedAt, &g.UpdatedAt,
 	)
 }
 
-func (s *Service) ListGroups(ctx context.Context, tenantID uuid.UUID, includeArchived bool) ([]AccountGroup, error) {
+func (s *Service) ListGroups(ctx context.Context, workspaceID uuid.UUID, includeArchived bool) ([]AccountGroup, error) {
 	q := `
-		select id, tenant_id, name, sort_order, archived_at, created_at, updated_at
+		select id, workspace_id, name, sort_order, archived_at, created_at, updated_at
 		from account_groups
-		where tenant_id = $1
+		where workspace_id = $1
 	`
 	if !includeArchived {
 		q += ` and archived_at is null`
 	}
 	q += ` order by sort_order, created_at`
 
-	rows, err := s.pool.Query(ctx, q, tenantID)
+	rows, err := s.pool.Query(ctx, q, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("query account groups: %w", err)
 	}
@@ -233,7 +233,7 @@ func (s *Service) ListGroups(ctx context.Context, tenantID uuid.UUID, includeArc
 	return out, rows.Err()
 }
 
-func (s *Service) CreateGroup(ctx context.Context, tenantID uuid.UUID, raw CreateGroupInput) (*AccountGroup, error) {
+func (s *Service) CreateGroup(ctx context.Context, workspaceID uuid.UUID, raw CreateGroupInput) (*AccountGroup, error) {
 	name := strings.TrimSpace(raw.Name)
 	if name == "" {
 		return nil, httpx.NewValidationError("name is required")
@@ -242,14 +242,14 @@ func (s *Service) CreateGroup(ctx context.Context, tenantID uuid.UUID, raw Creat
 	groupID := uuidx.New()
 	var g AccountGroup
 	err := s.pool.QueryRow(ctx, `
-		insert into account_groups (id, tenant_id, name, sort_order)
+		insert into account_groups (id, workspace_id, name, sort_order)
 		values (
 			$1, $2, $3,
-			coalesce((select max(sort_order) + 1000 from account_groups where tenant_id = $2), 1000)
+			coalesce((select max(sort_order) + 1000 from account_groups where workspace_id = $2), 1000)
 		)
-		returning id, tenant_id, name, sort_order, archived_at, created_at, updated_at
-	`, groupID, tenantID, name).Scan(
-		&g.ID, &g.TenantID, &g.Name, &g.SortOrder, &g.ArchivedAt, &g.CreatedAt, &g.UpdatedAt,
+		returning id, workspace_id, name, sort_order, archived_at, created_at, updated_at
+	`, groupID, workspaceID, name).Scan(
+		&g.ID, &g.WorkspaceID, &g.Name, &g.SortOrder, &g.ArchivedAt, &g.CreatedAt, &g.UpdatedAt,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -260,9 +260,9 @@ func (s *Service) CreateGroup(ctx context.Context, tenantID uuid.UUID, raw Creat
 	return &g, nil
 }
 
-func (s *Service) UpdateGroup(ctx context.Context, tenantID, groupID uuid.UUID, in PatchGroupInput) (*AccountGroup, error) {
+func (s *Service) UpdateGroup(ctx context.Context, workspaceID, groupID uuid.UUID, in PatchGroupInput) (*AccountGroup, error) {
 	sets := make([]string, 0, 3)
-	args := []any{tenantID, groupID}
+	args := []any{workspaceID, groupID}
 	next := func(v any) string {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
@@ -286,16 +286,16 @@ func (s *Service) UpdateGroup(ctx context.Context, tenantID, groupID uuid.UUID, 
 		}
 	}
 	if len(sets) == 0 {
-		return s.GetGroup(ctx, tenantID, groupID)
+		return s.GetGroup(ctx, workspaceID, groupID)
 	}
 
 	var g AccountGroup
 	err := s.pool.QueryRow(ctx, fmt.Sprintf(`
 		update account_groups set %s
-		where tenant_id = $1 and id = $2
-		returning id, tenant_id, name, sort_order, archived_at, created_at, updated_at
+		where workspace_id = $1 and id = $2
+		returning id, workspace_id, name, sort_order, archived_at, created_at, updated_at
 	`, strings.Join(sets, ", ")), args...).Scan(
-		&g.ID, &g.TenantID, &g.Name, &g.SortOrder, &g.ArchivedAt, &g.CreatedAt, &g.UpdatedAt,
+		&g.ID, &g.WorkspaceID, &g.Name, &g.SortOrder, &g.ArchivedAt, &g.CreatedAt, &g.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -309,13 +309,13 @@ func (s *Service) UpdateGroup(ctx context.Context, tenantID, groupID uuid.UUID, 
 	return &g, nil
 }
 
-func (s *Service) GetGroup(ctx context.Context, tenantID, groupID uuid.UUID) (*AccountGroup, error) {
+func (s *Service) GetGroup(ctx context.Context, workspaceID, groupID uuid.UUID) (*AccountGroup, error) {
 	var g AccountGroup
 	err := scanAccountGroup(s.pool.QueryRow(ctx, `
-		select id, tenant_id, name, sort_order, archived_at, created_at, updated_at
+		select id, workspace_id, name, sort_order, archived_at, created_at, updated_at
 		from account_groups
-		where tenant_id = $1 and id = $2
-	`, tenantID, groupID), &g)
+		where workspace_id = $1 and id = $2
+	`, workspaceID, groupID), &g)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("account group")
@@ -325,7 +325,7 @@ func (s *Service) GetGroup(ctx context.Context, tenantID, groupID uuid.UUID) (*A
 	return &g, nil
 }
 
-func (s *Service) DeleteGroup(ctx context.Context, tenantID, groupID uuid.UUID) error {
+func (s *Service) DeleteGroup(ctx context.Context, workspaceID, groupID uuid.UUID) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin delete account group: %w", err)
@@ -335,11 +335,11 @@ func (s *Service) DeleteGroup(ctx context.Context, tenantID, groupID uuid.UUID) 
 	if _, err := tx.Exec(ctx, `
 		update accounts
 		set account_group_id = null
-		where tenant_id = $1 and account_group_id = $2
-	`, tenantID, groupID); err != nil {
+		where workspace_id = $1 and account_group_id = $2
+	`, workspaceID, groupID); err != nil {
 		return fmt.Errorf("clear account group membership: %w", err)
 	}
-	tag, err := tx.Exec(ctx, `delete from account_groups where tenant_id = $1 and id = $2`, tenantID, groupID)
+	tag, err := tx.Exec(ctx, `delete from account_groups where workspace_id = $1 and id = $2`, workspaceID, groupID)
 	if err != nil {
 		return fmt.Errorf("delete account group: %w", err)
 	}
@@ -349,7 +349,7 @@ func (s *Service) DeleteGroup(ctx context.Context, tenantID, groupID uuid.UUID) 
 	return tx.Commit(ctx)
 }
 
-func (s *Service) Reorder(ctx context.Context, tenantID uuid.UUID, in ReorderInput) error {
+func (s *Service) Reorder(ctx context.Context, workspaceID uuid.UUID, in ReorderInput) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin reorder accounts: %w", err)
@@ -360,8 +360,8 @@ func (s *Service) Reorder(ctx context.Context, tenantID uuid.UUID, in ReorderInp
 		tag, err := tx.Exec(ctx, `
 			update account_groups
 			set sort_order = $3
-			where tenant_id = $1 and id = $2
-		`, tenantID, group.ID, group.SortOrder)
+			where workspace_id = $1 and id = $2
+		`, workspaceID, group.ID, group.SortOrder)
 		if err != nil {
 			return fmt.Errorf("reorder account group: %w", err)
 		}
@@ -374,8 +374,8 @@ func (s *Service) Reorder(ctx context.Context, tenantID uuid.UUID, in ReorderInp
 		tag, err := tx.Exec(ctx, `
 			update accounts
 			set account_group_id = $3, account_sort_order = $4
-			where tenant_id = $1 and id = $2
-		`, tenantID, account.ID, account.AccountGroupID, account.SortOrder)
+			where workspace_id = $1 and id = $2
+		`, workspaceID, account.ID, account.AccountGroupID, account.SortOrder)
 		if err != nil {
 			return fmt.Errorf("reorder account: %w", err)
 		}
@@ -393,8 +393,8 @@ func isUniqueViolation(err error) bool {
 }
 
 // Create inserts an account and its opening balance snapshot in one tx.
-// tenantID MUST be taken from request context — never from the request body.
-func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, raw CreateInput) (*Account, error) {
+// workspaceID MUST be taken from request context — never from the request body.
+func (s *Service) Create(ctx context.Context, workspaceID uuid.UUID, raw CreateInput) (*Account, error) {
 	in, err := raw.normalize()
 	if err != nil {
 		return nil, err
@@ -423,7 +423,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, raw CreateInpu
 	var balance string
 	err = tx.QueryRow(ctx, `
 		insert into accounts (
-			id, tenant_id, name, nickname, kind, currency, institution,
+			id, workspace_id, name, nickname, kind, currency, institution,
 			account_group_id, account_sort_order,
 			open_date, opening_balance, opening_balance_date,
 			include_in_networth, include_in_savings_rate
@@ -433,21 +433,21 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, raw CreateInpu
 			coalesce((
 				select max(account_sort_order) + 1000
 				from accounts
-				where tenant_id = $2
+				where workspace_id = $2
 				  and account_group_id is not distinct from $8::uuid
 			), 1000),
 			$9, $10::numeric, $11,
 			$12, $13
 		)
-		returning id, tenant_id, name, nickname, kind::text, currency, institution,
+		returning id, workspace_id, name, nickname, kind::text, currency, institution,
 		          account_group_id, account_sort_order,
 		          open_date, close_date, opening_balance::text, opening_balance_date,
 		          include_in_networth, include_in_savings_rate, archived_at,
 		          created_at, updated_at
-	`, accountID, tenantID, in.Name, in.Nickname, in.Kind, in.Currency, in.Institution,
+	`, accountID, workspaceID, in.Name, in.Nickname, in.Kind, in.Currency, in.Institution,
 		in.AccountGroupID, in.OpenDate, openingBalanceStr, *in.OpeningBalanceDate,
 		*in.IncludeInNetworth, *in.IncludeInSavingsRate).
-		Scan(&acc.ID, &acc.TenantID, &acc.Name, &acc.Nickname, &acc.Kind, &acc.Currency, &acc.Institution,
+		Scan(&acc.ID, &acc.WorkspaceID, &acc.Name, &acc.Nickname, &acc.Kind, &acc.Currency, &acc.Institution,
 			&acc.AccountGroupID, &acc.AccountSortOrder,
 			&acc.OpenDate, &acc.CloseDate, &balance, &acc.OpeningBalanceDate,
 			&acc.IncludeInNetworth, &acc.IncludeInSavingsRate, &acc.ArchivedAt,
@@ -459,11 +459,11 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, raw CreateInpu
 
 	_, err = tx.Exec(ctx, `
 		insert into account_balance_snapshots (
-			id, tenant_id, account_id, as_of, balance, currency, source
+			id, workspace_id, account_id, as_of, balance, currency, source
 		) values (
 			$1, $2, $3, $4, $5::numeric, $6, 'opening'
 		)
-	`, snapshotID, tenantID, accountID, openingTS, openingBalanceStr, in.Currency)
+	`, snapshotID, workspaceID, accountID, openingTS, openingBalanceStr, in.Currency)
 	if err != nil {
 		return nil, fmt.Errorf("insert opening snapshot: %w", err)
 	}
@@ -493,7 +493,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, raw CreateInpu
 // snapshot kinds (end-of-day recomputes, bank syncs) arrive this rule will
 // need revisiting — an end-of-day snapshot would require `>` not `>=`.
 const derivedBalanceSelect = `
-	a.id, a.tenant_id, a.name, a.nickname, a.kind::text, a.currency, a.institution,
+	a.id, a.workspace_id, a.name, a.nickname, a.kind::text, a.currency, a.institution,
 	a.account_group_id, a.account_sort_order,
 	a.open_date, a.close_date, a.opening_balance::text, a.opening_balance_date,
 	a.include_in_networth, a.include_in_savings_rate, a.archived_at,
@@ -530,7 +530,7 @@ func scanAccount(row interface{ Scan(...any) error }, a *Account) error {
 	var asOf *time.Time
 	var balance string
 	if err := row.Scan(
-		&a.ID, &a.TenantID, &a.Name, &a.Nickname, &a.Kind, &a.Currency, &a.Institution,
+		&a.ID, &a.WorkspaceID, &a.Name, &a.Nickname, &a.Kind, &a.Currency, &a.Institution,
 		&a.AccountGroupID, &a.AccountSortOrder,
 		&a.OpenDate, &a.CloseDate, &a.OpeningBalance, &a.OpeningBalanceDate,
 		&a.IncludeInNetworth, &a.IncludeInSavingsRate, &a.ArchivedAt,
@@ -543,16 +543,16 @@ func scanAccount(row interface{ Scan(...any) error }, a *Account) error {
 	return nil
 }
 
-// List returns accounts for tenantID. Archived accounts are hidden unless
+// List returns accounts for workspaceID. Archived accounts are hidden unless
 // includeArchived is true. Balance is derived (see derivedBalanceSelect).
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID, includeArchived bool) ([]Account, error) {
-	q := `select ` + derivedBalanceSelect + derivedBalanceFrom + ` where a.tenant_id = $1`
+func (s *Service) List(ctx context.Context, workspaceID uuid.UUID, includeArchived bool) ([]Account, error) {
+	q := `select ` + derivedBalanceSelect + derivedBalanceFrom + ` where a.workspace_id = $1`
 	if !includeArchived {
 		q += ` and a.archived_at is null`
 	}
 	q += ` order by a.account_group_id nulls first, a.account_sort_order, a.created_at`
 
-	rows, err := s.pool.Query(ctx, q, tenantID)
+	rows, err := s.pool.Query(ctx, q, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("query accounts: %w", err)
 	}
@@ -572,14 +572,14 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, includeArchived 
 	return out, nil
 }
 
-// Get returns a single account by id, scoped to tenantID. Balance is derived
+// Get returns a single account by id, scoped to workspaceID. Balance is derived
 // (see derivedBalanceSelect).
-func (s *Service) Get(ctx context.Context, tenantID, accountID uuid.UUID) (*Account, error) {
+func (s *Service) Get(ctx context.Context, workspaceID, accountID uuid.UUID) (*Account, error) {
 	var a Account
 	row := s.pool.QueryRow(ctx,
 		`select `+derivedBalanceSelect+derivedBalanceFrom+
-			` where a.tenant_id = $1 and a.id = $2`,
-		tenantID, accountID)
+			` where a.workspace_id = $1 and a.id = $2`,
+		workspaceID, accountID)
 	if err := scanAccount(row, &a); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("account")
@@ -592,7 +592,7 @@ func (s *Service) Get(ctx context.Context, tenantID, accountID uuid.UUID) (*Acco
 // Update applies a PATCH to an account. Returns the updated Account.
 // Disallowed fields (kind, currency, opening balance) are not reachable
 // through PatchInput.
-func (s *Service) Update(ctx context.Context, tenantID, accountID uuid.UUID, raw PatchInput) (*Account, error) {
+func (s *Service) Update(ctx context.Context, workspaceID, accountID uuid.UUID, raw PatchInput) (*Account, error) {
 	in, err := raw.normalize()
 	if err != nil {
 		return nil, err
@@ -601,7 +601,7 @@ func (s *Service) Update(ctx context.Context, tenantID, accountID uuid.UUID, raw
 	// Build a dynamic SET clause. We intentionally keep this tiny — no reflection.
 	sets := make([]string, 0, 8)
 	args := make([]any, 0, 10)
-	args = append(args, tenantID, accountID) // $1, $2 used in WHERE
+	args = append(args, workspaceID, accountID) // $1, $2 used in WHERE
 
 	next := func() string {
 		args = append(args, nil) // placeholder; caller overwrites in-place
@@ -683,12 +683,12 @@ func (s *Service) Update(ctx context.Context, tenantID, accountID uuid.UUID, raw
 
 	if len(sets) == 0 {
 		// Nothing to update: behave like a plain GET.
-		return s.Get(ctx, tenantID, accountID)
+		return s.Get(ctx, workspaceID, accountID)
 	}
 
 	query := fmt.Sprintf(`
 		update accounts set %s
-		where tenant_id = $1 and id = $2
+		where workspace_id = $1 and id = $2
 		returning id
 	`, strings.Join(sets, ", "))
 
@@ -700,7 +700,7 @@ func (s *Service) Update(ctx context.Context, tenantID, accountID uuid.UUID, raw
 		}
 		return nil, fmt.Errorf("update account: %w", err)
 	}
-	return s.Get(ctx, tenantID, accountID)
+	return s.Get(ctx, workspaceID, accountID)
 }
 
 // Delete hard-deletes an account. Use Update(Archived=true) for soft
@@ -713,7 +713,7 @@ func (s *Service) Update(ctx context.Context, tenantID, accountID uuid.UUID, raw
 // that step is skipped, the unique index `source_refs_dedupe_idx` later
 // rejects re-imports of the same logical rows with a 23505 collision
 // against orphaned source_refs.
-func (s *Service) Delete(ctx context.Context, tenantID, accountID uuid.UUID) error {
+func (s *Service) Delete(ctx context.Context, workspaceID, accountID uuid.UUID) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin delete account: %w", err)
@@ -722,16 +722,16 @@ func (s *Service) Delete(ctx context.Context, tenantID, accountID uuid.UUID) err
 
 	if _, err := tx.Exec(ctx, `
 		delete from source_refs
-		where tenant_id = $1
+		where workspace_id = $1
 		  and entity_type = 'transaction'
 		  and entity_id in (
-		    select id from transactions where tenant_id = $1 and account_id = $2
+		    select id from transactions where workspace_id = $1 and account_id = $2
 		  )
-	`, tenantID, accountID); err != nil {
+	`, workspaceID, accountID); err != nil {
 		return fmt.Errorf("delete account source_refs: %w", err)
 	}
 
-	tag, err := tx.Exec(ctx, `delete from accounts where tenant_id = $1 and id = $2`, tenantID, accountID)
+	tag, err := tx.Exec(ctx, `delete from accounts where workspace_id = $1 and id = $2`, workspaceID, accountID)
 	if err != nil {
 		return fmt.Errorf("delete account: %w", err)
 	}

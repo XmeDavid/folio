@@ -23,7 +23,7 @@ type Handler struct {
 // NewHandler returns a Handler for svc.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-// Mount installs the routes under a tenant-scoped subrouter.
+// Mount installs the routes under a workspace-scoped subrouter.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/", h.list)
 	r.Post("/", h.create)
@@ -89,9 +89,9 @@ type reorderReq struct {
 }
 
 func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	includeArchived := strings.EqualFold(r.URL.Query().Get("includeArchived"), "true")
-	res, err := h.svc.ListGroups(r.Context(), tenantID, includeArchived)
+	res, err := h.svc.ListGroups(r.Context(), workspaceID, includeArchived)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -100,13 +100,13 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	var req groupReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
 		return
 	}
-	group, err := h.svc.CreateGroup(r.Context(), tenantID, CreateGroupInput{Name: req.Name})
+	group, err := h.svc.CreateGroup(r.Context(), workspaceID, CreateGroupInput{Name: req.Name})
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -115,7 +115,7 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) updateGroup(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	id, err := uuid.Parse(chi.URLParam(r, "groupId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "groupId must be a UUID")
@@ -126,7 +126,7 @@ func (h *Handler) updateGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
 		return
 	}
-	group, err := h.svc.UpdateGroup(r.Context(), tenantID, id, PatchGroupInput{
+	group, err := h.svc.UpdateGroup(r.Context(), workspaceID, id, PatchGroupInput{
 		Name: req.Name, SortOrder: req.SortOrder, Archived: req.Archived,
 	})
 	if err != nil {
@@ -137,13 +137,13 @@ func (h *Handler) updateGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	id, err := uuid.Parse(chi.URLParam(r, "groupId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "groupId must be a UUID")
 		return
 	}
-	if err := h.svc.DeleteGroup(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.DeleteGroup(r.Context(), workspaceID, id); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
@@ -151,9 +151,9 @@ func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	includeArchived := strings.EqualFold(r.URL.Query().Get("includeArchived"), "true")
-	res, err := h.svc.List(r.Context(), tenantID, includeArchived)
+	res, err := h.svc.List(r.Context(), workspaceID, includeArchived)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -162,7 +162,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	var req createReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
@@ -211,7 +211,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		in.OpeningBalanceDate = &t
 	}
 
-	acc, err := h.svc.Create(r.Context(), tenantID, in)
+	acc, err := h.svc.Create(r.Context(), workspaceID, in)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -220,13 +220,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	id, err := uuid.Parse(chi.URLParam(r, "accountId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "accountId must be a UUID")
 		return
 	}
-	acc, err := h.svc.Get(r.Context(), tenantID, id)
+	acc, err := h.svc.Get(r.Context(), workspaceID, id)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -235,7 +235,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	id, err := uuid.Parse(chi.URLParam(r, "accountId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "accountId must be a UUID")
@@ -269,7 +269,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		}
 		in.AccountGroupID = &groupID
 	}
-	acc, err := h.svc.Update(r.Context(), tenantID, id, in)
+	acc, err := h.svc.Update(r.Context(), workspaceID, id, in)
 	if err != nil {
 		var verr *httpx.ValidationError
 		if errors.As(err, &verr) {
@@ -283,7 +283,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) reorder(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	var req reorderReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
@@ -321,7 +321,7 @@ func (h *Handler) reorder(w http.ResponseWriter, r *http.Request) {
 			ID: id, AccountGroupID: groupID, SortOrder: account.SortOrder,
 		})
 	}
-	if err := h.svc.Reorder(r.Context(), tenantID, in); err != nil {
+	if err := h.svc.Reorder(r.Context(), workspaceID, in); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
@@ -329,13 +329,13 @@ func (h *Handler) reorder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	id, err := uuid.Parse(chi.URLParam(r, "accountId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "accountId must be a UUID")
 		return
 	}
-	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.Delete(r.Context(), workspaceID, id); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}

@@ -27,24 +27,24 @@ func newAuthService(t *testing.T) *auth.Service {
 	})
 }
 
-func TestSignup_WithInviteToken_JoinsInvitedTenantAndConsumesInvite(t *testing.T) {
+func TestSignup_WithInviteToken_JoinsInvitedWorkspaceAndConsumesInvite(t *testing.T) {
 	pool := testdb.Open(t)
 	authSvc := newAuthService(t)
 	inviteSvc := identity.NewInviteService(pool)
 
-	tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice "+t.Name())
+	workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice "+t.Name())
 	alice := testdb.CreateTestUser(t, pool, uniqueEmail(t, "alice"), true)
-	testdb.CreateTestMembership(t, pool, tenantID, alice, "owner")
+	testdb.CreateTestMembership(t, pool, workspaceID, alice, "owner")
 	bobEmail := uniqueEmail(t, "bob")
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `delete from tenant_invites where tenant_id = $1`, tenantID)
-		_, _ = pool.Exec(context.Background(), `delete from tenant_memberships where tenant_id = $1`, tenantID)
+		_, _ = pool.Exec(context.Background(), `delete from workspace_invites where workspace_id = $1`, workspaceID)
+		_, _ = pool.Exec(context.Background(), `delete from workspace_memberships where workspace_id = $1`, workspaceID)
 		_, _ = pool.Exec(context.Background(), `delete from users where email = $1 or id = $2`, bobEmail, alice)
-		_, _ = pool.Exec(context.Background(), `delete from tenants where id = $1`, tenantID)
+		_, _ = pool.Exec(context.Background(), `delete from workspaces where id = $1`, workspaceID)
 		_, _ = pool.Exec(context.Background(), `delete from sessions`)
 	})
 
-	_, plaintext, err := inviteSvc.Create(context.Background(), tenantID, alice, bobEmail, identity.RoleMember)
+	_, plaintext, err := inviteSvc.Create(context.Background(), workspaceID, alice, bobEmail, identity.RoleMember)
 	if err != nil {
 		t.Fatalf("Create invite: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestSignup_WithInviteToken_JoinsInvitedTenantAndConsumesInvite(t *testing.T
 
 	var count int
 	if err := pool.QueryRow(context.Background(),
-		`select count(*) from tenant_memberships where user_id = $1`, res.User.ID).Scan(&count); err != nil {
+		`select count(*) from workspace_memberships where user_id = $1`, res.User.ID).Scan(&count); err != nil {
 		t.Fatalf("count memberships: %v", err)
 	}
 	if count != 2 {
@@ -72,7 +72,7 @@ func TestSignup_WithInviteToken_JoinsInvitedTenantAndConsumesInvite(t *testing.T
 
 	var accepted bool
 	if err := pool.QueryRow(context.Background(),
-		`select accepted_at is not null from tenant_invites where tenant_id = $1`, tenantID).Scan(&accepted); err != nil {
+		`select accepted_at is not null from workspace_invites where workspace_id = $1`, workspaceID).Scan(&accepted); err != nil {
 		t.Fatalf("check invite: %v", err)
 	}
 	if !accepted {
@@ -81,8 +81,8 @@ func TestSignup_WithInviteToken_JoinsInvitedTenantAndConsumesInvite(t *testing.T
 
 	var auditCount int
 	_ = pool.QueryRow(context.Background(),
-		`select count(*) from audit_events where action = 'member.invite_accepted' and tenant_id = $1`,
-		tenantID).Scan(&auditCount)
+		`select count(*) from audit_events where action = 'member.invite_accepted' and workspace_id = $1`,
+		workspaceID).Scan(&auditCount)
 	if auditCount != 1 {
 		t.Errorf("want 1 member.invite_accepted audit, got %d", auditCount)
 	}
@@ -93,17 +93,17 @@ func TestSignup_WithInviteToken_EmailMismatchRejects(t *testing.T) {
 	authSvc := newAuthService(t)
 	inviteSvc := identity.NewInviteService(pool)
 
-	tenantID, _ := testdb.CreateTestTenant(t, pool, "Alice "+t.Name())
+	workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Alice "+t.Name())
 	alice := testdb.CreateTestUser(t, pool, uniqueEmail(t, "alice"), true)
-	testdb.CreateTestMembership(t, pool, tenantID, alice, "owner")
+	testdb.CreateTestMembership(t, pool, workspaceID, alice, "owner")
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `delete from tenant_invites where tenant_id = $1`, tenantID)
-		_, _ = pool.Exec(context.Background(), `delete from tenant_memberships where tenant_id = $1`, tenantID)
+		_, _ = pool.Exec(context.Background(), `delete from workspace_invites where workspace_id = $1`, workspaceID)
+		_, _ = pool.Exec(context.Background(), `delete from workspace_memberships where workspace_id = $1`, workspaceID)
 		_, _ = pool.Exec(context.Background(), `delete from users where id = $1`, alice)
-		_, _ = pool.Exec(context.Background(), `delete from tenants where id = $1`, tenantID)
+		_, _ = pool.Exec(context.Background(), `delete from workspaces where id = $1`, workspaceID)
 	})
 
-	_, plaintext, err := inviteSvc.Create(context.Background(), tenantID, alice, uniqueEmail(t, "bob"), identity.RoleMember)
+	_, plaintext, err := inviteSvc.Create(context.Background(), workspaceID, alice, uniqueEmail(t, "bob"), identity.RoleMember)
 	if err != nil {
 		t.Fatal(err)
 	}

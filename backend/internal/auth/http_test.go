@@ -12,14 +12,14 @@ import (
 	"github.com/xmedavid/folio/backend/internal/testdb"
 )
 
-func TestSignupHTTP_createsUserTenantMembershipAndCookie(t *testing.T) {
+func TestSignupHTTP_createsUserWorkspaceMembershipAndCookie(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()
-	// Clean slate (cascades through tenants, memberships, sessions).
+	// Clean slate (cascades through workspaces, memberships, sessions).
 	if _, err := pool.Exec(ctx, `
-		truncate audit_events, tenant_memberships, tenant_invites, sessions,
+		truncate audit_events, workspace_memberships, workspace_invites, sessions,
 		         auth_tokens, auth_recovery_codes, webauthn_credentials,
-		         totp_credentials, user_preferences, users, tenants cascade
+		         totp_credentials, user_preferences, users, workspaces cascade
 	`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
@@ -57,9 +57,9 @@ func TestSignupHTTP_createsUserTenantMembershipAndCookie(t *testing.T) {
 
 	// Clean up what this test created so it doesn't leak into the next test.
 	_, _ = pool.Exec(ctx, `
-		truncate audit_events, tenant_memberships, tenant_invites, sessions,
+		truncate audit_events, workspace_memberships, workspace_invites, sessions,
 		         auth_tokens, auth_recovery_codes, webauthn_credentials,
-		         totp_credentials, user_preferences, users, tenants cascade
+		         totp_credentials, user_preferences, users, workspaces cascade
 	`)
 }
 
@@ -67,9 +67,9 @@ func TestLogoutHTTP_writesAuditEventAndDeletesSession(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `
-		truncate audit_events, tenant_memberships, tenant_invites, sessions,
+		truncate audit_events, workspace_memberships, workspace_invites, sessions,
 		         auth_tokens, auth_recovery_codes, webauthn_credentials,
-		         totp_credentials, user_preferences, users, tenants cascade
+		         totp_credentials, user_preferences, users, workspaces cascade
 	`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
@@ -145,8 +145,8 @@ func TestLogoutHTTP_writesAuditEventAndDeletesSession(t *testing.T) {
 
 	// Clean up.
 	_, _ = pool.Exec(ctx, `
-		truncate audit_events, tenant_memberships, tenant_invites, sessions,
+		truncate audit_events, workspace_memberships, workspace_invites, sessions,
 		         auth_tokens, auth_recovery_codes, webauthn_credentials,
-		         totp_credentials, user_preferences, users, tenants cascade
+		         totp_credentials, user_preferences, users, workspaces cascade
 	`)
 }

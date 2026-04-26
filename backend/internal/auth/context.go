@@ -12,7 +12,7 @@ type ctxKey string
 const (
 	ctxKeyUser    ctxKey = "folio.auth.user"
 	ctxKeySession ctxKey = "folio.auth.session"
-	ctxKeyTenant  ctxKey = "folio.auth.tenant"
+	ctxKeyWorkspace ctxKey = "folio.auth.workspace"
 	ctxKeyRole    ctxKey = "folio.auth.role"
 )
 
@@ -53,25 +53,25 @@ func MustSession(r *http.Request) Session {
 	return s
 }
 
-// WithTenant / TenantFromCtx attach the tenant under inspection.
-func WithTenant(ctx context.Context, t identity.Tenant) context.Context {
-	return context.WithValue(ctx, ctxKeyTenant, t)
+// WithWorkspace / WorkspaceFromCtx attach the workspace under inspection.
+func WithWorkspace(ctx context.Context, t identity.Workspace) context.Context {
+	return context.WithValue(ctx, ctxKeyWorkspace, t)
 }
 
-func TenantFromCtx(ctx context.Context) (identity.Tenant, bool) {
-	t, ok := ctx.Value(ctxKeyTenant).(identity.Tenant)
+func WorkspaceFromCtx(ctx context.Context) (identity.Workspace, bool) {
+	t, ok := ctx.Value(ctxKeyWorkspace).(identity.Workspace)
 	return t, ok
 }
 
-func MustTenant(r *http.Request) identity.Tenant {
-	t, ok := TenantFromCtx(r.Context())
+func MustWorkspace(r *http.Request) identity.Workspace {
+	t, ok := WorkspaceFromCtx(r.Context())
 	if !ok {
-		panic("MustTenant called without RequireMembership upstream")
+		panic("MustWorkspace called without RequireMembership upstream")
 	}
 	return t
 }
 
-// WithRole / RoleFromCtx attach the caller's role in the current tenant.
+// WithRole / RoleFromCtx attach the caller's role in the current workspace.
 func WithRole(ctx context.Context, r identity.Role) context.Context {
 	return context.WithValue(ctx, ctxKeyRole, r)
 }

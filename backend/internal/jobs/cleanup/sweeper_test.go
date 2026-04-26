@@ -9,24 +9,24 @@ import (
 	"github.com/xmedavid/folio/backend/internal/testdb"
 )
 
-func TestSweeper_Run_HardDeletesTenantsPastGrace(t *testing.T) {
+func TestSweeper_Run_HardDeletesWorkspacesPastGrace(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()
 
-	oldID, _ := testdb.CreateTestTenant(t, pool, "Old "+t.Name())
-	recentID, _ := testdb.CreateTestTenant(t, pool, "Recent "+t.Name())
-	freshID, _ := testdb.CreateTestTenant(t, pool, "Fresh "+t.Name())
+	oldID, _ := testdb.CreateTestWorkspace(t, pool, "Old "+t.Name())
+	recentID, _ := testdb.CreateTestWorkspace(t, pool, "Recent "+t.Name())
+	freshID, _ := testdb.CreateTestWorkspace(t, pool, "Fresh "+t.Name())
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `delete from tenants where id in ($1, $2, $3)`,
+		_, _ = pool.Exec(ctx, `delete from workspaces where id in ($1, $2, $3)`,
 			oldID, recentID, freshID)
 	})
 
 	if _, err := pool.Exec(ctx,
-		`update tenants set deleted_at = now() - interval '31 days' where id = $1`, oldID); err != nil {
+		`update workspaces set deleted_at = now() - interval '31 days' where id = $1`, oldID); err != nil {
 		t.Fatalf("age old: %v", err)
 	}
 	if _, err := pool.Exec(ctx,
-		`update tenants set deleted_at = now() - interval '5 days' where id = $1`, recentID); err != nil {
+		`update workspaces set deleted_at = now() - interval '5 days' where id = $1`, recentID); err != nil {
 		t.Fatalf("age recent: %v", err)
 	}
 	// freshID is not soft-deleted.
@@ -42,15 +42,15 @@ func TestSweeper_Run_HardDeletesTenantsPastGrace(t *testing.T) {
 		t.Fatalf("unexpected deleted ids: %+v (want [%s])", report.DeletedIDs, oldID)
 	}
 
-	// The recent + fresh tenants must still exist.
+	// The recent + fresh workspaces must still exist.
 	var remaining int
 	if err := pool.QueryRow(ctx,
-		`select count(*) from tenants where id in ($1, $2, $3)`,
+		`select count(*) from workspaces where id in ($1, $2, $3)`,
 		oldID, recentID, freshID).Scan(&remaining); err != nil {
 		t.Fatalf("count remaining: %v", err)
 	}
 	if remaining != 2 {
-		t.Fatalf("want 2 remaining tenants, got %d", remaining)
+		t.Fatalf("want 2 remaining workspaces, got %d", remaining)
 	}
 }
 

@@ -70,7 +70,7 @@ func (h *Handler) MountCategorizationRules(r chi.Router) {
 // merchant, and countAsExpense only write when those fields are currently
 // null; tags are always added idempotently.
 func (h *Handler) ApplyRulesToTransactionHandler(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -78,7 +78,7 @@ func (h *Handler) ApplyRulesToTransactionHandler(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	res, err := h.svc.ApplyRulesToTransaction(r.Context(), tenantID, txID)
+	res, err := h.svc.ApplyRulesToTransaction(r.Context(), workspaceID, txID)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -88,8 +88,8 @@ func (h *Handler) ApplyRulesToTransactionHandler(w http.ResponseWriter, r *http.
 
 // ---- shared helpers --------------------------------------------------------
 
-func requireTenant(_ http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	return auth.MustTenant(r).ID, true
+func requireWorkspace(_ http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	return auth.MustWorkspace(r).ID, true
 }
 
 func parseUUIDParam(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, bool) {
@@ -124,11 +124,11 @@ type categoryPatchReq struct {
 }
 
 func (h *Handler) listCategories(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
-	res, err := h.svc.ListCategories(r.Context(), tenantID, includeArchived(r))
+	res, err := h.svc.ListCategories(r.Context(), workspaceID, includeArchived(r))
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -137,7 +137,7 @@ func (h *Handler) listCategories(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createCategory(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -159,7 +159,7 @@ func (h *Handler) createCategory(w http.ResponseWriter, r *http.Request) {
 		}
 		in.ParentID = &id
 	}
-	res, err := h.svc.CreateCategory(r.Context(), tenantID, in)
+	res, err := h.svc.CreateCategory(r.Context(), workspaceID, in)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -168,7 +168,7 @@ func (h *Handler) createCategory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getCategory(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -176,7 +176,7 @@ func (h *Handler) getCategory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.GetCategory(r.Context(), tenantID, id)
+	res, err := h.svc.GetCategory(r.Context(), workspaceID, id)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -185,7 +185,7 @@ func (h *Handler) getCategory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) updateCategory(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -205,7 +205,7 @@ func (h *Handler) updateCategory(w http.ResponseWriter, r *http.Request) {
 		SortOrder: req.SortOrder,
 		Archived:  req.Archived,
 	}
-	res, err := h.svc.UpdateCategory(r.Context(), tenantID, id, in)
+	res, err := h.svc.UpdateCategory(r.Context(), workspaceID, id, in)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -214,7 +214,7 @@ func (h *Handler) updateCategory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteCategory(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -222,7 +222,7 @@ func (h *Handler) deleteCategory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.ArchiveCategory(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.ArchiveCategory(r.Context(), workspaceID, id); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
@@ -251,11 +251,11 @@ type merchantPatchReq struct {
 }
 
 func (h *Handler) listMerchants(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
-	res, err := h.svc.ListMerchants(r.Context(), tenantID, includeArchived(r))
+	res, err := h.svc.ListMerchants(r.Context(), workspaceID, includeArchived(r))
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -264,7 +264,7 @@ func (h *Handler) listMerchants(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createMerchant(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -288,7 +288,7 @@ func (h *Handler) createMerchant(w http.ResponseWriter, r *http.Request) {
 		}
 		in.DefaultCategoryID = &id
 	}
-	res, err := h.svc.CreateMerchant(r.Context(), tenantID, in)
+	res, err := h.svc.CreateMerchant(r.Context(), workspaceID, in)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -297,7 +297,7 @@ func (h *Handler) createMerchant(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getMerchant(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -305,7 +305,7 @@ func (h *Handler) getMerchant(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.GetMerchant(r.Context(), tenantID, id)
+	res, err := h.svc.GetMerchant(r.Context(), workspaceID, id)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -314,7 +314,7 @@ func (h *Handler) getMerchant(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) updateMerchant(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -336,7 +336,7 @@ func (h *Handler) updateMerchant(w http.ResponseWriter, r *http.Request) {
 		Notes:             req.Notes,
 		Archived:          req.Archived,
 	}
-	res, err := h.svc.UpdateMerchant(r.Context(), tenantID, id, in)
+	res, err := h.svc.UpdateMerchant(r.Context(), workspaceID, id, in)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -345,7 +345,7 @@ func (h *Handler) updateMerchant(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteMerchant(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -353,7 +353,7 @@ func (h *Handler) deleteMerchant(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.ArchiveMerchant(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.ArchiveMerchant(r.Context(), workspaceID, id); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
@@ -374,11 +374,11 @@ type tagPatchReq struct {
 }
 
 func (h *Handler) listTags(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
-	res, err := h.svc.ListTags(r.Context(), tenantID, includeArchived(r))
+	res, err := h.svc.ListTags(r.Context(), workspaceID, includeArchived(r))
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -387,7 +387,7 @@ func (h *Handler) listTags(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createTag(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -397,7 +397,7 @@ func (h *Handler) createTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := TagCreateInput{Name: req.Name, Color: req.Color}
-	res, err := h.svc.CreateTag(r.Context(), tenantID, in)
+	res, err := h.svc.CreateTag(r.Context(), workspaceID, in)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -406,7 +406,7 @@ func (h *Handler) createTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getTag(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -414,7 +414,7 @@ func (h *Handler) getTag(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.GetTag(r.Context(), tenantID, id)
+	res, err := h.svc.GetTag(r.Context(), workspaceID, id)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -423,7 +423,7 @@ func (h *Handler) getTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) updateTag(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -437,7 +437,7 @@ func (h *Handler) updateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := TagPatchInput{Name: req.Name, Color: req.Color, Archived: req.Archived}
-	res, err := h.svc.UpdateTag(r.Context(), tenantID, id, in)
+	res, err := h.svc.UpdateTag(r.Context(), workspaceID, id, in)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -446,7 +446,7 @@ func (h *Handler) updateTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteTag(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -454,7 +454,7 @@ func (h *Handler) deleteTag(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.ArchiveTag(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.ArchiveTag(r.Context(), workspaceID, id); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
@@ -464,7 +464,7 @@ func (h *Handler) deleteTag(w http.ResponseWriter, r *http.Request) {
 // ---- transaction tags ------------------------------------------------------
 
 func (h *Handler) applyTag(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -476,7 +476,7 @@ func (h *Handler) applyTag(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.AddTransactionTag(r.Context(), tenantID, txID, tagID); err != nil {
+	if err := h.svc.AddTransactionTag(r.Context(), workspaceID, txID, tagID); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
@@ -484,7 +484,7 @@ func (h *Handler) applyTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) removeTag(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -496,7 +496,7 @@ func (h *Handler) removeTag(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.RemoveTransactionTag(r.Context(), tenantID, txID, tagID); err != nil {
+	if err := h.svc.RemoveTransactionTag(r.Context(), workspaceID, txID, tagID); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
@@ -520,12 +520,12 @@ type rulePatchReq struct {
 }
 
 func (h *Handler) listRules(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
 	f := ClassificationRuleListFromQuery(r)
-	res, err := h.svc.ListRules(r.Context(), tenantID, f)
+	res, err := h.svc.ListRules(r.Context(), workspaceID, f)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -554,7 +554,7 @@ func ClassificationRuleListFromQuery(r *http.Request) RuleListFilter {
 }
 
 func (h *Handler) createRule(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -569,7 +569,7 @@ func (h *Handler) createRule(w http.ResponseWriter, r *http.Request) {
 		When:     req.When,
 		Then:     req.Then,
 	}
-	res, err := h.svc.CreateRule(r.Context(), tenantID, in)
+	res, err := h.svc.CreateRule(r.Context(), workspaceID, in)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -578,7 +578,7 @@ func (h *Handler) createRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getRule(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -586,7 +586,7 @@ func (h *Handler) getRule(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.GetRule(r.Context(), tenantID, id)
+	res, err := h.svc.GetRule(r.Context(), workspaceID, id)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -595,7 +595,7 @@ func (h *Handler) getRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) updateRule(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -614,7 +614,7 @@ func (h *Handler) updateRule(w http.ResponseWriter, r *http.Request) {
 		When:     req.When,
 		Then:     req.Then,
 	}
-	res, err := h.svc.UpdateRule(r.Context(), tenantID, id, in)
+	res, err := h.svc.UpdateRule(r.Context(), workspaceID, id, in)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -623,7 +623,7 @@ func (h *Handler) updateRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteRule(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireTenant(w, r)
+	workspaceID, ok := requireWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -631,7 +631,7 @@ func (h *Handler) deleteRule(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteRule(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.DeleteRule(r.Context(), workspaceID, id); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}

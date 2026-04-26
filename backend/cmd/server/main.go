@@ -51,7 +51,7 @@ func main() {
 
 	workers := river.NewWorkers()
 	river.AddWorker(workers, jobs.NewSendEmailWorker(mailClient))
-	river.AddWorker(workers, jobs.NewSweepSoftDeletedTenantsWorker(pool, 30*24*time.Hour))
+	river.AddWorker(workers, jobs.NewSweepSoftDeletedWorkspacesWorker(pool, 30*24*time.Hour))
 	jobClient, err := jobs.NewClient(pool, workers, jobs.Config{
 		Queues: map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 5}},
 	})

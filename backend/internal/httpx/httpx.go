@@ -1,5 +1,5 @@
 // Package httpx contains small HTTP helpers shared across feature packages:
-// typed errors and JSON response writers. Authentication and tenant context
+// typed errors and JSON response writers. Authentication and workspace context
 // live in backend/internal/auth.
 package httpx
 

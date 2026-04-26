@@ -20,16 +20,16 @@ type Report struct {
 	FinishedAt   time.Time
 }
 
-// Run hard-deletes every tenant whose deleted_at is older than gracePeriod.
-// Returns a Report listing the removed tenants. Cascades propagate via the
-// existing tenant_id FKs (accounts, transactions, memberships, …); this
-// function is the only place in the codebase that deletes a tenant row
+// Run hard-deletes every workspace whose deleted_at is older than gracePeriod.
+// Returns a Report listing the removed workspaces. Cascades propagate via the
+// existing workspace_id FKs (accounts, transactions, memberships, …); this
+// function is the only place in the codebase that deletes a workspace row
 // permanently.
 func Run(ctx context.Context, pool *pgxpool.Pool, gracePeriod time.Duration) (*Report, error) {
 	r := &Report{StartedAt: time.Now()}
 	// pgx can bind a time.Duration to an interval via the string form.
 	rows, err := pool.Query(ctx, `
-		delete from tenants
+		delete from workspaces
 		where deleted_at is not null
 		  and deleted_at < now() - make_interval(secs => $1)
 		returning id::text

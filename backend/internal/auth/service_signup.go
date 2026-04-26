@@ -28,7 +28,7 @@ type SignupInput struct {
 	Email          string
 	Password       string
 	DisplayName    string
-	TenantName     string
+	WorkspaceName     string
 	BaseCurrency   string
 	CycleAnchorDay int
 	Locale         string
@@ -41,7 +41,7 @@ type SignupInput struct {
 func (in SignupInput) normalize() (SignupInput, error) {
 	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
 	in.DisplayName = strings.TrimSpace(in.DisplayName)
-	in.TenantName = strings.TrimSpace(in.TenantName)
+	in.WorkspaceName = strings.TrimSpace(in.WorkspaceName)
 	in.Locale = strings.TrimSpace(in.Locale)
 	in.Timezone = strings.TrimSpace(in.Timezone)
 	if in.Email == "" || !strings.Contains(in.Email, "@") {
@@ -53,13 +53,13 @@ func (in SignupInput) normalize() (SignupInput, error) {
 	if err := CheckPasswordPolicy(in.Password, in.Email, in.DisplayName); err != nil {
 		return in, err
 	}
-	if in.TenantName == "" {
+	if in.WorkspaceName == "" {
 		fields := strings.Fields(in.DisplayName)
 		first := in.DisplayName
 		if len(fields) > 0 {
 			first = fields[0]
 		}
-		in.TenantName = fmt.Sprintf("%s's Workspace", first)
+		in.WorkspaceName = fmt.Sprintf("%s's Workspace", first)
 	}
 	if in.Locale == "" {
 		in.Locale = "en-US"
@@ -87,12 +87,12 @@ func (in SignupInput) normalize() (SignupInput, error) {
 // SignupResult is returned by Signup.
 type SignupResult struct {
 	User         identity.User
-	Tenant       identity.Tenant
+	Workspace       identity.Workspace
 	Membership   identity.Membership
 	SessionToken string
 }
 
-// Signup creates a user, their Personal tenant, an owner membership, and a
+// Signup creates a user, their Personal workspace, an owner membership, and a
 // session — all in one transaction. Returns the plaintext session token for
 // the handler to set in a cookie.
 func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, error) {
@@ -120,10 +120,10 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 	err = tx.QueryRow(ctx, `
 		insert into users (id, email, password_hash, display_name)
 		values ($1, $2, $3, $4)
-		returning id, email, display_name, email_verified_at, is_admin, last_tenant_id, created_at
+		returning id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at
 	`, userID, in.Email, hash, in.DisplayName).Scan(
 		&user.ID, &user.Email, &user.DisplayName, &user.EmailVerifiedAt,
-		&user.IsAdmin, &user.LastTenantID, &user.CreatedAt,
+		&user.IsAdmin, &user.LastWorkspaceID, &user.CreatedAt,
 	)
 	if err != nil {
 		if isUsersEmailKey(err) {
@@ -132,26 +132,26 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 		return nil, fmt.Errorf("insert user: %w", err)
 	}
 
-	tenantCI := identity.CreateTenantInput{
-		Name: in.TenantName, BaseCurrency: in.BaseCurrency,
+	workspaceCI := identity.CreateWorkspaceInput{
+		Name: in.WorkspaceName, BaseCurrency: in.BaseCurrency,
 		CycleAnchorDay: in.CycleAnchorDay, Locale: in.Locale, Timezone: in.Timezone,
 	}
-	if _, err := tenantCI.Normalize(); err != nil {
+	if _, err := workspaceCI.Normalize(); err != nil {
 		return nil, err
 	}
-	tenant, err := identity.InsertTenantTx(ctx, tx, uuidx.New(), tenantCI)
+	workspace, err := identity.InsertWorkspaceTx(ctx, tx, uuidx.New(), workspaceCI)
 	if err != nil {
 		return nil, err
 	}
-	membership, err := identity.InsertMembershipTx(ctx, tx, tenant.ID, userID, identity.RoleOwner)
+	membership, err := identity.InsertMembershipTx(ctx, tx, workspace.ID, userID, identity.RoleOwner)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err := tx.Exec(ctx, `update users set last_tenant_id = $1 where id = $2`, tenant.ID, userID); err != nil {
-		return nil, fmt.Errorf("set last_tenant_id: %w", err)
+	if _, err := tx.Exec(ctx, `update users set last_workspace_id = $1 where id = $2`, workspace.ID, userID); err != nil {
+		return nil, fmt.Errorf("set last_workspace_id: %w", err)
 	}
-	user.LastTenantID = &tenant.ID
+	user.LastWorkspaceID = &workspace.ID
 
 	plaintext, _ := GenerateSessionToken()
 	sid := SessionIDFromToken(plaintext)
@@ -163,11 +163,11 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 		return nil, fmt.Errorf("insert session: %w", err)
 	}
 
-	// Audit: user.signup and tenant.created.
-	if err := writeAuditTx(ctx, tx, &tenant.ID, &userID, "user.signup", "user", userID, nil, nil, in.IP, in.UserAgent); err != nil {
+	// Audit: user.signup and workspace.created.
+	if err := writeAuditTx(ctx, tx, &workspace.ID, &userID, "user.signup", "user", userID, nil, nil, in.IP, in.UserAgent); err != nil {
 		return nil, err
 	}
-	if err := writeAuditTx(ctx, tx, &tenant.ID, &userID, "tenant.created", "tenant", tenant.ID, nil, nil, in.IP, in.UserAgent); err != nil {
+	if err := writeAuditTx(ctx, tx, &workspace.ID, &userID, "workspace.created", "workspace", workspace.ID, nil, nil, in.IP, in.UserAgent); err != nil {
 		return nil, err
 	}
 	verifyPlaintext, verifyHash := GenerateSessionToken()
@@ -196,7 +196,7 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 	if in.InviteToken != "" {
 		var (
 			inviteID     uuid.UUID
-			invTenantID  uuid.UUID
+			invWorkspaceID  uuid.UUID
 			inviteEmail  string
 			inviteRole   string
 			inviteExpiry time.Time
@@ -204,9 +204,9 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 			acceptedAt   *time.Time
 		)
 		err := tx.QueryRow(ctx, `
-			select id, tenant_id, email, role::text, expires_at, revoked_at, accepted_at
-			from tenant_invites where token_hash = $1 for update
-		`, identity.HashInviteToken(in.InviteToken)).Scan(&inviteID, &invTenantID, &inviteEmail,
+			select id, workspace_id, email, role::text, expires_at, revoked_at, accepted_at
+			from workspace_invites where token_hash = $1 for update
+		`, identity.HashInviteToken(in.InviteToken)).Scan(&inviteID, &invWorkspaceID, &inviteEmail,
 			&inviteRole, &inviteExpiry, &revokedAt, &acceptedAt)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -227,16 +227,16 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 			return nil, identity.ErrInviteEmailMismatch
 		}
 		if _, err := tx.Exec(ctx, `
-			insert into tenant_memberships (tenant_id, user_id, role)
-			values ($1, $2, $3::tenant_role)
-		`, invTenantID, userID, inviteRole); err != nil {
+			insert into workspace_memberships (workspace_id, user_id, role)
+			values ($1, $2, $3::workspace_role)
+		`, invWorkspaceID, userID, inviteRole); err != nil {
 			return nil, fmt.Errorf("insert invited membership: %w", err)
 		}
 		if _, err := tx.Exec(ctx,
-			`update tenant_invites set accepted_at = now() where id = $1`, inviteID); err != nil {
+			`update workspace_invites set accepted_at = now() where id = $1`, inviteID); err != nil {
 			return nil, fmt.Errorf("consume invite: %w", err)
 		}
-		if err := writeAuditTx(ctx, tx, &invTenantID, &userID, "member.invite_accepted",
+		if err := writeAuditTx(ctx, tx, &invWorkspaceID, &userID, "member.invite_accepted",
 			"invite", inviteID, nil, map[string]any{"role": inviteRole, "email": inviteEmail},
 			in.IP, in.UserAgent); err != nil {
 			return nil, err
@@ -256,7 +256,7 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
-	return &SignupResult{User: user, Tenant: tenant, Membership: membership, SessionToken: plaintext}, nil
+	return &SignupResult{User: user, Workspace: workspace, Membership: membership, SessionToken: plaintext}, nil
 }
 
 // enforceRegistrationModeTx runs inside the signup transaction so the

@@ -48,9 +48,9 @@ var (
 func (s *Service) GetUserByID(ctx context.Context, userID uuid.UUID) (identity.User, error) {
 	var user identity.User
 	err := s.pool.QueryRow(ctx, `
-		select id, email, display_name, email_verified_at, is_admin, last_tenant_id, created_at
+		select id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at
 		from users where id = $1
-	`, userID).Scan(&user.ID, &user.Email, &user.DisplayName, &user.EmailVerifiedAt, &user.IsAdmin, &user.LastTenantID, &user.CreatedAt)
+	`, userID).Scan(&user.ID, &user.Email, &user.DisplayName, &user.EmailVerifiedAt, &user.IsAdmin, &user.LastWorkspaceID, &user.CreatedAt)
 	return user, err
 }
 

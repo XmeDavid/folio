@@ -31,7 +31,7 @@ type RuleApplyResult struct {
 // tags and now category/merchant/count_as_expense directly).
 type AppliedTransaction struct {
 	ID               uuid.UUID  `json:"id"`
-	TenantID         uuid.UUID  `json:"tenantId"`
+	WorkspaceID         uuid.UUID  `json:"workspaceId"`
 	AccountID        uuid.UUID  `json:"accountId"`
 	Status           string     `json:"status"`
 	BookedAt         time.Time  `json:"bookedAt"`
@@ -55,7 +55,7 @@ type AppliedTransaction struct {
 // It carries only the fields rules match on or write to, plus the UUID.
 type transactionSnapshot struct {
 	ID              uuid.UUID
-	TenantID        uuid.UUID
+	WorkspaceID        uuid.UUID
 	AccountID       uuid.UUID
 	Amount          decimal.Decimal
 	CounterpartyRaw *string
@@ -136,19 +136,19 @@ func RuleMatches(r *Rule, tx *transactionSnapshot) bool {
 //
 // The whole flow runs in a single DB transaction so a partial apply can't
 // leak (e.g. tags inserted without the field updates).
-func (s *Service) ApplyRulesToTransaction(ctx context.Context, tenantID, transactionID uuid.UUID) (*RuleApplyResult, error) {
+func (s *Service) ApplyRulesToTransaction(ctx context.Context, workspaceID, transactionID uuid.UUID) (*RuleApplyResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	snap, err := loadTransactionSnapshot(ctx, tx, tenantID, transactionID)
+	snap, err := loadTransactionSnapshot(ctx, tx, workspaceID, transactionID)
 	if err != nil {
 		return nil, err
 	}
 
-	rules, err := loadEnabledRules(ctx, tx, tenantID)
+	rules, err := loadEnabledRules(ctx, tx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +163,7 @@ func (s *Service) ApplyRulesToTransaction(ctx context.Context, tenantID, transac
 
 	if matched == nil {
 		// Nothing to do; return the current transaction view.
-		applied, err := loadAppliedTransaction(ctx, tx, tenantID, transactionID)
+		applied, err := loadAppliedTransaction(ctx, tx, workspaceID, transactionID)
 		if err != nil {
 			return nil, err
 		}
@@ -173,18 +173,18 @@ func (s *Service) ApplyRulesToTransaction(ctx context.Context, tenantID, transac
 		return &RuleApplyResult{Matched: false, Transaction: applied}, nil
 	}
 
-	if err := applyThenToTransaction(ctx, tx, tenantID, snap, matched.Then); err != nil {
+	if err := applyThenToTransaction(ctx, tx, workspaceID, snap, matched.Then); err != nil {
 		return nil, err
 	}
 
 	if _, err := tx.Exec(ctx, `
 		update categorization_rules set last_matched_at = now()
-		where tenant_id = $1 and id = $2
-	`, tenantID, matched.ID); err != nil {
+		where workspace_id = $1 and id = $2
+	`, workspaceID, matched.ID); err != nil {
 		return nil, fmt.Errorf("stamp last_matched_at: %w", err)
 	}
 
-	applied, err := loadAppliedTransaction(ctx, tx, tenantID, transactionID)
+	applied, err := loadAppliedTransaction(ctx, tx, workspaceID, transactionID)
 	if err != nil {
 		return nil, err
 	}
@@ -197,16 +197,16 @@ func (s *Service) ApplyRulesToTransaction(ctx context.Context, tenantID, transac
 	return &RuleApplyResult{Matched: true, RuleID: &ruleID, Transaction: applied}, nil
 }
 
-func loadTransactionSnapshot(ctx context.Context, tx pgx.Tx, tenantID, transactionID uuid.UUID) (*transactionSnapshot, error) {
+func loadTransactionSnapshot(ctx context.Context, tx pgx.Tx, workspaceID, transactionID uuid.UUID) (*transactionSnapshot, error) {
 	var snap transactionSnapshot
 	var amountStr string
 	err := tx.QueryRow(ctx, `
-		select id, tenant_id, account_id, amount::text,
+		select id, workspace_id, account_id, amount::text,
 		       counterparty_raw, description, merchant_id, category_id, count_as_expense
 		from transactions
-		where tenant_id = $1 and id = $2
-	`, tenantID, transactionID).Scan(
-		&snap.ID, &snap.TenantID, &snap.AccountID, &amountStr,
+		where workspace_id = $1 and id = $2
+	`, workspaceID, transactionID).Scan(
+		&snap.ID, &snap.WorkspaceID, &snap.AccountID, &amountStr,
 		&snap.CounterpartyRaw, &snap.Description,
 		&snap.MerchantID, &snap.CategoryID, &snap.CountAsExpense,
 	)
@@ -224,11 +224,11 @@ func loadTransactionSnapshot(ctx context.Context, tx pgx.Tx, tenantID, transacti
 	return &snap, nil
 }
 
-func loadEnabledRules(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]Rule, error) {
+func loadEnabledRules(ctx context.Context, tx pgx.Tx, workspaceID uuid.UUID) ([]Rule, error) {
 	rows, err := tx.Query(ctx,
 		`select `+rulesCols+` from categorization_rules
-		 where tenant_id = $1 and enabled = true
-		 order by priority asc, created_at asc`, tenantID)
+		 where workspace_id = $1 and enabled = true
+		 order by priority asc, created_at asc`, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("query rules: %w", err)
 	}
@@ -248,9 +248,9 @@ func loadEnabledRules(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]Rul
 // row and its tag set. Manual overrides win: we only write category_id,
 // merchant_id, and count_as_expense when those fields are currently NULL.
 // Tags are always added idempotently via ON CONFLICT.
-func applyThenToTransaction(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, snap *transactionSnapshot, then RuleThen) error {
+func applyThenToTransaction(ctx context.Context, tx pgx.Tx, workspaceID uuid.UUID, snap *transactionSnapshot, then RuleThen) error {
 	sets := make([]string, 0, 3)
-	args := []any{tenantID, snap.ID}
+	args := []any{workspaceID, snap.ID}
 	next := func(v any) string {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
@@ -272,7 +272,7 @@ func applyThenToTransaction(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, 
 
 	if len(sets) > 0 {
 		q := fmt.Sprintf(`update transactions set %s
-			where tenant_id = $1 and id = $2`, strings.Join(sets, ", "))
+			where workspace_id = $1 and id = $2`, strings.Join(sets, ", "))
 		if _, err := tx.Exec(ctx, q, args...); err != nil {
 			return mapInsertErrorForApply(err)
 		}
@@ -280,10 +280,10 @@ func applyThenToTransaction(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, 
 
 	for _, tagID := range then.AddTagIDs {
 		if _, err := tx.Exec(ctx, `
-			insert into transaction_tags (transaction_id, tag_id, tenant_id)
+			insert into transaction_tags (transaction_id, tag_id, workspace_id)
 			values ($1, $2, $3)
 			on conflict (transaction_id, tag_id) do nothing
-		`, snap.ID, tagID, tenantID); err != nil {
+		`, snap.ID, tagID, workspaceID); err != nil {
 			return mapInsertErrorForApply(err)
 		}
 	}
@@ -297,17 +297,17 @@ func mapInsertErrorForApply(err error) error {
 	return mapWriteError("categorization_rule_apply", err)
 }
 
-func loadAppliedTransaction(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (*AppliedTransaction, error) {
+func loadAppliedTransaction(ctx context.Context, tx pgx.Tx, workspaceID, id uuid.UUID) (*AppliedTransaction, error) {
 	var out AppliedTransaction
 	err := tx.QueryRow(ctx, `
-		select id, tenant_id, account_id, status::text, booked_at, value_at, posted_at,
+		select id, workspace_id, account_id, status::text, booked_at, value_at, posted_at,
 		       amount::text, currency, original_amount::text, original_currency::text,
 		       merchant_id, category_id, counterparty_raw, description, notes,
 		       count_as_expense, created_at, updated_at
 		from transactions
-		where tenant_id = $1 and id = $2
-	`, tenantID, id).Scan(
-		&out.ID, &out.TenantID, &out.AccountID, &out.Status, &out.BookedAt,
+		where workspace_id = $1 and id = $2
+	`, workspaceID, id).Scan(
+		&out.ID, &out.WorkspaceID, &out.AccountID, &out.Status, &out.BookedAt,
 		&out.ValueAt, &out.PostedAt,
 		&out.Amount, &out.Currency, &out.OriginalAmount, &out.OriginalCurrency,
 		&out.MerchantID, &out.CategoryID, &out.CounterpartyRaw, &out.Description,

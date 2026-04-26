@@ -71,10 +71,10 @@ func (s *Service) Login(ctx context.Context, raw LoginInput) (*LoginResult, erro
 	var hash string
 	var user identity.User
 	err = tx.QueryRow(ctx, `
-		select id, email, display_name, email_verified_at, is_admin, last_tenant_id, created_at, password_hash
+		select id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at, password_hash
 		from users where email = $1
 	`, in.Email).Scan(&user.ID, &user.Email, &user.DisplayName, &user.EmailVerifiedAt,
-		&user.IsAdmin, &user.LastTenantID, &user.CreatedAt, &hash)
+		&user.IsAdmin, &user.LastWorkspaceID, &user.CreatedAt, &hash)
 	if err != nil && errors.Is(err, pgx.ErrNoRows) {
 		_, _ = VerifyPassword("dummy", dummyHash, nil)
 		s.logLoginFailed(ctx, in.Email, in.IP, in.UserAgent)
@@ -110,7 +110,7 @@ func (s *Service) Login(ctx context.Context, raw LoginInput) (*LoginResult, erro
 		`, challengeID, user.ID, ipString(in.IP), in.UserAgent, now, now.Add(s.cfg.MFAChallengeTTL), nil); err != nil {
 			return nil, fmt.Errorf("insert mfa challenge: %w", err)
 		}
-		if err := writeAuditTx(ctx, tx, user.LastTenantID, &user.ID, "user.login_mfa_challenged", "user", user.ID, nil, nil, in.IP, in.UserAgent); err != nil {
+		if err := writeAuditTx(ctx, tx, user.LastWorkspaceID, &user.ID, "user.login_mfa_challenged", "user", user.ID, nil, nil, in.IP, in.UserAgent); err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -132,7 +132,7 @@ func (s *Service) Login(ctx context.Context, raw LoginInput) (*LoginResult, erro
 	if _, err := tx.Exec(ctx, `update users set last_login_at = $1 where id = $2`, now, user.ID); err != nil {
 		return nil, fmt.Errorf("update last_login_at: %w", err)
 	}
-	if err := writeAuditTx(ctx, tx, user.LastTenantID, &user.ID, "user.login_succeeded", "user", user.ID, nil, nil, in.IP, in.UserAgent); err != nil {
+	if err := writeAuditTx(ctx, tx, user.LastWorkspaceID, &user.ID, "user.login_succeeded", "user", user.ID, nil, nil, in.IP, in.UserAgent); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -160,7 +160,7 @@ func (s *Service) createSessionTx(ctx context.Context, tx pgx.Tx, userID uuid.UU
 func (s *Service) logLoginFailed(ctx context.Context, email string, ip net.IP, ua string) {
 	// entity_id is required non-null; we use a fresh uuid as a placeholder for the failed-email event.
 	_, err := s.pool.Exec(ctx, `
-		insert into audit_events (id, tenant_id, actor_user_id, action, entity_type, entity_id, after_jsonb, ip, user_agent)
+		insert into audit_events (id, workspace_id, actor_user_id, action, entity_type, entity_id, after_jsonb, ip, user_agent)
 		values ($1, null, null, 'user.login_failed', 'email', $2, jsonb_build_object('email', $3::text), $4, $5)
 	`, uuidx.New(), uuidx.New(), email, ipString(ip), ua)
 	if err != nil {
@@ -172,9 +172,9 @@ func (s *Service) logLoginFailed(ctx context.Context, email string, ip net.IP, u
 // steady-state events (login, logout) that don't have a surrounding write.
 // Intentionally omits before_jsonb/after_jsonb to keep these events slim;
 // use writeAuditTx inside a transaction for full-fidelity change audit.
-func (s *Service) logAuditDirect(ctx context.Context, tenantID *uuid.UUID, actorUserID *uuid.UUID, action, entityType string, entityID uuid.UUID, ip net.IP, ua string) {
+func (s *Service) logAuditDirect(ctx context.Context, workspaceID *uuid.UUID, actorUserID *uuid.UUID, action, entityType string, entityID uuid.UUID, ip net.IP, ua string) {
 	_, _ = s.pool.Exec(ctx, `
-		insert into audit_events (id, tenant_id, actor_user_id, action, entity_type, entity_id, ip, user_agent)
+		insert into audit_events (id, workspace_id, actor_user_id, action, entity_type, entity_id, ip, user_agent)
 		values ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, uuidx.New(), tenantID, actorUserID, action, entityType, entityID, ipString(ip), ua)
+	`, uuidx.New(), workspaceID, actorUserID, action, entityType, entityID, ipString(ip), ua)
 }

@@ -19,8 +19,8 @@ func TestSignupInput_normalize_ok(t *testing.T) {
 	if out.Email != "a@b.com" {
 		t.Errorf("email = %q", out.Email)
 	}
-	if out.TenantName != "Alice's Workspace" {
-		t.Errorf("tenant = %q", out.TenantName)
+	if out.WorkspaceName != "Alice's Workspace" {
+		t.Errorf("workspace = %q", out.WorkspaceName)
 	}
 	if out.Locale != "en-US" || out.Timezone != "UTC" || out.BaseCurrency != "USD" {
 		t.Errorf("defaults not applied: %+v", out)

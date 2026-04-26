@@ -55,7 +55,7 @@ type EmailChangeOldNoticeData struct {
 
 type InviteData struct {
 	InviterName string
-	TenantName  string
+	WorkspaceName  string
 	Role        string
 	AcceptURL   string
 }
@@ -67,8 +67,8 @@ func LoadTemplate(name string) (*Template, error) {
 		"email_change_new":        func(any) string { return "Confirm your new Folio email" },
 		"email_change_old_notice": func(any) string { return "Your Folio email address was changed" },
 		"invite": func(d any) string {
-			if i, ok := d.(InviteData); ok && i.TenantName != "" {
-				return fmt.Sprintf("You're invited to join %s on Folio", i.TenantName)
+			if i, ok := d.(InviteData); ok && i.WorkspaceName != "" {
+				return fmt.Sprintf("You're invited to join %s on Folio", i.WorkspaceName)
 			}
 			return "You're invited on Folio"
 		},

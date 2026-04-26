@@ -19,7 +19,7 @@ import (
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
-// InviteLifetime is the validity window for a tenant invite token.
+// InviteLifetime is the validity window for a workspace invite token.
 const InviteLifetime = 7 * 24 * time.Hour
 
 // Sentinel errors for the invite flow.
@@ -33,19 +33,19 @@ var (
 	ErrNotAuthorized       = errors.New("invite: not authorised to revoke")
 )
 
-// InvitePreview is the payload for the no-auth preview endpoint — tenant
+// InvitePreview is the payload for the no-auth preview endpoint — workspace
 // name, inviter display name, role, expiry. No token / hash surfaced.
 type InvitePreview struct {
-	TenantID           uuid.UUID `json:"tenantId"`
-	TenantName         string    `json:"tenantName"`
-	TenantSlug         string    `json:"tenantSlug"`
+	WorkspaceID           uuid.UUID `json:"workspaceId"`
+	WorkspaceName         string    `json:"workspaceName"`
+	WorkspaceSlug         string    `json:"workspaceSlug"`
 	InviterDisplayName string    `json:"inviterDisplayName"`
 	Email              string    `json:"email"`
 	Role               Role      `json:"role"`
 	ExpiresAt          time.Time `json:"expiresAt"`
 }
 
-// InviteService owns writes to tenant_invites.
+// InviteService owns writes to workspace_invites.
 type InviteService struct {
 	pool *pgxpool.Pool
 	now  func() time.Time
@@ -71,9 +71,9 @@ func generateInviteToken() (string, error) {
 
 // Create issues a new invite. Returns the row + the plaintext token (shown
 // to callers only once — the caller emails it via mailer.Mailer). Blocks a
-// duplicate pending invite to the same email in the same tenant.
+// duplicate pending invite to the same email in the same workspace.
 func (s *InviteService) Create(
-	ctx context.Context, tenantID, inviterID uuid.UUID, email string, role Role,
+	ctx context.Context, workspaceID, inviterID uuid.UUID, email string, role Role,
 ) (*Invite, string, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" || !strings.Contains(email, "@") {
@@ -90,19 +90,19 @@ func (s *InviteService) Create(
 	id := uuidx.New()
 	expiresAt := s.now().Add(InviteLifetime)
 
-	// The partial unique index `tenant_invites_pending_email_unique` makes
+	// The partial unique index `workspace_invites_pending_email_unique` makes
 	// the duplicate-check authoritative: two concurrent Create calls for the
-	// same (tenant_id, email) pair can no longer both succeed.
+	// same (workspace_id, email) pair can no longer both succeed.
 	var inv Invite
 	var roleText string
 	err = s.pool.QueryRow(ctx, `
-		insert into tenant_invites (id, tenant_id, email, role, token_hash,
+		insert into workspace_invites (id, workspace_id, email, role, token_hash,
 		                            invited_by_user_id, expires_at)
-		values ($1, $2, $3, $4::tenant_role, $5, $6, $7)
-		returning id, tenant_id, email, role::text, invited_by_user_id,
+		values ($1, $2, $3, $4::workspace_role, $5, $6, $7)
+		returning id, workspace_id, email, role::text, invited_by_user_id,
 		          created_at, expires_at
-	`, id, tenantID, email, role, HashInviteToken(plaintext), inviterID, expiresAt).Scan(
-		&inv.ID, &inv.TenantID, &inv.Email, &roleText, &inv.InvitedByUserID,
+	`, id, workspaceID, email, role, HashInviteToken(plaintext), inviterID, expiresAt).Scan(
+		&inv.ID, &inv.WorkspaceID, &inv.Email, &roleText, &inv.InvitedByUserID,
 		&inv.CreatedAt, &inv.ExpiresAt,
 	)
 	if err != nil {
@@ -116,17 +116,17 @@ func (s *InviteService) Create(
 }
 
 // isPendingInviteUnique reports whether err is a 23505 unique violation on
-// the `tenant_invites_pending_email_unique` partial index added in
+// the `workspace_invites_pending_email_unique` partial index added in
 // 20260424000016_auth_hardening.sql.
 func isPendingInviteUnique(err error) bool {
 	var pe *pgconn.PgError
 	if !errors.As(err, &pe) {
 		return false
 	}
-	return pe.Code == "23505" && pe.ConstraintName == "tenant_invites_pending_email_unique"
+	return pe.Code == "23505" && pe.ConstraintName == "workspace_invites_pending_email_unique"
 }
 
-// Preview is a no-auth endpoint. Returns tenant name, inviter display name,
+// Preview is a no-auth endpoint. Returns workspace name, inviter display name,
 // role, and expiry — plus the invited email (so the UI can gate "sign up
 // with a different email"). Omits token/hash.
 func (s *InviteService) Preview(ctx context.Context, plaintext string) (*InvitePreview, error) {
@@ -134,14 +134,14 @@ func (s *InviteService) Preview(ctx context.Context, plaintext string) (*InviteP
 	var roleText string
 	var revokedAt, acceptedAt *time.Time
 	err := s.pool.QueryRow(ctx, `
-		select i.tenant_id, t.name, t.slug, u.display_name,
+		select i.workspace_id, t.name, t.slug, u.display_name,
 		       i.email, i.role::text, i.expires_at, i.revoked_at, i.accepted_at
-		from tenant_invites i
-		join tenants t on t.id = i.tenant_id
+		from workspace_invites i
+		join workspaces t on t.id = i.workspace_id
 		join users   u on u.id = i.invited_by_user_id
 		where i.token_hash = $1 and t.deleted_at is null
 	`, HashInviteToken(plaintext)).Scan(
-		&p.TenantID, &p.TenantName, &p.TenantSlug, &p.InviterDisplayName,
+		&p.WorkspaceID, &p.WorkspaceName, &p.WorkspaceSlug, &p.InviterDisplayName,
 		&p.Email, &roleText, &p.ExpiresAt, &revokedAt, &acceptedAt,
 	)
 	if err != nil {
@@ -177,7 +177,7 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
 
 	var (
 		inviteID    uuid.UUID
-		tenantID    uuid.UUID
+		workspaceID    uuid.UUID
 		inviteEmail string
 		roleText    string
 		expiresAt   time.Time
@@ -185,11 +185,11 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
 		acceptedAt  *time.Time
 	)
 	err = tx.QueryRow(ctx, `
-		select id, tenant_id, email, role::text, expires_at, revoked_at, accepted_at
-		from tenant_invites
+		select id, workspace_id, email, role::text, expires_at, revoked_at, accepted_at
+		from workspace_invites
 		where token_hash = $1
 		for update
-	`, HashInviteToken(plaintext)).Scan(&inviteID, &tenantID, &inviteEmail, &roleText,
+	`, HashInviteToken(plaintext)).Scan(&inviteID, &workspaceID, &inviteEmail, &roleText,
 		&expiresAt, &revokedAt, &acceptedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -221,18 +221,18 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
 		return nil, ErrEmailUnverified
 	}
 
-	// Upsert-style: if user is already a member of this tenant, keep the
+	// Upsert-style: if user is already a member of this workspace, keep the
 	// existing row and just consume the invite.
 	if _, err := tx.Exec(ctx, `
-		insert into tenant_memberships (tenant_id, user_id, role)
-		values ($1, $2, $3::tenant_role)
-		on conflict (tenant_id, user_id) do nothing
-	`, tenantID, userID, roleText); err != nil {
+		insert into workspace_memberships (workspace_id, user_id, role)
+		values ($1, $2, $3::workspace_role)
+		on conflict (workspace_id, user_id) do nothing
+	`, workspaceID, userID, roleText); err != nil {
 		return nil, fmt.Errorf("insert membership: %w", err)
 	}
 
 	if _, err := tx.Exec(ctx,
-		`update tenant_invites set accepted_at = now() where id = $1`, inviteID); err != nil {
+		`update workspace_invites set accepted_at = now() where id = $1`, inviteID); err != nil {
 		return nil, err
 	}
 
@@ -241,7 +241,7 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
 	}
 
 	return &Membership{
-		TenantID:  tenantID,
+		WorkspaceID:  workspaceID,
 		UserID:    userID,
 		Role:      Role(roleText),
 		CreatedAt: s.now(),
@@ -249,9 +249,9 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
 }
 
 // Revoke marks an invite revoked. Authorised for the original inviter or any
-// owner of the route tenant. Idempotent — revoking an already-revoked or
+// owner of the route workspace. Idempotent — revoking an already-revoked or
 // accepted invite is a no-op (no error).
-func (s *InviteService) Revoke(ctx context.Context, tenantID, inviteID, requesterUserID uuid.UUID) error {
+func (s *InviteService) Revoke(ctx context.Context, workspaceID, inviteID, requesterUserID uuid.UUID) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -262,8 +262,8 @@ func (s *InviteService) Revoke(ctx context.Context, tenantID, inviteID, requeste
 	var revokedAt, acceptedAt *time.Time
 	err = tx.QueryRow(ctx, `
 		select invited_by_user_id, revoked_at, accepted_at
-		from tenant_invites where id = $1 and tenant_id = $2 for update
-	`, inviteID, tenantID).Scan(&invitedBy, &revokedAt, &acceptedAt)
+		from workspace_invites where id = $1 and workspace_id = $2 for update
+	`, inviteID, workspaceID).Scan(&invitedBy, &revokedAt, &acceptedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInviteNotFound
@@ -278,10 +278,10 @@ func (s *InviteService) Revoke(ctx context.Context, tenantID, inviteID, requeste
 		var isOwner bool
 		if err := tx.QueryRow(ctx, `
 			select exists(
-				select 1 from tenant_memberships
-				where tenant_id = $1 and user_id = $2 and role = 'owner'
+				select 1 from workspace_memberships
+				where workspace_id = $1 and user_id = $2 and role = 'owner'
 			)
-		`, tenantID, requesterUserID).Scan(&isOwner); err != nil {
+		`, workspaceID, requesterUserID).Scan(&isOwner); err != nil {
 			return err
 		}
 		if !isOwner {
@@ -290,7 +290,7 @@ func (s *InviteService) Revoke(ctx context.Context, tenantID, inviteID, requeste
 	}
 
 	if _, err := tx.Exec(ctx,
-		`update tenant_invites set revoked_at = now() where id = $1`, inviteID); err != nil {
+		`update workspace_invites set revoked_at = now() where id = $1`, inviteID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

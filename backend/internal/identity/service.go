@@ -18,7 +18,7 @@ import (
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
-// Service owns writes and reads for users, tenants, and memberships.
+// Service owns writes and reads for users, workspaces, and memberships.
 type Service struct {
 	pool *pgxpool.Pool
 	now  func() time.Time
@@ -29,15 +29,15 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, now: time.Now}
 }
 
-// Me returns the user + every tenant they belong to, with their role per
-// tenant. Soft-deleted tenants are excluded.
-func (s *Service) Me(ctx context.Context, userID uuid.UUID) (User, []TenantWithRole, error) {
+// Me returns the user + every workspace they belong to, with their role per
+// workspace. Soft-deleted workspaces are excluded.
+func (s *Service) Me(ctx context.Context, userID uuid.UUID) (User, []WorkspaceWithRole, error) {
 	var u User
 	err := s.pool.QueryRow(ctx, `
-		select id, email, display_name, email_verified_at, is_admin, last_tenant_id, created_at
+		select id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at
 		from users
 		where id = $1
-	`, userID).Scan(&u.ID, &u.Email, &u.DisplayName, &u.EmailVerifiedAt, &u.IsAdmin, &u.LastTenantID, &u.CreatedAt)
+	`, userID).Scan(&u.ID, &u.Email, &u.DisplayName, &u.EmailVerifiedAt, &u.IsAdmin, &u.LastWorkspaceID, &u.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return u, nil, httpx.NewNotFoundError("user")
@@ -46,8 +46,8 @@ func (s *Service) Me(ctx context.Context, userID uuid.UUID) (User, []TenantWithR
 	}
 	rows, err := s.pool.Query(ctx, `
 		select t.id, t.name, t.slug, t.base_currency, t.cycle_anchor_day, t.locale, t.timezone, t.deleted_at, t.created_at, m.role
-		from tenant_memberships m
-		join tenants t on t.id = m.tenant_id
+		from workspace_memberships m
+		join workspaces t on t.id = m.workspace_id
 		where m.user_id = $1 and t.deleted_at is null
 		order by t.name
 	`, userID)
@@ -55,23 +55,23 @@ func (s *Service) Me(ctx context.Context, userID uuid.UUID) (User, []TenantWithR
 		return u, nil, fmt.Errorf("list memberships: %w", err)
 	}
 	defer rows.Close()
-	var tenants []TenantWithRole
+	var workspaces []WorkspaceWithRole
 	for rows.Next() {
-		var tr TenantWithRole
+		var tr WorkspaceWithRole
 		if err := rows.Scan(&tr.ID, &tr.Name, &tr.Slug, &tr.BaseCurrency, &tr.CycleAnchorDay,
 			&tr.Locale, &tr.Timezone, &tr.DeletedAt, &tr.CreatedAt, &tr.Role); err != nil {
 			return u, nil, fmt.Errorf("scan membership: %w", err)
 		}
-		tenants = append(tenants, tr)
+		workspaces = append(workspaces, tr)
 	}
 	if rows.Err() != nil {
 		return u, nil, rows.Err()
 	}
-	return u, tenants, nil
+	return u, workspaces, nil
 }
 
-// CreateTenantInput is the validated input to CreateTenant.
-type CreateTenantInput struct {
+// CreateWorkspaceInput is the validated input to CreateWorkspace.
+type CreateWorkspaceInput struct {
 	Name           string
 	BaseCurrency   string
 	CycleAnchorDay int
@@ -81,7 +81,7 @@ type CreateTenantInput struct {
 
 // Normalize trims + validates the input. Exported for cross-package use
 // (auth.Service.Signup reuses it).
-func (in CreateTenantInput) Normalize() (CreateTenantInput, error) {
+func (in CreateWorkspaceInput) Normalize() (CreateWorkspaceInput, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.Locale = strings.TrimSpace(in.Locale)
 	in.Timezone = strings.TrimSpace(in.Timezone)
@@ -108,53 +108,53 @@ func (in CreateTenantInput) Normalize() (CreateTenantInput, error) {
 	return in, nil
 }
 
-// CreateTenant creates a tenant with a unique slug derived from its name,
+// CreateWorkspace creates a workspace with a unique slug derived from its name,
 // and installs the calling user as an owner in the same transaction.
-func (s *Service) CreateTenant(ctx context.Context, userID uuid.UUID, raw CreateTenantInput) (Tenant, Membership, error) {
+func (s *Service) CreateWorkspace(ctx context.Context, userID uuid.UUID, raw CreateWorkspaceInput) (Workspace, Membership, error) {
 	in, err := raw.Normalize()
 	if err != nil {
-		return Tenant{}, Membership{}, err
+		return Workspace{}, Membership{}, err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return Tenant{}, Membership{}, fmt.Errorf("begin: %w", err)
+		return Workspace{}, Membership{}, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	t, err := InsertTenantTx(ctx, tx, uuidx.New(), in)
+	t, err := InsertWorkspaceTx(ctx, tx, uuidx.New(), in)
 	if err != nil {
-		return Tenant{}, Membership{}, err
+		return Workspace{}, Membership{}, err
 	}
 	m, err := InsertMembershipTx(ctx, tx, t.ID, userID, RoleOwner)
 	if err != nil {
-		return Tenant{}, Membership{}, err
+		return Workspace{}, Membership{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Tenant{}, Membership{}, fmt.Errorf("commit: %w", err)
+		return Workspace{}, Membership{}, fmt.Errorf("commit: %w", err)
 	}
 	return t, m, nil
 }
 
 // ListMembers returns memberships (enriched with user display fields) plus
-// currently-pending invites for tenantID. "Pending" means accepted_at IS NULL
+// currently-pending invites for workspaceID. "Pending" means accepted_at IS NULL
 // AND revoked_at IS NULL AND expires_at > now().
-func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) (*MembersResponse, error) {
+func (s *Service) ListMembers(ctx context.Context, workspaceID uuid.UUID) (*MembersResponse, error) {
 	out := &MembersResponse{Members: []MemberWithUser{}, PendingInvites: []PendingInvite{}}
 
 	rows, err := s.pool.Query(ctx, `
-		select m.tenant_id, m.user_id, m.role::text, m.created_at,
+		select m.workspace_id, m.user_id, m.role::text, m.created_at,
 		       u.email, u.display_name
-		from tenant_memberships m
+		from workspace_memberships m
 		join users u on u.id = m.user_id
-		where m.tenant_id = $1
+		where m.workspace_id = $1
 		order by m.created_at
-	`, tenantID)
+	`, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list memberships: %w", err)
 	}
 	for rows.Next() {
 		var m MemberWithUser
 		var role string
-		if err := rows.Scan(&m.TenantID, &m.UserID, &role, &m.CreatedAt, &m.Email, &m.DisplayName); err != nil {
+		if err := rows.Scan(&m.WorkspaceID, &m.UserID, &role, &m.CreatedAt, &m.Email, &m.DisplayName); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -168,13 +168,13 @@ func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) (*Members
 
 	iRows, err := s.pool.Query(ctx, `
 		select id, email, role::text, invited_by_user_id, created_at, expires_at
-		from tenant_invites
-		where tenant_id = $1
+		from workspace_invites
+		where workspace_id = $1
 		  and accepted_at is null
 		  and revoked_at is null
 		  and expires_at > now()
 		order by created_at desc
-	`, tenantID)
+	`, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list invites: %w", err)
 	}
@@ -191,9 +191,9 @@ func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) (*Members
 	return out, iRows.Err()
 }
 
-// UpdateTenantInput is the PATCH body for tenant settings. Pointer fields
+// UpdateWorkspaceInput is the PATCH body for workspace settings. Pointer fields
 // mean "absent"; a non-nil pointer to the zero value means "clear".
-type UpdateTenantInput struct {
+type UpdateWorkspaceInput struct {
 	Name           *string
 	Slug           *string
 	BaseCurrency   *string
@@ -205,7 +205,7 @@ type UpdateTenantInput struct {
 var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
 
 // normalize validates provided fields and canonicalises strings.
-func (in UpdateTenantInput) normalize() (UpdateTenantInput, error) {
+func (in UpdateWorkspaceInput) normalize() (UpdateWorkspaceInput, error) {
 	if in.Name != nil {
 		n := strings.TrimSpace(*in.Name)
 		if n == "" {
@@ -252,29 +252,29 @@ func (in UpdateTenantInput) normalize() (UpdateTenantInput, error) {
 	return in, nil
 }
 
-// GetTenant returns a tenant by id, skipping soft-deleted rows.
-func (s *Service) GetTenant(ctx context.Context, tenantID uuid.UUID) (*Tenant, error) {
-	var t Tenant
+// GetWorkspace returns a workspace by id, skipping soft-deleted rows.
+func (s *Service) GetWorkspace(ctx context.Context, workspaceID uuid.UUID) (*Workspace, error) {
+	var t Workspace
 	err := s.pool.QueryRow(ctx, `
 		select id, name, slug, base_currency, cycle_anchor_day, locale, timezone,
 		       deleted_at, created_at
-		from tenants where id = $1 and deleted_at is null
-	`, tenantID).Scan(
+		from workspaces where id = $1 and deleted_at is null
+	`, workspaceID).Scan(
 		&t.ID, &t.Name, &t.Slug, &t.BaseCurrency, &t.CycleAnchorDay,
 		&t.Locale, &t.Timezone, &t.DeletedAt, &t.CreatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, httpx.NewNotFoundError("tenant")
+			return nil, httpx.NewNotFoundError("workspace")
 		}
 		return nil, err
 	}
 	return &t, nil
 }
 
-// UpdateTenant applies the PATCH and returns the updated tenant. Soft-deleted
-// tenants are not updatable — restore first.
-func (s *Service) UpdateTenant(ctx context.Context, tenantID uuid.UUID, raw UpdateTenantInput) (*Tenant, error) {
+// UpdateWorkspace applies the PATCH and returns the updated workspace. Soft-deleted
+// workspaces are not updatable — restore first.
+func (s *Service) UpdateWorkspace(ctx context.Context, workspaceID uuid.UUID, raw UpdateWorkspaceInput) (*Workspace, error) {
 	in, err := raw.normalize()
 	if err != nil {
 		return nil, err
@@ -282,7 +282,7 @@ func (s *Service) UpdateTenant(ctx context.Context, tenantID uuid.UUID, raw Upda
 
 	sets := make([]string, 0, 6)
 	args := make([]any, 0, 8)
-	args = append(args, tenantID) // $1 in WHERE
+	args = append(args, workspaceID) // $1 in WHERE
 
 	next := func(val any) string {
 		args = append(args, val)
@@ -309,56 +309,56 @@ func (s *Service) UpdateTenant(ctx context.Context, tenantID uuid.UUID, raw Upda
 	}
 
 	if len(sets) == 0 {
-		return s.GetTenant(ctx, tenantID)
+		return s.GetWorkspace(ctx, workspaceID)
 	}
 
 	q := fmt.Sprintf(
-		`update tenants set %s where id = $1 and deleted_at is null returning id`,
+		`update workspaces set %s where id = $1 and deleted_at is null returning id`,
 		strings.Join(sets, ", "),
 	)
 	var gotID uuid.UUID
 	err = s.pool.QueryRow(ctx, q, args...).Scan(&gotID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, httpx.NewNotFoundError("tenant")
+			return nil, httpx.NewNotFoundError("workspace")
 		}
-		if isUniqueViolation(err, "tenants_slug_key") {
+		if isUniqueViolation(err, "workspaces_slug_key") {
 			return nil, httpx.NewValidationError("slug is already in use")
 		}
-		return nil, fmt.Errorf("update tenant: %w", err)
+		return nil, fmt.Errorf("update workspace: %w", err)
 	}
-	return s.GetTenant(ctx, tenantID)
+	return s.GetWorkspace(ctx, workspaceID)
 }
 
-// SoftDeleteTenant sets deleted_at = now(). Idempotent (coalesce keeps the
-// first deletion timestamp). NotFound if the tenant id doesn't exist at all.
-func (s *Service) SoftDeleteTenant(ctx context.Context, tenantID uuid.UUID) error {
+// SoftDeleteWorkspace sets deleted_at = now(). Idempotent (coalesce keeps the
+// first deletion timestamp). NotFound if the workspace id doesn't exist at all.
+func (s *Service) SoftDeleteWorkspace(ctx context.Context, workspaceID uuid.UUID) error {
 	ct, err := s.pool.Exec(ctx,
-		`update tenants set deleted_at = coalesce(deleted_at, now()) where id = $1`, tenantID)
+		`update workspaces set deleted_at = coalesce(deleted_at, now()) where id = $1`, workspaceID)
 	if err != nil {
-		return fmt.Errorf("soft-delete tenant: %w", err)
+		return fmt.Errorf("soft-delete workspace: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return httpx.NewNotFoundError("tenant")
+		return httpx.NewNotFoundError("workspace")
 	}
 	return nil
 }
 
-// RestoreTenant clears deleted_at. Idempotent (restoring a non-deleted tenant
-// is a no-op, not an error). NotFound if the tenant id doesn't exist at all.
-func (s *Service) RestoreTenant(ctx context.Context, tenantID uuid.UUID) error {
+// RestoreWorkspace clears deleted_at. Idempotent (restoring a non-deleted workspace
+// is a no-op, not an error). NotFound if the workspace id doesn't exist at all.
+func (s *Service) RestoreWorkspace(ctx context.Context, workspaceID uuid.UUID) error {
 	ct, err := s.pool.Exec(ctx,
-		`update tenants set deleted_at = null where id = $1`, tenantID)
+		`update workspaces set deleted_at = null where id = $1`, workspaceID)
 	if err != nil {
-		return fmt.Errorf("restore tenant: %w", err)
+		return fmt.Errorf("restore workspace: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return httpx.NewNotFoundError("tenant")
+		return httpx.NewNotFoundError("workspace")
 	}
 	return nil
 }
 
-// InsertTenantTx inserts a tenants row with a unique slug derived from the
+// InsertWorkspaceTx inserts a workspaces row with a unique slug derived from the
 // input name; retries with numeric suffixes up to 100 times on slug
 // collision. Exported so auth.Service.Signup can reuse it inside its own
 // transaction.
@@ -367,50 +367,50 @@ func (s *Service) RestoreTenant(ctx context.Context, tenantID uuid.UUID) error {
 // attempt — not the whole outer transaction. Without this, a single
 // collision would poison later statements in the same tx with
 // SQLSTATE 25P02 (transaction aborted).
-func InsertTenantTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in CreateTenantInput) (Tenant, error) {
+func InsertWorkspaceTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in CreateWorkspaceInput) (Workspace, error) {
 	base := Slugify(in.Name)
 	if base == "" || len(base) < 2 {
 		base = "workspace"
 	}
 	slug := base
 	for i := 0; i < 100; i++ {
-		if _, err := tx.Exec(ctx, `savepoint insert_tenant`); err != nil {
-			return Tenant{}, fmt.Errorf("savepoint: %w", err)
+		if _, err := tx.Exec(ctx, `savepoint insert_workspace`); err != nil {
+			return Workspace{}, fmt.Errorf("savepoint: %w", err)
 		}
 
-		var t Tenant
+		var t Workspace
 		err := tx.QueryRow(ctx, `
-			insert into tenants (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
+			insert into workspaces (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
 			values ($1,$2,$3,$4,$5,$6,$7)
 			returning id, name, slug, base_currency, cycle_anchor_day, locale, timezone, deleted_at, created_at
 		`, id, in.Name, slug, in.BaseCurrency, in.CycleAnchorDay, in.Locale, in.Timezone).
 			Scan(&t.ID, &t.Name, &t.Slug, &t.BaseCurrency, &t.CycleAnchorDay, &t.Locale, &t.Timezone, &t.DeletedAt, &t.CreatedAt)
 		if err == nil {
-			if _, relErr := tx.Exec(ctx, `release savepoint insert_tenant`); relErr != nil {
-				return Tenant{}, fmt.Errorf("release savepoint: %w", relErr)
+			if _, relErr := tx.Exec(ctx, `release savepoint insert_workspace`); relErr != nil {
+				return Workspace{}, fmt.Errorf("release savepoint: %w", relErr)
 			}
 			return t, nil
 		}
 		// Rollback to the savepoint so the outer tx stays alive.
-		if _, rbErr := tx.Exec(ctx, `rollback to savepoint insert_tenant`); rbErr != nil {
-			return Tenant{}, fmt.Errorf("rollback to savepoint: %w (orig: %v)", rbErr, err)
+		if _, rbErr := tx.Exec(ctx, `rollback to savepoint insert_workspace`); rbErr != nil {
+			return Workspace{}, fmt.Errorf("rollback to savepoint: %w (orig: %v)", rbErr, err)
 		}
-		if !isUniqueViolation(err, "tenants_slug_key") {
-			return Tenant{}, fmt.Errorf("insert tenant: %w", err)
+		if !isUniqueViolation(err, "workspaces_slug_key") {
+			return Workspace{}, fmt.Errorf("insert workspace: %w", err)
 		}
 		slug = fmt.Sprintf("%s-%d", base, i+2)
 	}
-	return Tenant{}, httpx.NewValidationError("could not generate unique slug")
+	return Workspace{}, httpx.NewValidationError("could not generate unique slug")
 }
 
-// InsertMembershipTx inserts a tenant_memberships row. Exported for reuse.
-func InsertMembershipTx(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UUID, role Role) (Membership, error) {
+// InsertMembershipTx inserts a workspace_memberships row. Exported for reuse.
+func InsertMembershipTx(ctx context.Context, tx pgx.Tx, workspaceID, userID uuid.UUID, role Role) (Membership, error) {
 	var m Membership
 	err := tx.QueryRow(ctx, `
-		insert into tenant_memberships (tenant_id, user_id, role)
+		insert into workspace_memberships (workspace_id, user_id, role)
 		values ($1, $2, $3)
-		returning tenant_id, user_id, role, created_at
-	`, tenantID, userID, role).Scan(&m.TenantID, &m.UserID, &m.Role, &m.CreatedAt)
+		returning workspace_id, user_id, role, created_at
+	`, workspaceID, userID, role).Scan(&m.WorkspaceID, &m.UserID, &m.Role, &m.CreatedAt)
 	if err != nil {
 		return Membership{}, fmt.Errorf("insert membership: %w", err)
 	}
@@ -439,17 +439,17 @@ func isUniqueViolation(err error, constraint string) bool {
 // Sentinel errors surfaced by the member-management methods. Handlers map
 // these to typed 422 responses so the UI can show stable error codes.
 var (
-	ErrLastOwner  = errors.New("identity: operation would leave tenant without an owner")
-	ErrLastTenant = errors.New("identity: user cannot leave their last tenant")
-	ErrNotAMember = errors.New("identity: user is not a member of the tenant")
+	ErrLastOwner  = errors.New("identity: operation would leave workspace without an owner")
+	ErrLastWorkspace = errors.New("identity: user cannot leave their last workspace")
+	ErrNotAMember = errors.New("identity: user is not a member of the workspace")
 )
 
-func lockTenantMembershipsTx(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
+func lockWorkspaceMembershipsTx(ctx context.Context, tx pgx.Tx, workspaceID uuid.UUID) error {
 	_, err := tx.Exec(ctx,
 		`select pg_advisory_xact_lock(hashtextextended($1::text, 0))`,
-		tenantID.String())
+		workspaceID.String())
 	if err != nil {
-		return fmt.Errorf("lock tenant memberships: %w", err)
+		return fmt.Errorf("lock workspace memberships: %w", err)
 	}
 	return nil
 }
@@ -464,10 +464,10 @@ func lockUserMembershipsTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID) err
 	return nil
 }
 
-// ChangeRole updates (tenantID, userID)'s role. Blocks demotion that would
+// ChangeRole updates (workspaceID, userID)'s role. Blocks demotion that would
 // remove the last owner. Locks the membership row to serialise concurrent
 // role changes.
-func (s *Service) ChangeRole(ctx context.Context, tenantID, userID uuid.UUID, newRole Role) error {
+func (s *Service) ChangeRole(ctx context.Context, workspaceID, userID uuid.UUID, newRole Role) error {
 	if !newRole.Valid() {
 		return httpx.NewValidationError("role must be 'owner' or 'member'")
 	}
@@ -477,15 +477,15 @@ func (s *Service) ChangeRole(ctx context.Context, tenantID, userID uuid.UUID, ne
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := lockTenantMembershipsTx(ctx, tx, tenantID); err != nil {
+	if err := lockWorkspaceMembershipsTx(ctx, tx, workspaceID); err != nil {
 		return err
 	}
 
 	var current Role
 	err = tx.QueryRow(ctx, `
-		select role from tenant_memberships
-		where tenant_id = $1 and user_id = $2 for update
-	`, tenantID, userID).Scan(&current)
+		select role from workspace_memberships
+		where workspace_id = $1 and user_id = $2 for update
+	`, workspaceID, userID).Scan(&current)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotAMember
@@ -500,9 +500,9 @@ func (s *Service) ChangeRole(ctx context.Context, tenantID, userID uuid.UUID, ne
 	if current == RoleOwner && newRole == RoleMember {
 		var ownerCount int
 		if err := tx.QueryRow(ctx, `
-			select count(*) from tenant_memberships
-			where tenant_id = $1 and role = 'owner'
-		`, tenantID).Scan(&ownerCount); err != nil {
+			select count(*) from workspace_memberships
+			where workspace_id = $1 and role = 'owner'
+		`, workspaceID).Scan(&ownerCount); err != nil {
 			return fmt.Errorf("count owners: %w", err)
 		}
 		if ownerCount <= 1 {
@@ -511,31 +511,31 @@ func (s *Service) ChangeRole(ctx context.Context, tenantID, userID uuid.UUID, ne
 	}
 
 	if _, err := tx.Exec(ctx, `
-		update tenant_memberships set role = $3, updated_at = now()
-		where tenant_id = $1 and user_id = $2
-	`, tenantID, userID, newRole); err != nil {
+		update workspace_memberships set role = $3, updated_at = now()
+		where workspace_id = $1 and user_id = $2
+	`, workspaceID, userID, newRole); err != nil {
 		return fmt.Errorf("update role: %w", err)
 	}
 	return tx.Commit(ctx)
 }
 
-// RemoveMember deletes the (tenantID, userID) membership. Blocks removing
+// RemoveMember deletes the (workspaceID, userID) membership. Blocks removing
 // the last owner. Does not revoke the user's sessions (spec §6.3).
-func (s *Service) RemoveMember(ctx context.Context, tenantID, userID uuid.UUID) error {
+func (s *Service) RemoveMember(ctx context.Context, workspaceID, userID uuid.UUID) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := lockTenantMembershipsTx(ctx, tx, tenantID); err != nil {
+	if err := lockWorkspaceMembershipsTx(ctx, tx, workspaceID); err != nil {
 		return err
 	}
 
 	var role Role
 	err = tx.QueryRow(ctx, `
-		select role from tenant_memberships
-		where tenant_id = $1 and user_id = $2 for update
-	`, tenantID, userID).Scan(&role)
+		select role from workspace_memberships
+		where workspace_id = $1 and user_id = $2 for update
+	`, workspaceID, userID).Scan(&role)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotAMember
@@ -546,9 +546,9 @@ func (s *Service) RemoveMember(ctx context.Context, tenantID, userID uuid.UUID) 
 	if role == RoleOwner {
 		var ownerCount int
 		if err := tx.QueryRow(ctx, `
-			select count(*) from tenant_memberships
-			where tenant_id = $1 and role = 'owner'
-		`, tenantID).Scan(&ownerCount); err != nil {
+			select count(*) from workspace_memberships
+			where workspace_id = $1 and role = 'owner'
+		`, workspaceID).Scan(&ownerCount); err != nil {
 			return fmt.Errorf("count owners: %w", err)
 		}
 		if ownerCount <= 1 {
@@ -557,23 +557,23 @@ func (s *Service) RemoveMember(ctx context.Context, tenantID, userID uuid.UUID) 
 	}
 
 	if _, err := tx.Exec(ctx, `
-		delete from tenant_memberships where tenant_id = $1 and user_id = $2
-	`, tenantID, userID); err != nil {
+		delete from workspace_memberships where workspace_id = $1 and user_id = $2
+	`, workspaceID, userID); err != nil {
 		return fmt.Errorf("delete membership: %w", err)
 	}
 	return tx.Commit(ctx)
 }
 
-// LeaveTenant is the self-serve variant of RemoveMember. Blocks if it would
-// leave the tenant without an owner OR if it would leave the user with zero
+// LeaveWorkspace is the self-serve variant of RemoveMember. Blocks if it would
+// leave the workspace without an owner OR if it would leave the user with zero
 // memberships (spec §3.4 invariants #1 and #2).
-func (s *Service) LeaveTenant(ctx context.Context, tenantID, userID uuid.UUID) error {
+func (s *Service) LeaveWorkspace(ctx context.Context, workspaceID, userID uuid.UUID) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := lockTenantMembershipsTx(ctx, tx, tenantID); err != nil {
+	if err := lockWorkspaceMembershipsTx(ctx, tx, workspaceID); err != nil {
 		return err
 	}
 	if err := lockUserMembershipsTx(ctx, tx, userID); err != nil {
@@ -582,9 +582,9 @@ func (s *Service) LeaveTenant(ctx context.Context, tenantID, userID uuid.UUID) e
 
 	var role Role
 	err = tx.QueryRow(ctx, `
-		select role from tenant_memberships
-		where tenant_id = $1 and user_id = $2 for update
-	`, tenantID, userID).Scan(&role)
+		select role from workspace_memberships
+		where workspace_id = $1 and user_id = $2 for update
+	`, workspaceID, userID).Scan(&role)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotAMember
@@ -592,24 +592,24 @@ func (s *Service) LeaveTenant(ctx context.Context, tenantID, userID uuid.UUID) e
 		return fmt.Errorf("lock membership: %w", err)
 	}
 
-	// Last-tenant guard.
+	// Last-workspace guard.
 	var membershipCount int
 	if err := tx.QueryRow(ctx, `
-		select count(*) from tenant_memberships where user_id = $1
+		select count(*) from workspace_memberships where user_id = $1
 	`, userID).Scan(&membershipCount); err != nil {
 		return fmt.Errorf("count memberships: %w", err)
 	}
 	if membershipCount <= 1 {
-		return ErrLastTenant
+		return ErrLastWorkspace
 	}
 
 	// Last-owner guard.
 	if role == RoleOwner {
 		var ownerCount int
 		if err := tx.QueryRow(ctx, `
-			select count(*) from tenant_memberships
-			where tenant_id = $1 and role = 'owner'
-		`, tenantID).Scan(&ownerCount); err != nil {
+			select count(*) from workspace_memberships
+			where workspace_id = $1 and role = 'owner'
+		`, workspaceID).Scan(&ownerCount); err != nil {
 			return fmt.Errorf("count owners: %w", err)
 		}
 		if ownerCount <= 1 {
@@ -618,8 +618,8 @@ func (s *Service) LeaveTenant(ctx context.Context, tenantID, userID uuid.UUID) e
 	}
 
 	if _, err := tx.Exec(ctx, `
-		delete from tenant_memberships where tenant_id = $1 and user_id = $2
-	`, tenantID, userID); err != nil {
+		delete from workspace_memberships where workspace_id = $1 and user_id = $2
+	`, workspaceID, userID); err != nil {
 		return fmt.Errorf("delete membership: %w", err)
 	}
 	return tx.Commit(ctx)

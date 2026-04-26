@@ -18,18 +18,18 @@ func testMFAService(t *testing.T) (*Service, context.Context) {
 	pool := testdb.Open(t)
 	ctx := context.Background()
 	_, err := pool.Exec(ctx, `
-		truncate audit_events, tenant_memberships, tenant_invites, sessions,
+		truncate audit_events, workspace_memberships, workspace_invites, sessions,
 		         auth_tokens, auth_recovery_codes, webauthn_credentials,
-		         totp_credentials, user_preferences, users, tenants cascade
+		         totp_credentials, user_preferences, users, workspaces cascade
 	`)
 	if err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `
-			truncate audit_events, tenant_memberships, tenant_invites, sessions,
+			truncate audit_events, workspace_memberships, workspace_invites, sessions,
 			         auth_tokens, auth_recovery_codes, webauthn_credentials,
-			         totp_credentials, user_preferences, users, tenants cascade
+			         totp_credentials, user_preferences, users, workspaces cascade
 		`)
 	})
 	return NewService(pool, identity.NewService(pool), Config{

@@ -15,9 +15,9 @@ func TestContextRoundtrip(t *testing.T) {
 	if u, ok := UserFromCtx(ctx); !ok || u.Email != "a@b.com" {
 		t.Fatalf("UserFromCtx: %+v %v", u, ok)
 	}
-	ctx = WithTenant(ctx, identity.Tenant{ID: uuid.New(), Name: "T"})
-	if tn, _ := TenantFromCtx(ctx); tn.Name != "T" {
-		t.Fatalf("TenantFromCtx: %+v", tn)
+	ctx = WithWorkspace(ctx, identity.Workspace{ID: uuid.New(), Name: "T"})
+	if tn, _ := WorkspaceFromCtx(ctx); tn.Name != "T" {
+		t.Fatalf("WorkspaceFromCtx: %+v", tn)
 	}
 	ctx = WithRole(ctx, identity.RoleOwner)
 	if r, _ := RoleFromCtx(ctx); r != identity.RoleOwner {

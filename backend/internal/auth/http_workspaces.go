@@ -12,20 +12,20 @@ import (
 	"github.com/xmedavid/folio/backend/internal/identity"
 )
 
-// MountTenantAdmin mounts owner-gated active-tenant admin routes under
-// `/t/{tenantId}`: PATCH / and DELETE /. Caller wires RequireSession +
+// MountWorkspaceAdmin mounts owner-gated active-workspace admin routes under
+// `/t/{workspaceId}`: PATCH / and DELETE /. Caller wires RequireSession +
 // RequireMembership upstream. Restore is mounted separately because it must
-// be able to load soft-deleted tenants.
+// be able to load soft-deleted workspaces.
 //
 // RequireFreshReauth is deliberately NOT mounted here — Plan 4 adds the
 // /auth/reauth endpoint and re-mounts the step-up middleware across these
 // routes at that point (spec §5.6). RequireRole(RoleOwner) is the only
 // authorisation gate in Plan 2.
-func (h *Handler) MountTenantAdmin(r chi.Router) {
+func (h *Handler) MountWorkspaceAdmin(r chi.Router) {
 	owner := RequireRole(identity.RoleOwner)
 	fresh := RequireFreshReauth(h.svc.cfg.ReauthWindow)
-	r.With(owner, fresh).Patch("/", h.patchTenant)
-	r.With(owner, fresh).Delete("/", h.softDeleteTenant)
+	r.With(owner, fresh).Patch("/", h.patchWorkspace)
+	r.With(owner, fresh).Delete("/", h.softDeleteWorkspace)
 
 	// Role change: owner-only. Remove/leave dispatches inside the handler
 	// because the "any member can self-leave, only owners can remove
@@ -34,7 +34,7 @@ func (h *Handler) MountTenantAdmin(r chi.Router) {
 	r.Delete("/members/{userId}", h.removeOrLeaveMember)
 }
 
-type patchTenantReq struct {
+type patchWorkspaceReq struct {
 	Name           *string `json:"name,omitempty"`
 	Slug           *string `json:"slug,omitempty"`
 	BaseCurrency   *string `json:"baseCurrency,omitempty"`
@@ -43,18 +43,18 @@ type patchTenantReq struct {
 	Timezone       *string `json:"timezone,omitempty"`
 }
 
-func (h *Handler) patchTenant(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) patchWorkspace(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	tenant := MustTenant(r)
+	workspace := MustWorkspace(r)
 	user := MustUser(r)
 
-	var body patchTenantReq
+	var body patchWorkspaceReq
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
 		return
 	}
 
-	in := identity.UpdateTenantInput{
+	in := identity.UpdateWorkspaceInput{
 		Name:           body.Name,
 		Slug:           body.Slug,
 		BaseCurrency:   body.BaseCurrency,
@@ -63,43 +63,43 @@ func (h *Handler) patchTenant(w http.ResponseWriter, r *http.Request) {
 		Timezone:       body.Timezone,
 	}
 
-	before, _ := h.svc.identity.GetTenant(r.Context(), tenant.ID)
-	updated, err := h.svc.identity.UpdateTenant(r.Context(), tenant.ID, in)
+	before, _ := h.svc.identity.GetWorkspace(r.Context(), workspace.ID)
+	updated, err := h.svc.identity.UpdateWorkspace(r.Context(), workspace.ID, in)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
-	h.svc.WriteAudit(r.Context(), tenant.ID, user.ID,
-		"tenant.settings_changed", "tenant", tenant.ID, before, updated)
+	h.svc.WriteAudit(r.Context(), workspace.ID, user.ID,
+		"workspace.settings_changed", "workspace", workspace.ID, before, updated)
 
 	httpx.WriteJSON(w, http.StatusOK, updated)
 }
 
-func (h *Handler) softDeleteTenant(w http.ResponseWriter, r *http.Request) {
-	tenant := MustTenant(r)
+func (h *Handler) softDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
+	workspace := MustWorkspace(r)
 	user := MustUser(r)
 
-	if err := h.svc.identity.SoftDeleteTenant(r.Context(), tenant.ID); err != nil {
+	if err := h.svc.identity.SoftDeleteWorkspace(r.Context(), workspace.ID); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
-	h.svc.WriteAudit(r.Context(), tenant.ID, user.ID,
-		"tenant.deleted", "tenant", tenant.ID, nil, map[string]any{"softDelete": true})
+	h.svc.WriteAudit(r.Context(), workspace.ID, user.ID,
+		"workspace.deleted", "workspace", workspace.ID, nil, map[string]any{"softDelete": true})
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handler) RestoreTenant(w http.ResponseWriter, r *http.Request) {
-	tenant := MustTenant(r)
+func (h *Handler) RestoreWorkspace(w http.ResponseWriter, r *http.Request) {
+	workspace := MustWorkspace(r)
 	user := MustUser(r)
 
-	if err := h.svc.identity.RestoreTenant(r.Context(), tenant.ID); err != nil {
+	if err := h.svc.identity.RestoreWorkspace(r.Context(), workspace.ID); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
-	h.svc.WriteAudit(r.Context(), tenant.ID, user.ID,
-		"tenant.restored", "tenant", tenant.ID, nil, nil)
+	h.svc.WriteAudit(r.Context(), workspace.ID, user.ID,
+		"workspace.restored", "workspace", workspace.ID, nil, nil)
 
-	restored, err := h.svc.identity.GetTenant(r.Context(), tenant.ID)
+	restored, err := h.svc.identity.GetWorkspace(r.Context(), workspace.ID)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -115,7 +115,7 @@ type patchMemberReq struct {
 // ErrLastOwner as 422 so the UI can show a stable code.
 func (h *Handler) changeMemberRole(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	tenant := MustTenant(r)
+	workspace := MustWorkspace(r)
 	actor := MustUser(r)
 	userID, err := uuid.Parse(chi.URLParam(r, "userId"))
 	if err != nil {
@@ -134,11 +134,11 @@ func (h *Handler) changeMemberRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.svc.identity.ChangeRole(r.Context(), tenant.ID, userID, role)
+	err = h.svc.identity.ChangeRole(r.Context(), workspace.ID, userID, role)
 	switch {
 	case errors.Is(err, identity.ErrLastOwner):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "last_owner",
-			"cannot demote the last owner of this tenant")
+			"cannot demote the last owner of this workspace")
 		return
 	case errors.Is(err, identity.ErrNotAMember):
 		httpx.WriteError(w, http.StatusNotFound, "not_a_member", "membership not found")
@@ -147,17 +147,17 @@ func (h *Handler) changeMemberRole(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteServiceError(w, err)
 		return
 	}
-	h.svc.WriteAudit(r.Context(), tenant.ID, actor.ID,
+	h.svc.WriteAudit(r.Context(), workspace.ID, actor.ID,
 		"member.role_changed", "membership", userID, nil,
 		map[string]any{"role": string(role)})
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // removeOrLeaveMember dispatches on (userID == actor.ID):
-//   - self-leave: any member may call (subject to last-owner / last-tenant guards).
+//   - self-leave: any member may call (subject to last-owner / last-workspace guards).
 //   - remove-other: owner only.
 func (h *Handler) removeOrLeaveMember(w http.ResponseWriter, r *http.Request) {
-	tenant := MustTenant(r)
+	workspace := MustWorkspace(r)
 	actor := MustUser(r)
 	userID, err := uuid.Parse(chi.URLParam(r, "userId"))
 	if err != nil {
@@ -167,7 +167,7 @@ func (h *Handler) removeOrLeaveMember(w http.ResponseWriter, r *http.Request) {
 
 	var action string
 	if userID == actor.ID {
-		err = h.svc.identity.LeaveTenant(r.Context(), tenant.ID, userID)
+		err = h.svc.identity.LeaveWorkspace(r.Context(), workspace.ID, userID)
 		action = "member.left"
 	} else {
 		role, _ := RoleFromCtx(r.Context())
@@ -176,17 +176,17 @@ func (h *Handler) removeOrLeaveMember(w http.ResponseWriter, r *http.Request) {
 				"only owners can remove other members")
 			return
 		}
-		err = h.svc.identity.RemoveMember(r.Context(), tenant.ID, userID)
+		err = h.svc.identity.RemoveMember(r.Context(), workspace.ID, userID)
 		action = "member.removed"
 	}
 	switch {
 	case errors.Is(err, identity.ErrLastOwner):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "last_owner",
-			"cannot remove the last owner of this tenant")
+			"cannot remove the last owner of this workspace")
 		return
-	case errors.Is(err, identity.ErrLastTenant):
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "last_tenant",
-			"cannot leave your last tenant — create another workspace first")
+	case errors.Is(err, identity.ErrLastWorkspace):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "last_workspace",
+			"cannot leave your last workspace — create another workspace first")
 		return
 	case errors.Is(err, identity.ErrNotAMember):
 		httpx.WriteError(w, http.StatusNotFound, "not_a_member", "membership not found")
@@ -195,7 +195,7 @@ func (h *Handler) removeOrLeaveMember(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteServiceError(w, err)
 		return
 	}
-	h.svc.WriteAudit(r.Context(), tenant.ID, actor.ID, action,
+	h.svc.WriteAudit(r.Context(), workspace.ID, actor.ID, action,
 		"membership", userID, nil, nil)
 	w.WriteHeader(http.StatusNoContent)
 }

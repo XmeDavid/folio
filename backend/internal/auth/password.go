@@ -1,7 +1,7 @@
 // Package auth owns credential primitives (password hashing, session tokens),
 // HTTP middleware (RequireSession, RequireMembership, RequireRole,
 // RequireFreshReauth, CSRF), rate limiters, and the signup/login/logout
-// HTTP surface. It is intentionally free of tenant-scoped queries; those
+// HTTP surface. It is intentionally free of workspace-scoped queries; those
 // live in backend/internal/identity.
 package auth
 

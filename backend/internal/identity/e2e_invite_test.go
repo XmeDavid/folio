@@ -24,7 +24,7 @@ import (
 // TestE2E_InviteRoundTrip exercises the full wire path: Alice signs up,
 // creates an invite for Bob, the stub mailer captures the URL, Bob's
 // unauthenticated preview works, Bob signs up consuming the token, and
-// ends up with two memberships — Personal + Alice's tenant.
+// ends up with two memberships — Personal + Alice's workspace.
 func TestE2E_InviteRoundTrip(t *testing.T) {
 	pool := testdb.Open(t)
 	ctx := context.Background()
@@ -80,14 +80,14 @@ func TestE2E_InviteRoundTrip(t *testing.T) {
 			ID    string `json:"id"`
 			Email string `json:"email"`
 		} `json:"user"`
-		Tenant struct {
+		Workspace struct {
 			ID   string `json:"id"`
 			Slug string `json:"slug"`
-		} `json:"tenant"`
+		} `json:"workspace"`
 	}
 	mustJSON(t, aliceBody, &signupResp)
-	if signupResp.Tenant.ID == "" {
-		t.Fatalf("no tenant id on signup: %s", aliceBody)
+	if signupResp.Workspace.ID == "" {
+		t.Fatalf("no workspace id on signup: %s", aliceBody)
 	}
 
 	// The user needs email_verified_at to accept an invite. Signup-via-
@@ -99,11 +99,11 @@ func TestE2E_InviteRoundTrip(t *testing.T) {
 		t.Fatalf("seed email verification: %v", err)
 	}
 
-	aliceTenantID := signupResp.Tenant.ID
+	aliceWorkspaceID := signupResp.Workspace.ID
 
 	// --- 2. Alice invites Bob ------------------------------------------------
 	inviteBody := doJSON(t, srv, aliceJar, http.MethodPost,
-		"/api/v1/t/"+aliceTenantID+"/invites",
+		"/api/v1/t/"+aliceWorkspaceID+"/invites",
 		`{"email":"`+bobEmail+`","role":"member"}`,
 		http.StatusCreated)
 	var invite struct {
@@ -127,7 +127,7 @@ func TestE2E_InviteRoundTrip(t *testing.T) {
 	previewBody := doRaw(t, srv, &sessionJar{}, http.MethodGet,
 		"/api/v1/auth/invites/"+plaintext, "", http.StatusOK)
 	var preview struct {
-		TenantName         string `json:"tenantName"`
+		WorkspaceName         string `json:"workspaceName"`
 		InviterDisplayName string `json:"inviterDisplayName"`
 		Email              string `json:"email"`
 		Role               string `json:"role"`
@@ -155,7 +155,7 @@ func TestE2E_InviteRoundTrip(t *testing.T) {
 	// --- 6. DB invariants ----------------------------------------------------
 	var membershipCount int
 	if err := pool.QueryRow(ctx,
-		`select count(*) from tenant_memberships where user_id = $1`, bobSignup.User.ID).Scan(&membershipCount); err != nil {
+		`select count(*) from workspace_memberships where user_id = $1`, bobSignup.User.ID).Scan(&membershipCount); err != nil {
 		t.Fatalf("count memberships: %v", err)
 	}
 	if membershipCount != 2 {
@@ -164,18 +164,18 @@ func TestE2E_InviteRoundTrip(t *testing.T) {
 
 	var accepted bool
 	if err := pool.QueryRow(ctx,
-		`select accepted_at is not null from tenant_invites where email = $1`, bobEmail).Scan(&accepted); err != nil {
+		`select accepted_at is not null from workspace_invites where email = $1`, bobEmail).Scan(&accepted); err != nil {
 		t.Fatalf("check invite: %v", err)
 	}
 	if !accepted {
 		t.Fatal("invite.accepted_at is still NULL — signup did not consume the invite")
 	}
 
-	// Audit: one member.invite_accepted row for Alice's tenant (Bob's actor).
+	// Audit: one member.invite_accepted row for Alice's workspace (Bob's actor).
 	var auditCount int
 	_ = pool.QueryRow(ctx,
-		`select count(*) from audit_events where action = 'member.invite_accepted' and tenant_id = $1 and actor_user_id = $2`,
-		aliceTenantID, bobSignup.User.ID).Scan(&auditCount)
+		`select count(*) from audit_events where action = 'member.invite_accepted' and workspace_id = $1 and actor_user_id = $2`,
+		aliceWorkspaceID, bobSignup.User.ID).Scan(&auditCount)
 	if auditCount != 1 {
 		t.Errorf("want 1 member.invite_accepted audit row, got %d", auditCount)
 	}
@@ -205,24 +205,24 @@ func cleanupE2EByEmails(t *testing.T, pool *pgxpool.Pool, emails ...string) {
 		t.Fatalf("disable triggers: %v", err)
 	}
 	// Delete any pending invites that reference the test emails but
-	// belong to tenants we don't own (inviter is someone else).
+	// belong to workspaces we don't own (inviter is someone else).
 	if _, err := tx.Exec(ctx,
-		`delete from tenant_invites where email = any($1)`, emails); err != nil {
+		`delete from workspace_invites where email = any($1)`, emails); err != nil {
 		t.Fatalf("cleanup invites: %v", err)
 	}
-	// Delete tenants where any test user is a member — cascades to
-	// audit_events and tenant_memberships (triggers disabled).
+	// Delete workspaces where any test user is a member — cascades to
+	// audit_events and workspace_memberships (triggers disabled).
 	if _, err := tx.Exec(ctx, `
-		delete from tenants where id in (
-			select distinct m.tenant_id from tenant_memberships m
+		delete from workspaces where id in (
+			select distinct m.workspace_id from workspace_memberships m
 			join users u on u.id = m.user_id
 			where u.email = any($1)
 		)
 	`, emails); err != nil {
-		t.Fatalf("cleanup tenants: %v", err)
+		t.Fatalf("cleanup workspaces: %v", err)
 	}
 	// Delete the users — cascades sessions and sets audit.actor_user_id
-	// to NULL for any cross-tenant audit rows left behind.
+	// to NULL for any cross-workspace audit rows left behind.
 	if _, err := tx.Exec(ctx,
 		`delete from users where email = any($1)`, emails); err != nil {
 		t.Fatalf("cleanup users: %v", err)

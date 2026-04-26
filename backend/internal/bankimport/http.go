@@ -26,13 +26,13 @@ func (h *Handler) MountAccountRoutes(r chi.Router) {
 }
 
 func (h *Handler) previewForNewAccount(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	fileName, file, ok := readImportFile(w, r)
 	if !ok {
 		return
 	}
 	defer file.Close()
-	res, err := h.svc.Preview(r.Context(), tenantID, fileName, file, nil)
+	res, err := h.svc.Preview(r.Context(), workspaceID, fileName, file, nil)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -41,14 +41,14 @@ func (h *Handler) previewForNewAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) applyPlan(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	userID := auth.MustUser(r).ID
 	var req ApplyPlanInput
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
 		return
 	}
-	res, err := h.svc.ApplyPlan(r.Context(), tenantID, userID, req)
+	res, err := h.svc.ApplyPlan(r.Context(), workspaceID, userID, req)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -57,7 +57,7 @@ func (h *Handler) applyPlan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) previewForExistingAccount(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	accountID, ok := parseAccountID(w, r)
 	if !ok {
 		return
@@ -67,7 +67,7 @@ func (h *Handler) previewForExistingAccount(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	defer file.Close()
-	res, err := h.svc.Preview(r.Context(), tenantID, fileName, file, &accountID)
+	res, err := h.svc.Preview(r.Context(), workspaceID, fileName, file, &accountID)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -81,7 +81,7 @@ type applyReq struct {
 }
 
 func (h *Handler) applyToExistingAccount(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.MustTenant(r).ID
+	workspaceID := auth.MustWorkspace(r).ID
 	userID := auth.MustUser(r).ID
 	accountID, ok := parseAccountID(w, r)
 	if !ok {
@@ -96,7 +96,7 @@ func (h *Handler) applyToExistingAccount(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "fileToken is required")
 		return
 	}
-	res, err := h.svc.Apply(r.Context(), tenantID, accountID, userID, req.FileToken, req.Currency)
+	res, err := h.svc.Apply(r.Context(), workspaceID, accountID, userID, req.FileToken, req.Currency)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return

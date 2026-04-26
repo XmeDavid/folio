@@ -16,10 +16,10 @@ import (
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
-// CreateTestTenant inserts a tenant row and returns it. name is used for
+// CreateTestWorkspace inserts a workspace row and returns it. name is used for
 // display name; the slug is derived via identity.Slugify (with a short
 // random suffix to avoid collisions across tests that share a pool).
-func CreateTestTenant(t *testing.T, pool *pgxpool.Pool, name string) (id uuid.UUID, slug string) {
+func CreateTestWorkspace(t *testing.T, pool *pgxpool.Pool, name string) (id uuid.UUID, slug string) {
 	t.Helper()
 	id = uuidx.New()
 	base := identity.Slugify(name)
@@ -27,7 +27,7 @@ func CreateTestTenant(t *testing.T, pool *pgxpool.Pool, name string) (id uuid.UU
 		base = "workspace"
 	}
 	// Append a short hex suffix so tests that reuse the pool don't collide.
-	// Hex (not base64url) because the tenants_slug_check regex
+	// Hex (not base64url) because the workspaces_slug_check regex
 	// `^[a-z0-9][a-z0-9-]{1,62}$` doesn't accept `_` / `-` from base64url,
 	// and the slug is already lowercased by Slugify. Cap at 63 chars.
 	suffix := "-" + hex.EncodeToString(id[:6])
@@ -37,11 +37,11 @@ func CreateTestTenant(t *testing.T, pool *pgxpool.Pool, name string) (id uuid.UU
 	}
 	slug = trimmed + suffix
 	_, err := pool.Exec(context.Background(), `
-		insert into tenants (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
+		insert into workspaces (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
 		values ($1, $2, $3, 'CHF', 1, 'en', 'UTC')
 	`, id, name, slug)
 	if err != nil {
-		t.Fatalf("CreateTestTenant: %v", err)
+		t.Fatalf("CreateTestWorkspace: %v", err)
 	}
 	return id, slug
 }
@@ -67,12 +67,12 @@ func CreateTestUser(t *testing.T, pool *pgxpool.Pool, email string, verified boo
 	return id
 }
 
-// CreateTestMembership inserts a tenant_memberships row with the given role.
-func CreateTestMembership(t *testing.T, pool *pgxpool.Pool, tenantID, userID uuid.UUID, role string) {
+// CreateTestMembership inserts a workspace_memberships row with the given role.
+func CreateTestMembership(t *testing.T, pool *pgxpool.Pool, workspaceID, userID uuid.UUID, role string) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
-		insert into tenant_memberships (tenant_id, user_id, role) values ($1, $2, $3::tenant_role)
-	`, tenantID, userID, role)
+		insert into workspace_memberships (workspace_id, user_id, role) values ($1, $2, $3::workspace_role)
+	`, workspaceID, userID, role)
 	if err != nil {
 		t.Fatalf("CreateTestMembership: %v", err)
 	}
@@ -91,7 +91,7 @@ func SetSessionReauth(t *testing.T, pool *pgxpool.Pool, sessionID string, ts tim
 }
 
 // HashInviteToken returns the SHA-256 of a base64url invite token — matches
-// the production rule for tenant_invites.token_hash.
+// the production rule for workspace_invites.token_hash.
 func HashInviteToken(plaintext string) []byte {
 	h := sha256.Sum256([]byte(plaintext))
 	return h[:]

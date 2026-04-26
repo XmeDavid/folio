@@ -21,7 +21,7 @@ import (
 // JSON always round-trips.
 type Rule struct {
 	ID            uuid.UUID  `json:"id"`
-	TenantID      uuid.UUID  `json:"tenantId"`
+	WorkspaceID      uuid.UUID  `json:"workspaceId"`
 	Priority      int        `json:"priority"`
 	When          RuleWhen   `json:"when"`
 	Then          RuleThen   `json:"then"`
@@ -299,14 +299,14 @@ func normalizeThen(raw json.RawMessage) (RuleThen, error) {
 // ---- persistence -----------------------------------------------------------
 
 const rulesCols = `
-	id, tenant_id, priority, when_jsonb, then_jsonb, enabled,
+	id, workspace_id, priority, when_jsonb, then_jsonb, enabled,
 	last_matched_at, created_at, updated_at
 `
 
 func scanRule(r interface{ Scan(dest ...any) error }, out *Rule) error {
 	var whenBytes, thenBytes []byte
 	if err := r.Scan(
-		&out.ID, &out.TenantID, &out.Priority, &whenBytes, &thenBytes,
+		&out.ID, &out.WorkspaceID, &out.Priority, &whenBytes, &thenBytes,
 		&out.Enabled, &out.LastMatchedAt, &out.CreatedAt, &out.UpdatedAt,
 	); err != nil {
 		return err
@@ -473,64 +473,64 @@ func marshalThenForStore(t RuleThen) ([]byte, error) {
 
 // ---- reference validation --------------------------------------------------
 
-// validateWhenReferences asserts that referenced entities belong to the tenant.
+// validateWhenReferences asserts that referenced entities belong to the workspace.
 // Keeps the HTTP surface returning clean 400s instead of surfacing FK errors
 // on the first matching transaction.
-func (s *Service) validateWhenReferences(ctx context.Context, tenantID uuid.UUID, w RuleWhen) error {
+func (s *Service) validateWhenReferences(ctx context.Context, workspaceID uuid.UUID, w RuleWhen) error {
 	if w.AccountID != nil {
-		if err := s.assertAccountExists(ctx, tenantID, *w.AccountID); err != nil {
+		if err := s.assertAccountExists(ctx, workspaceID, *w.AccountID); err != nil {
 			return err
 		}
 	}
 	if w.MerchantID != nil {
-		if err := s.assertMerchantExists(ctx, tenantID, *w.MerchantID); err != nil {
+		if err := s.assertMerchantExists(ctx, workspaceID, *w.MerchantID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Service) validateThenReferences(ctx context.Context, tenantID uuid.UUID, t RuleThen) error {
+func (s *Service) validateThenReferences(ctx context.Context, workspaceID uuid.UUID, t RuleThen) error {
 	if t.CategoryID != nil {
-		if err := s.assertCategoryExists(ctx, tenantID, *t.CategoryID); err != nil {
+		if err := s.assertCategoryExists(ctx, workspaceID, *t.CategoryID); err != nil {
 			return err
 		}
 	}
 	if t.MerchantID != nil {
-		if err := s.assertMerchantExists(ctx, tenantID, *t.MerchantID); err != nil {
+		if err := s.assertMerchantExists(ctx, workspaceID, *t.MerchantID); err != nil {
 			return err
 		}
 	}
 	for _, id := range t.AddTagIDs {
-		if err := s.assertTagExists(ctx, tenantID, id); err != nil {
+		if err := s.assertTagExists(ctx, workspaceID, id); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Service) assertAccountExists(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *Service) assertAccountExists(ctx context.Context, workspaceID, id uuid.UUID) error {
 	var ok bool
 	err := s.pool.QueryRow(ctx,
-		`select true from accounts where tenant_id = $1 and id = $2`,
-		tenantID, id).Scan(&ok)
+		`select true from accounts where workspace_id = $1 and id = $2`,
+		workspaceID, id).Scan(&ok)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return httpx.NewValidationError("referenced account does not exist for this tenant")
+			return httpx.NewValidationError("referenced account does not exist for this workspace")
 		}
 		return fmt.Errorf("check account: %w", err)
 	}
 	return nil
 }
 
-func (s *Service) assertMerchantExists(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *Service) assertMerchantExists(ctx context.Context, workspaceID, id uuid.UUID) error {
 	var ok bool
 	err := s.pool.QueryRow(ctx,
-		`select true from merchants where tenant_id = $1 and id = $2`,
-		tenantID, id).Scan(&ok)
+		`select true from merchants where workspace_id = $1 and id = $2`,
+		workspaceID, id).Scan(&ok)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return httpx.NewValidationError("referenced merchant does not exist for this tenant")
+			return httpx.NewValidationError("referenced merchant does not exist for this workspace")
 		}
 		return fmt.Errorf("check merchant: %w", err)
 	}
@@ -540,7 +540,7 @@ func (s *Service) assertMerchantExists(ctx context.Context, tenantID, id uuid.UU
 // ---- CRUD ------------------------------------------------------------------
 
 // CreateRule validates the DSL, resolves references, then inserts the rule.
-func (s *Service) CreateRule(ctx context.Context, tenantID uuid.UUID, raw RuleCreateInput) (*Rule, error) {
+func (s *Service) CreateRule(ctx context.Context, workspaceID uuid.UUID, raw RuleCreateInput) (*Rule, error) {
 	when, err := normalizeWhen(raw.When)
 	if err != nil {
 		return nil, err
@@ -549,10 +549,10 @@ func (s *Service) CreateRule(ctx context.Context, tenantID uuid.UUID, raw RuleCr
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateWhenReferences(ctx, tenantID, when); err != nil {
+	if err := s.validateWhenReferences(ctx, workspaceID, when); err != nil {
 		return nil, err
 	}
-	if err := s.validateThenReferences(ctx, tenantID, then); err != nil {
+	if err := s.validateThenReferences(ctx, workspaceID, then); err != nil {
 		return nil, err
 	}
 
@@ -577,10 +577,10 @@ func (s *Service) CreateRule(ctx context.Context, tenantID uuid.UUID, raw RuleCr
 	id := uuidx.New()
 	row := s.pool.QueryRow(ctx, `
 		insert into categorization_rules (
-			id, tenant_id, priority, when_jsonb, then_jsonb, enabled
+			id, workspace_id, priority, when_jsonb, then_jsonb, enabled
 		) values ($1, $2, $3, $4, $5, $6)
 		returning `+rulesCols,
-		id, tenantID, priority, whenBytes, thenBytes, enabled,
+		id, workspaceID, priority, whenBytes, thenBytes, enabled,
 	)
 	var out Rule
 	if err := scanRule(row, &out); err != nil {
@@ -595,11 +595,11 @@ type RuleListFilter struct {
 	Enabled *bool
 }
 
-// ListRules returns rules for tenantID ordered by priority ASC, created_at ASC.
+// ListRules returns rules for workspaceID ordered by priority ASC, created_at ASC.
 // When f.Enabled is non-nil, filters to only rules with that enabled value.
-func (s *Service) ListRules(ctx context.Context, tenantID uuid.UUID, f RuleListFilter) ([]Rule, error) {
-	args := []any{tenantID}
-	q := `select ` + rulesCols + ` from categorization_rules where tenant_id = $1`
+func (s *Service) ListRules(ctx context.Context, workspaceID uuid.UUID, f RuleListFilter) ([]Rule, error) {
+	args := []any{workspaceID}
+	q := `select ` + rulesCols + ` from categorization_rules where workspace_id = $1`
 	if f.Enabled != nil {
 		args = append(args, *f.Enabled)
 		q += ` and enabled = $2`
@@ -623,10 +623,10 @@ func (s *Service) ListRules(ctx context.Context, tenantID uuid.UUID, f RuleListF
 }
 
 // GetRule fetches a single rule.
-func (s *Service) GetRule(ctx context.Context, tenantID, id uuid.UUID) (*Rule, error) {
+func (s *Service) GetRule(ctx context.Context, workspaceID, id uuid.UUID) (*Rule, error) {
 	row := s.pool.QueryRow(ctx,
-		`select `+rulesCols+` from categorization_rules where tenant_id = $1 and id = $2`,
-		tenantID, id)
+		`select `+rulesCols+` from categorization_rules where workspace_id = $1 and id = $2`,
+		workspaceID, id)
 	var r Rule
 	if err := scanRule(row, &r); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -639,9 +639,9 @@ func (s *Service) GetRule(ctx context.Context, tenantID, id uuid.UUID) (*Rule, e
 
 // UpdateRule applies the patch and returns the updated row. when/then replace
 // wholesale; partial merge is intentionally out of scope.
-func (s *Service) UpdateRule(ctx context.Context, tenantID, id uuid.UUID, raw RulePatchInput) (*Rule, error) {
+func (s *Service) UpdateRule(ctx context.Context, workspaceID, id uuid.UUID, raw RulePatchInput) (*Rule, error) {
 	sets := make([]string, 0, 4)
-	args := []any{tenantID, id}
+	args := []any{workspaceID, id}
 	next := func(v any) string {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
@@ -658,7 +658,7 @@ func (s *Service) UpdateRule(ctx context.Context, tenantID, id uuid.UUID, raw Ru
 		if err != nil {
 			return nil, err
 		}
-		if err := s.validateWhenReferences(ctx, tenantID, when); err != nil {
+		if err := s.validateWhenReferences(ctx, workspaceID, when); err != nil {
 			return nil, err
 		}
 		b, err := marshalWhenForStore(when)
@@ -672,7 +672,7 @@ func (s *Service) UpdateRule(ctx context.Context, tenantID, id uuid.UUID, raw Ru
 		if err != nil {
 			return nil, err
 		}
-		if err := s.validateThenReferences(ctx, tenantID, then); err != nil {
+		if err := s.validateThenReferences(ctx, workspaceID, then); err != nil {
 			return nil, err
 		}
 		b, err := marshalThenForStore(then)
@@ -683,12 +683,12 @@ func (s *Service) UpdateRule(ctx context.Context, tenantID, id uuid.UUID, raw Ru
 	}
 
 	if len(sets) == 0 {
-		return s.GetRule(ctx, tenantID, id)
+		return s.GetRule(ctx, workspaceID, id)
 	}
 
 	q := fmt.Sprintf(`
 		update categorization_rules set %s
-		where tenant_id = $1 and id = $2
+		where workspace_id = $1 and id = $2
 		returning %s
 	`, strings.Join(sets, ", "), rulesCols)
 
@@ -705,10 +705,10 @@ func (s *Service) UpdateRule(ctx context.Context, tenantID, id uuid.UUID, raw Ru
 
 // DeleteRule hard-deletes the rule. The audit table records the deletion via
 // triggers (cross-cutting; not wired here).
-func (s *Service) DeleteRule(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *Service) DeleteRule(ctx context.Context, workspaceID, id uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx,
-		`delete from categorization_rules where tenant_id = $1 and id = $2`,
-		tenantID, id)
+		`delete from categorization_rules where workspace_id = $1 and id = $2`,
+		workspaceID, id)
 	if err != nil {
 		return fmt.Errorf("delete rule: %w", err)
 	}

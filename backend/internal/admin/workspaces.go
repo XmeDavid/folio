@@ -13,21 +13,21 @@ import (
 	"github.com/xmedavid/folio/backend/internal/identity"
 )
 
-type tenantCursor struct {
+type workspaceCursor struct {
 	CreatedAt time.Time `json:"createdAt"`
 	ID        uuid.UUID `json:"id"`
 }
 
-type TenantDetail struct {
-	Tenant         identity.Tenant `json:"tenant"`
+type WorkspaceDetail struct {
+	Workspace         identity.Workspace `json:"workspace"`
 	MemberCount    int             `json:"memberCount"`
 	DeletedAt      *time.Time      `json:"deletedAt,omitempty"`
 	LastActivityAt *time.Time      `json:"lastActivityAt,omitempty"`
 }
 
-func (s *Service) ListTenants(ctx context.Context, filter TenantListFilter) ([]identity.Tenant, Pagination, error) {
+func (s *Service) ListWorkspaces(ctx context.Context, filter WorkspaceListFilter) ([]identity.Workspace, Pagination, error) {
 	filter.AdminListFilter = filter.Normalize()
-	var cur tenantCursor
+	var cur workspaceCursor
 	if filter.Cursor != "" {
 		if err := decodeCursor(filter.Cursor, &cur); err != nil {
 			return nil, Pagination{}, httpx.NewValidationError("invalid cursor")
@@ -37,7 +37,7 @@ func (s *Service) ListTenants(ctx context.Context, filter TenantListFilter) ([]i
 	like := "%" + search + "%"
 	rows, err := s.pool.Query(ctx, `
 		select id, name, slug::text, base_currency::text, cycle_anchor_day, locale, timezone, deleted_at, created_at
-		from tenants
+		from workspaces
 		where ($1::bool or deleted_at is null)
 		  and ($2::text = '' or name ilike $3 or slug::text ilike $3 or id::text ilike $3)
 		  and ($4::timestamptz is null or (created_at, id) < ($4, $5))
@@ -49,9 +49,9 @@ func (s *Service) ListTenants(ctx context.Context, filter TenantListFilter) ([]i
 	}
 	defer rows.Close()
 
-	out := make([]identity.Tenant, 0, filter.Limit)
+	out := make([]identity.Workspace, 0, filter.Limit)
 	for rows.Next() {
-		var t identity.Tenant
+		var t identity.Workspace
 		if err := rows.Scan(&t.ID, &t.Name, &t.Slug, &t.BaseCurrency, &t.CycleAnchorDay, &t.Locale, &t.Timezone, &t.DeletedAt, &t.CreatedAt); err != nil {
 			return nil, Pagination{}, err
 		}
@@ -60,41 +60,41 @@ func (s *Service) ListTenants(ctx context.Context, filter TenantListFilter) ([]i
 	if err := rows.Err(); err != nil {
 		return nil, Pagination{}, err
 	}
-	return pageTenants(out, filter.Limit)
+	return pageWorkspaces(out, filter.Limit)
 }
 
-func (s *Service) TenantDetail(ctx context.Context, tenantID uuid.UUID, actorUserID uuid.UUID) (TenantDetail, error) {
-	var d TenantDetail
+func (s *Service) WorkspaceDetail(ctx context.Context, workspaceID uuid.UUID, actorUserID uuid.UUID) (WorkspaceDetail, error) {
+	var d WorkspaceDetail
 	err := s.pool.QueryRow(ctx, `
 		select id, name, slug::text, base_currency::text, cycle_anchor_day, locale, timezone, deleted_at, created_at
-		from tenants where id = $1
-	`, tenantID).Scan(&d.Tenant.ID, &d.Tenant.Name, &d.Tenant.Slug, &d.Tenant.BaseCurrency, &d.Tenant.CycleAnchorDay, &d.Tenant.Locale, &d.Tenant.Timezone, &d.Tenant.DeletedAt, &d.Tenant.CreatedAt)
+		from workspaces where id = $1
+	`, workspaceID).Scan(&d.Workspace.ID, &d.Workspace.Name, &d.Workspace.Slug, &d.Workspace.BaseCurrency, &d.Workspace.CycleAnchorDay, &d.Workspace.Locale, &d.Workspace.Timezone, &d.Workspace.DeletedAt, &d.Workspace.CreatedAt)
 	if errorsIsNoRows(err) {
-		return d, httpx.NewNotFoundError("tenant")
+		return d, httpx.NewNotFoundError("workspace")
 	}
 	if err != nil {
 		return d, err
 	}
-	d.DeletedAt = d.Tenant.DeletedAt
-	if err := s.pool.QueryRow(ctx, `select count(*) from tenant_memberships where tenant_id = $1`, tenantID).Scan(&d.MemberCount); err != nil {
+	d.DeletedAt = d.Workspace.DeletedAt
+	if err := s.pool.QueryRow(ctx, `select count(*) from workspace_memberships where workspace_id = $1`, workspaceID).Scan(&d.MemberCount); err != nil {
 		return d, err
 	}
-	if err := s.pool.QueryRow(ctx, `select max(occurred_at) from audit_events where tenant_id = $1`, tenantID).Scan(&d.LastActivityAt); err != nil {
+	if err := s.pool.QueryRow(ctx, `select max(occurred_at) from audit_events where workspace_id = $1`, workspaceID).Scan(&d.LastActivityAt); err != nil {
 		return d, err
 	}
-	if err := s.writeAdminAuditRow(ctx, "admin.viewed_tenant", actorUserID, "tenant", tenantID, nil, nil); err != nil {
-		slog.Default().Warn("admin.audit_write_failed", "op", "admin.viewed_tenant", "err", err)
+	if err := s.writeAdminAuditRow(ctx, "admin.viewed_workspace", actorUserID, "workspace", workspaceID, nil, nil); err != nil {
+		slog.Default().Warn("admin.audit_write_failed", "op", "admin.viewed_workspace", "err", err)
 	}
 	return d, nil
 }
 
-func pageTenants(rows []identity.Tenant, limit int) ([]identity.Tenant, Pagination, error) {
+func pageWorkspaces(rows []identity.Workspace, limit int) ([]identity.Workspace, Pagination, error) {
 	p := Pagination{Limit: limit}
 	if len(rows) <= limit {
 		return rows, p, nil
 	}
 	spill := rows[limit]
-	c, err := encodeCursor(tenantCursor{CreatedAt: spill.CreatedAt, ID: spill.ID})
+	c, err := encodeCursor(workspaceCursor{CreatedAt: spill.CreatedAt, ID: spill.ID})
 	if err != nil {
 		return nil, Pagination{}, err
 	}
