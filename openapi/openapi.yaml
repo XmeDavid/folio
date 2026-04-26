@@ -61,8 +61,8 @@ paths:
   /api/v1/onboarding/bootstrap:
     post:
       tags: [onboarding]
-      summary: Bootstrap a tenant and its first user
-      description: Creates the first tenant/user pair. Password auth is intentionally not implemented yet.
+      summary: Bootstrap a workspace and its first user
+      description: Creates the first workspace/user pair. Password auth is intentionally not implemented yet.
       security: []
       requestBody:
         required: true
@@ -120,12 +120,12 @@ paths:
   /api/v1/me:
     get:
       tags: [auth]
-      summary: Current tenant user
+      summary: Current workspace user
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       responses:
         "200":
-          description: Current user and tenant
+          description: Current user and workspace
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MeResult" }
@@ -133,9 +133,9 @@ paths:
   /api/v1/accounts:
     get:
       tags: [accounts]
-      summary: List accounts for current tenant
+      summary: List accounts for current workspace
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: includeArchived
           in: query
@@ -152,7 +152,7 @@ paths:
       tags: [accounts]
       summary: Create an account and opening balance snapshot
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       requestBody:
         required: true
         content:
@@ -170,7 +170,7 @@ paths:
       tags: [accounts]
       summary: Reorder account groups and accounts
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       requestBody:
         required: true
         content:
@@ -183,9 +183,9 @@ paths:
   /api/v1/accounts/groups:
     get:
       tags: [accounts]
-      summary: List account groups for current tenant
+      summary: List account groups for current workspace
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: includeArchived
           in: query
@@ -202,7 +202,7 @@ paths:
       tags: [accounts]
       summary: Create an account group
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       requestBody:
         required: true
         content:
@@ -220,7 +220,7 @@ paths:
       tags: [accounts]
       summary: Update an account group
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: groupId
           in: path
@@ -241,7 +241,7 @@ paths:
       tags: [accounts]
       summary: Delete an account group
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: groupId
           in: path
@@ -256,7 +256,7 @@ paths:
       tags: [accounts]
       summary: Get an account
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: accountId
           in: path
@@ -272,7 +272,7 @@ paths:
       tags: [accounts]
       summary: Update mutable account fields
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: accountId
           in: path
@@ -293,12 +293,12 @@ paths:
   /api/v1/transactions:
     get:
       tags: [transactions]
-      summary: List transactions for current tenant
+      summary: List transactions for current workspace
       description: |
-        Tenant is taken from the `X-Tenant-ID` context — never from the body.
+        Workspace is taken from the `X-Workspace-ID` context — never from the body.
         Results are ordered by `bookedAt DESC, id DESC`.
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: accountId
           in: query
@@ -356,11 +356,11 @@ paths:
       tags: [transactions]
       summary: Create a manual transaction
       description: |
-        Manual ledger entry. `tenantId` is resolved from `X-Tenant-ID`.
+        Manual ledger entry. `workspaceId` is resolved from `X-Workspace-ID`.
         `currency` must match the account currency (also enforced by a
         database trigger). Status defaults to `posted`.
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       requestBody:
         required: true
         content:
@@ -378,7 +378,7 @@ paths:
       tags: [transactions]
       summary: Get a transaction
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: transactionId
           in: path
@@ -399,7 +399,7 @@ paths:
         accept an empty string to clear. `countAsExpense` accepts `true`,
         `false`, or `null` to clear.
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: transactionId
           in: path
@@ -420,7 +420,7 @@ paths:
       tags: [transactions]
       summary: Hard-delete a transaction (v1 — replace with soft-delete later)
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: transactionId
           in: path
@@ -437,7 +437,7 @@ paths:
         Idempotent: applying an already-applied tag returns 204 without
         creating a duplicate row.
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: transactionId
           in: path
@@ -455,7 +455,7 @@ paths:
       description: |
         Idempotent: removing an unapplied tag returns 204.
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: transactionId
           in: path
@@ -471,9 +471,9 @@ paths:
   /api/v1/categories:
     get:
       tags: [categories]
-      summary: List categories for current tenant
+      summary: List categories for current workspace
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: includeArchived
           in: query
@@ -490,7 +490,7 @@ paths:
       tags: [categories]
       summary: Create a category
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       requestBody:
         required: true
         content:
@@ -508,7 +508,7 @@ paths:
       tags: [categories]
       summary: Get a category
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: categoryId
           in: path
@@ -524,7 +524,7 @@ paths:
       tags: [categories]
       summary: Update a category
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: categoryId
           in: path
@@ -549,7 +549,7 @@ paths:
         already-archived category returns 204 without overwriting the
         timestamp.
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: categoryId
           in: path
@@ -561,9 +561,9 @@ paths:
   /api/v1/merchants:
     get:
       tags: [merchants]
-      summary: List merchants for current tenant
+      summary: List merchants for current workspace
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: includeArchived
           in: query
@@ -580,7 +580,7 @@ paths:
       tags: [merchants]
       summary: Create a merchant
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       requestBody:
         required: true
         content:
@@ -598,7 +598,7 @@ paths:
       tags: [merchants]
       summary: Get a merchant
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: merchantId
           in: path
@@ -614,7 +614,7 @@ paths:
       tags: [merchants]
       summary: Update a merchant
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: merchantId
           in: path
@@ -635,7 +635,7 @@ paths:
       tags: [merchants]
       summary: Archive a merchant (soft delete)
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: merchantId
           in: path
@@ -647,9 +647,9 @@ paths:
   /api/v1/tags:
     get:
       tags: [tags]
-      summary: List tags for current tenant
+      summary: List tags for current workspace
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: includeArchived
           in: query
@@ -666,7 +666,7 @@ paths:
       tags: [tags]
       summary: Create a tag
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       requestBody:
         required: true
         content:
@@ -684,7 +684,7 @@ paths:
       tags: [tags]
       summary: Get a tag
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: tagId
           in: path
@@ -700,7 +700,7 @@ paths:
       tags: [tags]
       summary: Update a tag
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: tagId
           in: path
@@ -721,7 +721,7 @@ paths:
       tags: [tags]
       summary: Archive a tag (soft delete)
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: tagId
           in: path
@@ -733,12 +733,12 @@ paths:
   /api/v1/categorization-rules:
     get:
       tags: [categorization-rules]
-      summary: List categorization rules for current tenant
+      summary: List categorization rules for current workspace
       description: |
         Rules are returned ordered by `priority` ascending, then `createdAt`
         ascending. All rules (enabled and disabled) are listed by default.
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: enabled
           in: query
@@ -758,7 +758,7 @@ paths:
       tags: [categorization-rules]
       summary: Create a categorization rule
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       requestBody:
         required: true
         content:
@@ -776,7 +776,7 @@ paths:
       tags: [categorization-rules]
       summary: Get a categorization rule
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: ruleId
           in: path
@@ -795,7 +795,7 @@ paths:
         `when` and `then` are replaced wholesale when present; partial DSL
         merge is intentionally out of scope.
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: ruleId
           in: path
@@ -819,7 +819,7 @@ paths:
         Hard-deletes the rule row. Rules are configuration; the audit table
         records the deletion.
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: ruleId
           in: path
@@ -841,7 +841,7 @@ paths:
         with the current time. When no rule matches, the transaction is
         returned unchanged with `matched: false`.
       security:
-        - tenantHeader: []
+        - workspaceHeader: []
       parameters:
         - name: transactionId
           in: path
@@ -885,11 +885,11 @@ components:
       type: apiKey
       in: cookie
       name: folio_session
-    tenantHeader:
+    workspaceHeader:
       type: apiKey
       in: header
-      name: X-Tenant-ID
-      description: Temporary development tenant resolver until session auth lands.
+      name: X-Workspace-ID
+      description: Temporary development workspace resolver until session auth lands.
 
   schemas:
     Version:
@@ -901,15 +901,15 @@ components:
 
     User:
       type: object
-      required: [id, tenantId, email, displayName, createdAt]
+      required: [id, workspaceId, email, displayName, createdAt]
       properties:
         id:          { type: string, format: uuid }
-        tenantId:    { type: string, format: uuid }
+        workspaceId:    { type: string, format: uuid }
         email:       { type: string, format: email }
         displayName: { type: string }
         createdAt:   { type: string, format: date-time }
 
-    Tenant:
+    Workspace:
       type: object
       required: [id, name, baseCurrency, cycleAnchorDay, locale, timezone, createdAt]
       properties:
@@ -923,9 +923,9 @@ components:
 
     BootstrapInput:
       type: object
-      required: [tenantName, baseCurrency, locale, email, displayName]
+      required: [workspaceName, baseCurrency, locale, email, displayName]
       properties:
-        tenantName:     { type: string, minLength: 1 }
+        workspaceName:     { type: string, minLength: 1 }
         baseCurrency:   { type: string, example: CHF }
         cycleAnchorDay: { type: integer, minimum: 1, maximum: 31, default: 1 }
         locale:         { type: string, example: en-CH }
@@ -935,16 +935,16 @@ components:
 
     BootstrapResult:
       type: object
-      required: [tenant, user]
+      required: [workspace, user]
       properties:
-        tenant: { $ref: "#/components/schemas/Tenant" }
+        workspace: { $ref: "#/components/schemas/Workspace" }
         user:   { $ref: "#/components/schemas/User" }
 
     MeResult:
       type: object
-      required: [tenant, user]
+      required: [workspace, user]
       properties:
-        tenant: { $ref: "#/components/schemas/Tenant" }
+        workspace: { $ref: "#/components/schemas/Workspace" }
         user:   { $ref: "#/components/schemas/User" }
 
     RegisterInput:
@@ -969,10 +969,10 @@ components:
 
     Account:
       type: object
-      required: [id, tenantId, name, kind, currency, accountSortOrder, openDate, openingBalance, openingBalanceDate, includeInNetworth, includeInSavingsRate, createdAt, updatedAt, balance]
+      required: [id, workspaceId, name, kind, currency, accountSortOrder, openDate, openingBalance, openingBalanceDate, includeInNetworth, includeInSavingsRate, createdAt, updatedAt, balance]
       properties:
         id:                   { type: string, format: uuid }
-        tenantId:             { type: string, format: uuid }
+        workspaceId:             { type: string, format: uuid }
         name:                 { type: string }
         nickname:             { type: string, nullable: true }
         kind:                 { $ref: "#/components/schemas/AccountKind" }
@@ -1023,10 +1023,10 @@ components:
 
     AccountGroup:
       type: object
-      required: [id, tenantId, name, sortOrder, createdAt, updatedAt]
+      required: [id, workspaceId, name, sortOrder, createdAt, updatedAt]
       properties:
         id:          { type: string, format: uuid }
-        tenantId:    { type: string, format: uuid }
+        workspaceId:    { type: string, format: uuid }
         name:        { type: string }
         sortOrder:   { type: integer }
         archivedAt:  { type: string, format: date-time, nullable: true }
@@ -1073,10 +1073,10 @@ components:
 
     Transaction:
       type: object
-      required: [id, tenantId, accountId, status, bookedAt, amount, currency, createdAt, updatedAt]
+      required: [id, workspaceId, accountId, status, bookedAt, amount, currency, createdAt, updatedAt]
       properties:
         id:               { type: string, format: uuid }
-        tenantId:         { type: string, format: uuid }
+        workspaceId:         { type: string, format: uuid }
         accountId:        { type: string, format: uuid }
         status:           { $ref: "#/components/schemas/TransactionStatus" }
         bookedAt:         { type: string, format: date }
@@ -1136,10 +1136,10 @@ components:
 
     Category:
       type: object
-      required: [id, tenantId, name, sortOrder, createdAt, updatedAt]
+      required: [id, workspaceId, name, sortOrder, createdAt, updatedAt]
       properties:
         id:         { type: string, format: uuid }
-        tenantId:   { type: string, format: uuid }
+        workspaceId:   { type: string, format: uuid }
         parentId:   { type: string, format: uuid, nullable: true }
         name:       { type: string }
         color:      { type: string, nullable: true }
@@ -1172,10 +1172,10 @@ components:
 
     Merchant:
       type: object
-      required: [id, tenantId, canonicalName, createdAt, updatedAt]
+      required: [id, workspaceId, canonicalName, createdAt, updatedAt]
       properties:
         id:                { type: string, format: uuid }
-        tenantId:          { type: string, format: uuid }
+        workspaceId:          { type: string, format: uuid }
         canonicalName:     { type: string }
         logoUrl:           { type: string, nullable: true }
         defaultCategoryId: { type: string, format: uuid, nullable: true }
@@ -1213,10 +1213,10 @@ components:
 
     Tag:
       type: object
-      required: [id, tenantId, name, createdAt, updatedAt]
+      required: [id, workspaceId, name, createdAt, updatedAt]
       properties:
         id:         { type: string, format: uuid }
-        tenantId:   { type: string, format: uuid }
+        workspaceId:   { type: string, format: uuid }
         name:       { type: string }
         color:      { type: string, nullable: true }
         archivedAt: { type: string, format: date-time, nullable: true }
@@ -1277,10 +1277,10 @@ components:
 
     CategorizationRule:
       type: object
-      required: [id, tenantId, priority, when, then, enabled, createdAt, updatedAt]
+      required: [id, workspaceId, priority, when, then, enabled, createdAt, updatedAt]
       properties:
         id:            { type: string, format: uuid }
-        tenantId:      { type: string, format: uuid }
+        workspaceId:      { type: string, format: uuid }
         priority:      { type: integer, description: "Lower numbers match first." }
         when:          { $ref: "#/components/schemas/CategorizationRuleWhen" }
         then:          { $ref: "#/components/schemas/CategorizationRuleThen" }
