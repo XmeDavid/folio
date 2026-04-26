@@ -52,7 +52,7 @@ func (s *Service) Apply(ctx context.Context, workspaceID, accountID, userID uuid
 	if err != nil {
 		return nil, err
 	}
-	parsed, err := Parse(string(contentBytes))
+	parsed, err := ParseBytes(contentBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +168,7 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
-	parsed, err := Parse(string(contentBytes))
+	parsed, err := ParseBytes(contentBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -861,7 +861,6 @@ func suggestedName(parsed ParsedFile) string {
 	}
 	return parsed.Institution
 }
-
 
 func formatDatePtr(t *time.Time) string {
 	if t == nil {

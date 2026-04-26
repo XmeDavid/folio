@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ledongthuc/pdf"
 	"github.com/shopspring/decimal"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
@@ -32,11 +33,10 @@ func parseUpload(fileName string, r io.Reader) (ParsedFile, string, string, erro
 	if n > maxImportBytes {
 		return ParsedFile{}, "", "", httpx.NewValidationError("import file is too large")
 	}
-	content := strings.TrimPrefix(buf.String(), "\uFEFF")
 	hashBytes := sha256.Sum256(buf.Bytes())
 	hash := hex.EncodeToString(hashBytes[:])
 
-	parsed, err := Parse(content)
+	parsed, err := ParseBytes(buf.Bytes())
 	if err != nil {
 		return ParsedFile{}, "", "", err
 	}
@@ -64,6 +64,18 @@ func parseToken(token string) (previewPayload, error) {
 	return p, nil
 }
 
+// ParseBytes detects binary import formats before falling back to text parsers.
+func ParseBytes(content []byte) (ParsedFile, error) {
+	if bytes.HasPrefix(bytes.TrimSpace(content), []byte("%PDF-")) {
+		text, err := extractPDFText(content)
+		if err != nil {
+			return ParsedFile{}, err
+		}
+		return Parse(text)
+	}
+	return Parse(strings.TrimPrefix(string(content), "\uFEFF"))
+}
+
 // Parse detects and parses a supported bank export.
 func Parse(content string) (ParsedFile, error) {
 	normalized := strings.TrimPrefix(content, "\uFEFF")
@@ -75,6 +87,8 @@ func Parse(content string) (ParsedFile, error) {
 		return parseRevolutConsolidatedV2(normalized)
 	case strings.Contains(normalized, "Date;Type of transaction;Notification text;"):
 		return parsePostFinance(normalized)
+	case isVIACPDFText(normalized):
+		return parseVIACPDFText(normalized)
 	default:
 		// Surface the first line back to the user so debugging an
 		// unrecognised export doesn't require server logs.
@@ -84,6 +98,27 @@ func Parse(content string) (ParsedFile, error) {
 		}
 		return ParsedFile{}, httpx.NewValidationError(fmt.Sprintf("unsupported bank export format (first line: %q)", preview))
 	}
+}
+
+func extractPDFText(content []byte) (string, error) {
+	reader := bytes.NewReader(content)
+	r, err := pdf.NewReader(reader, int64(len(content)))
+	if err != nil {
+		return "", httpx.NewValidationError("could not read PDF text")
+	}
+	var b strings.Builder
+	fonts := map[string]*pdf.Font{}
+	for i := 1; i <= r.NumPage(); i++ {
+		text, err := r.Page(i).GetPlainText(fonts)
+		if err != nil {
+			return "", httpx.NewValidationError("could not extract PDF text")
+		}
+		b.WriteString(text)
+		if !strings.HasSuffix(text, "\n") {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String(), nil
 }
 
 func isRevolutConsolidatedV2(firstLine, content string) bool {
@@ -1233,6 +1268,273 @@ func parsePostFinance(content string) (ParsedFile, error) {
 	}
 	finalizeParsed(&out)
 	return out, nil
+}
+
+func isVIACPDFText(content string) bool {
+	return strings.Contains(content, "www.viac.ch") &&
+		strings.Contains(content, "Type of transaction") &&
+		strings.Contains(content, "Reporting date")
+}
+
+var (
+	viacTxLineRe       = regexp.MustCompile(`^(.+?)\s+([+-]?\d[\d']*(?:\.\d+)?)\s+(\d{2}\.\d{2}\.\d{4})\s+(-?\d[\d']*(?:\.\d+)?)$`)
+	viacPortfolioTail  = regexp.MustCompile(`^(.+?)\s+(\d[\d.]*\d)\s+[«"�]([^»"�]+)[»"�]$`)
+	viacNamedPortfolio = regexp.MustCompile(`Reporting Portfolio\s+\d[\d.]*\d\s+"([^"]+)"`)
+	viacReportDateRe   = regexp.MustCompile(`Reporting (?:date|as of)\s+(\d{2}\.\d{2}\.\d{4})`)
+	viacBalanceLineRe  = regexp.MustCompile(`^\d[\d.]*\d\s+.+?\s+-?[\d']+\.\d+\s+-?[\d.]+%\s+-?[\d']+\.\d+\s+(-?[\d']+\.\d+)$`)
+	viacAmountOnlyRe   = regexp.MustCompile(`^[+-]?\d[\d']*(?:\.\d+)?$`)
+	viacDateOnlyRe     = regexp.MustCompile(`^\d{2}\.\d{2}\.\d{4}$`)
+)
+
+func parseVIACPDFText(content string) (ParsedFile, error) {
+	normalized := strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", "\n"), "\r", "\n")
+	out := ParsedFile{
+		Profile:     "viac_pdf",
+		Institution: "VIAC",
+		Currency:    "CHF",
+		AccountHint: viacPortfolioName(normalized),
+	}
+	kindHint := viacKindHint(normalized)
+	reportDate, _ := viacReportDate(normalized)
+	reportBalance := viacReportedBalance(normalized)
+	var skippedTrades int
+	for _, rawLine := range strings.Split(normalized, "\n") {
+		line := strings.Join(strings.Fields(rawLine), " ")
+		if line == "" {
+			continue
+		}
+		m := viacTxLineRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		descRaw, accountNumber, portfolio := parseVIACTransactionLabel(m[1])
+		if strings.HasPrefix(descRaw, "Trade ") {
+			skippedTrades++
+			continue
+		}
+		if out.AccountHint == "" {
+			out.AccountHint = portfolio
+		}
+		accountHint := firstNonBlank(portfolio, out.AccountHint)
+		tx, ok, err := buildVIACTx(descRaw, accountNumber, accountHint, m[2], m[3], m[4], kindHint)
+		if err != nil {
+			return ParsedFile{}, err
+		}
+		if ok {
+			out.Transactions = append(out.Transactions, tx)
+		}
+	}
+	blockTxs, blockSkipped, err := parseVIACTransactionBlocks(normalized, kindHint, out.AccountHint)
+	if err != nil {
+		return ParsedFile{}, err
+	}
+	if len(out.Transactions) == 0 && len(blockTxs) > 0 {
+		out.Transactions = append(out.Transactions, blockTxs...)
+		skippedTrades += blockSkipped
+		if out.AccountHint == "" {
+			out.AccountHint = blockTxs[0].AccountHint
+		}
+	}
+	if skippedTrades > 0 {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("Skipped %d VIAC internal trade rows. The current importer records cash-flow rows only; securities holdings and unrealized performance need a valuation/positions import path.", skippedTrades))
+	}
+	if !reportBalance.IsZero() && reportDate != nil {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("VIAC reported portfolio balance on %s is CHF %s. This PDF parser does not import that balance as a valuation snapshot yet.", reportDate.Format(dateOnly), reportBalance.StringFixed(2)))
+	}
+	finalizeParsed(&out)
+	return out, nil
+}
+
+func parseVIACTransactionBlocks(content, kindHint, defaultAccountHint string) ([]ParsedTransaction, int, error) {
+	rawLines := strings.Split(content, "\n")
+	lines := make([]string, 0, len(rawLines))
+	for _, rawLine := range rawLines {
+		line := strings.Join(strings.Fields(rawLine), " ")
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	var out []ParsedTransaction
+	var skippedTrades int
+	for i := 0; i+4 < len(lines); i++ {
+		descLine := lines[i]
+		portfolioLine := lines[i+1]
+		amountLine := lines[i+2]
+		dateLine := lines[i+3]
+		balanceLine := lines[i+4]
+		if !viacAmountOnlyRe.MatchString(amountLine) ||
+			!viacAmountOnlyRe.MatchString(balanceLine) ||
+			!viacDateOnlyRe.MatchString(dateLine) {
+			continue
+		}
+		descRaw, accountNumber, portfolio := parseVIACTransactionLabel(descLine + " " + portfolioLine)
+		if accountNumber == "" {
+			continue
+		}
+		if strings.HasPrefix(descRaw, "Trade ") {
+			skippedTrades++
+			i += 4
+			continue
+		}
+		accountHint := firstNonBlank(portfolio, defaultAccountHint)
+		tx, ok, err := buildVIACTx(descRaw, accountNumber, accountHint, amountLine, dateLine, balanceLine, kindHint)
+		if err != nil {
+			return nil, 0, err
+		}
+		if ok {
+			out = append(out, tx)
+		}
+		i += 4
+	}
+	return out, skippedTrades, nil
+}
+
+func buildVIACTx(descRaw, accountNumber, accountHint, amountRaw, dateRaw, balanceRaw, kindHint string) (ParsedTransaction, bool, error) {
+	amount, err := parseOptionalDecimal(amountRaw)
+	if err != nil {
+		return ParsedTransaction{}, false, httpx.NewValidationError("VIAC PDF row has invalid amount")
+	}
+	bookedAt, err := parseSwissDate(dateRaw)
+	if err != nil {
+		return ParsedTransaction{}, false, nil
+	}
+	balance, err := parseOptionalDecimal(balanceRaw)
+	if err != nil {
+		return ParsedTransaction{}, false, httpx.NewValidationError("VIAC PDF row has invalid balance")
+	}
+	desc := cleanString(descRaw)
+	return ParsedTransaction{
+		BookedAt:        bookedAt,
+		ValueAt:         &bookedAt,
+		Amount:          amount,
+		Currency:        "CHF",
+		CounterpartyRaw: desc,
+		Description:     desc,
+		AccountHint:     accountHint,
+		KindHint:        kindHint,
+		Raw: map[string]string{
+			"type":           viacTransactionType(descRaw),
+			"description":    descRaw,
+			"account_number": accountNumber,
+			"portfolio":      accountHint,
+			"balance":        balance.String(),
+		},
+	}, true, nil
+}
+
+func parseVIACTransactionLabel(label string) (description, accountNumber, portfolio string) {
+	label = strings.TrimSpace(label)
+	m := viacPortfolioTail.FindStringSubmatch(label)
+	if m == nil {
+		return label, "", ""
+	}
+	return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), strings.TrimSpace(m[3])
+}
+
+func viacTransactionType(description string) string {
+	switch {
+	case strings.HasPrefix(description, "Deposit"):
+		return "deposit"
+	case strings.HasPrefix(description, "Fee"):
+		return "fee"
+	case strings.HasPrefix(description, "Interest"):
+		return "interest"
+	case strings.HasPrefix(description, "Trade"):
+		return "trade"
+	default:
+		fields := strings.Fields(description)
+		if len(fields) == 0 {
+			return ""
+		}
+		return strings.ToLower(fields[0])
+	}
+}
+
+func viacPortfolioName(content string) string {
+	if m := viacNamedPortfolio.FindStringSubmatch(content); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	for _, rawLine := range strings.Split(content, "\n") {
+		line := strings.Join(strings.Fields(rawLine), " ")
+		if m := viacTxLineRe.FindStringSubmatch(line); m != nil {
+			_, _, portfolio := parseVIACTransactionLabel(m[1])
+			if portfolio != "" {
+				return portfolio
+			}
+		}
+	}
+	return ""
+}
+
+func viacKindHint(content string) string {
+	switch {
+	case strings.Contains(content, "Pillar 3a"):
+		return "pillar_3a"
+	case strings.Contains(content, "Pillar 2"):
+		return "pillar_2"
+	default:
+		return "pillar_3a"
+	}
+}
+
+func viacReportDate(content string) (*time.Time, error) {
+	m := viacReportDateRe.FindStringSubmatch(content)
+	if m != nil {
+		d, err := parseSwissDate(m[1])
+		if err != nil {
+			return nil, err
+		}
+		return &d, nil
+	}
+	lines := compactLines(content)
+	for i, line := range lines {
+		if line == "Reporting date" && i+1 < len(lines) && viacDateOnlyRe.MatchString(lines[i+1]) {
+			d, err := parseSwissDate(lines[i+1])
+			if err != nil {
+				return nil, err
+			}
+			return &d, nil
+		}
+	}
+	return nil, nil
+}
+
+func viacReportedBalance(content string) decimal.Decimal {
+	for _, rawLine := range strings.Split(content, "\n") {
+		line := strings.Join(strings.Fields(rawLine), " ")
+		if m := viacBalanceLineRe.FindStringSubmatch(line); m != nil {
+			d, err := parseOptionalDecimal(m[1])
+			if err == nil {
+				return d
+			}
+		}
+	}
+	lines := compactLines(content)
+	for i, line := range lines {
+		if line == "Total" && i+4 < len(lines) &&
+			viacAmountOnlyRe.MatchString(lines[i+1]) &&
+			strings.HasSuffix(lines[i+2], "%") &&
+			viacAmountOnlyRe.MatchString(lines[i+3]) &&
+			viacAmountOnlyRe.MatchString(lines[i+4]) {
+			d, err := parseOptionalDecimal(lines[i+4])
+			if err == nil {
+				return d
+			}
+		}
+	}
+	return decimal.Zero
+}
+
+func compactLines(content string) []string {
+	rawLines := strings.Split(content, "\n")
+	lines := make([]string, 0, len(rawLines))
+	for _, rawLine := range rawLines {
+		line := strings.Join(strings.Fields(rawLine), " ")
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 type postFinanceMeta struct {

@@ -391,6 +391,79 @@ func TestParseRevolutConsolidatedDisambiguatesDuplicatePockets(t *testing.T) {
 	}
 }
 
+func TestParseVIACPDFTextSkipsInternalTrades(t *testing.T) {
+	content := strings.Join([]string{
+		`Reporting as of 25.04.2026`,
+		`Pillar 3a`,
+		`Terzo Pension Foundation of WIR Bank   |   www.viac.ch S. E. & O.`,
+		`Reporting Portfolio 3.172.640.972.01 "Portfolio 1"`,
+		`Reporting date 25.04.2026`,
+		`3.172.640.972.01 Portfolio 1 Global 100 1'200.00 3.51% 29.72 1'229.72`,
+		`Type of transaction Portfolio Amount`,
+		`in CHF`,
+		`Value date Account Balance`,
+		`in CHF`,
+		`Deposit 3a 3.172.640.972.01 «Portfolio 1» +600.00 26.01.2026 600.00`,
+		`Trade Swisscanto Canada 3.172.640.972.01 «Portfolio 1» -11.62 28.01.2026 588.38`,
+		`Fee 3.172.640.972.01 «Portfolio 1» -0.02 31.01.2026 -0.58`,
+		`Interest 3.172.640.972.01 «Portfolio 1» +0.01 31.01.2026 -0.56`,
+		`Deposit 3a 3.172.640.972.01 «Portfolio 1» +600.00 26.02.2026 605.96`,
+		`Fee 3.172.640.972.01 «Portfolio 1» -0.20 28.02.2026 605.77`,
+		`Interest 3.172.640.972.01 «Portfolio 1» +0.01 28.02.2026 605.78`,
+	}, "\n")
+
+	parsed, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if parsed.Profile != "viac_pdf" {
+		t.Fatalf("profile = %q", parsed.Profile)
+	}
+	if parsed.Institution != "VIAC" {
+		t.Fatalf("institution = %q", parsed.Institution)
+	}
+	if parsed.AccountHint != "Portfolio 1" {
+		t.Fatalf("account hint = %q", parsed.AccountHint)
+	}
+	if len(parsed.Transactions) != 6 {
+		t.Fatalf("expected 6 cash-flow txs, got %d", len(parsed.Transactions))
+	}
+	total := decimal.Zero
+	for _, tx := range parsed.Transactions {
+		if tx.Currency != "CHF" {
+			t.Errorf("currency = %s, want CHF", tx.Currency)
+		}
+		if tx.AccountHint != "Portfolio 1" {
+			t.Errorf("tx account hint = %q", tx.AccountHint)
+		}
+		if tx.KindHint != "pillar_3a" {
+			t.Errorf("kind hint = %q, want pillar_3a", tx.KindHint)
+		}
+		if tx.Raw["type"] == "trade" {
+			t.Fatalf("internal trade leaked into parsed transactions: %+v", tx)
+		}
+		total = total.Add(tx.Amount)
+	}
+	if !total.Equal(decimal.RequireFromString("1199.80")) {
+		t.Fatalf("cash-flow total = %s, want 1199.80", total)
+	}
+	var tradeWarning, balanceWarning bool
+	for _, w := range parsed.Warnings {
+		if strings.Contains(w, "internal trade rows") {
+			tradeWarning = true
+		}
+		if strings.Contains(w, "1'229.72") || strings.Contains(w, "1229.72") {
+			balanceWarning = true
+		}
+	}
+	if !tradeWarning {
+		t.Fatalf("expected skipped-trades warning, got %+v", parsed.Warnings)
+	}
+	if !balanceWarning {
+		t.Fatalf("expected reported-balance warning, got %+v", parsed.Warnings)
+	}
+}
+
 func TestClassifyDuplicatesAndConflicts(t *testing.T) {
 	parsed := ParsedFile{
 		Profile:  "test",
