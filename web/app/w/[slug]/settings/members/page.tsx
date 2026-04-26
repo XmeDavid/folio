@@ -217,7 +217,7 @@ function formatError(err: unknown): string {
     }
     if (
       err.status === 422 &&
-      (err.body?.code === "last_owner" || err.body?.code === "last_tenant")
+      (err.body?.code === "last_owner" || err.body?.code === "last_workspace")
     ) {
       return err.body?.error ?? "Not allowed: this would leave the workspace in an invalid state.";
     }
