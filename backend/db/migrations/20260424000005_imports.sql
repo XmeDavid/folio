@@ -1,8 +1,8 @@
 -- Folio v2 domain — imports & provider integration (spec §5.5).
 -- provider_connections, provider_accounts, import_profiles, import_batches,
 -- source_refs. source_refs is polymorphic (entity_type text + entity_id uuid)
--- with a tenant-scoped dedupe key on (tenant_id, entity_type, provider,
--- external_id) so the same provider-supplied id can coexist across tenants.
+-- with a workspace-scoped dedupe key on (workspace_id, entity_type, provider,
+-- external_id) so the same provider-supplied id can coexist across workspaces.
 
 -- Provider connection lifecycle. 'active' = usable; 'error' = transient
 -- failure, will retry; 'revoked' = user or provider terminated access;
@@ -38,7 +38,7 @@ create type import_status as enum (
 -- `next_scheduled_sync_at` drives the background sync scheduler.
 create table provider_connections (
   id                        uuid primary key,
-  tenant_id                 uuid not null references tenants(id) on delete cascade,
+  workspace_id                 uuid not null references workspaces(id) on delete cascade,
   provider                  text not null,
   label                     text,
   status                    provider_connection_status not null default 'active',
@@ -50,13 +50,13 @@ create table provider_connections (
   last_error                text,
   created_at                timestamptz not null default now(),
   updated_at                timestamptz not null default now(),
-  unique (tenant_id, id)
+  unique (workspace_id, id)
 );
 
 create trigger provider_connections_updated_at before update on provider_connections
   for each row execute function set_updated_at();
 
-create index provider_connections_tenant_idx on provider_connections(tenant_id);
+create index provider_connections_workspace_idx on provider_connections(workspace_id);
 -- Job scheduler: find connections due for sync. Partial index keeps the
 -- worker query tight (skips revoked/expired and connections without a
 -- scheduled next run).
@@ -71,7 +71,7 @@ create index provider_connections_sync_due_idx
 -- known provider metadata (balance, name, etc.) for UI display.
 create table provider_accounts (
   id                      uuid primary key,
-  tenant_id               uuid not null references tenants(id) on delete cascade,
+  workspace_id               uuid not null references workspaces(id) on delete cascade,
   provider_connection_id  uuid not null,
   account_id              uuid,                  -- null until user maps
   external_account_id     text not null,
@@ -79,12 +79,12 @@ create table provider_accounts (
   linked_at               timestamptz,
   created_at              timestamptz not null default now(),
   updated_at              timestamptz not null default now(),
-  unique (tenant_id, id),
+  unique (workspace_id, id),
   unique (provider_connection_id, external_account_id),
-  constraint pa_conn_fk foreign key (tenant_id, provider_connection_id)
-    references provider_connections(tenant_id, id) on delete cascade,
-  constraint pa_account_fk foreign key (tenant_id, account_id)
-    references accounts(tenant_id, id) on delete set null
+  constraint pa_conn_fk foreign key (workspace_id, provider_connection_id)
+    references provider_connections(workspace_id, id) on delete cascade,
+  constraint pa_account_fk foreign key (workspace_id, account_id)
+    references accounts(workspace_id, id) on delete set null
 );
 
 create trigger provider_accounts_updated_at before update on provider_accounts
@@ -99,18 +99,18 @@ create index provider_accounts_conn_idx on provider_accounts(provider_connection
 -- Import profiles: reusable parser configurations. `mapping` is the column-
 -- to-field map (CSV) or XPath/selector map (CAMT053); `options` carries
 -- parser switches (date format, thousands separator, etc.). name is unique
--- per tenant for UX.
+-- per workspace for UX.
 create table import_profiles (
   id          uuid primary key,
-  tenant_id   uuid not null references tenants(id) on delete cascade,
+  workspace_id   uuid not null references workspaces(id) on delete cascade,
   name        text not null,
   kind        import_profile_kind not null,
   mapping     jsonb not null,
   options     jsonb not null default '{}'::jsonb,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, name)
+  unique (workspace_id, id),
+  unique (workspace_id, name)
 );
 
 create trigger import_profiles_updated_at before update on import_profiles
@@ -124,7 +124,7 @@ create trigger import_profiles_updated_at before update on import_profiles
 -- layer). `summary` is a free-form jsonb blob with counts, warnings, etc.
 create table import_batches (
   id                       uuid primary key,
-  tenant_id                uuid not null references tenants(id) on delete cascade,
+  workspace_id                uuid not null references workspaces(id) on delete cascade,
   import_profile_id        uuid,
   provider_connection_id   uuid,
   source_kind              import_source_kind not null,
@@ -137,11 +137,11 @@ create table import_batches (
   finished_at              timestamptz,
   error                    text,
   updated_at               timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint ib_profile_fk foreign key (tenant_id, import_profile_id)
-    references import_profiles(tenant_id, id) on delete set null,
-  constraint ib_conn_fk foreign key (tenant_id, provider_connection_id)
-    references provider_connections(tenant_id, id) on delete set null,
+  unique (workspace_id, id),
+  constraint ib_profile_fk foreign key (workspace_id, import_profile_id)
+    references import_profiles(workspace_id, id) on delete set null,
+  constraint ib_conn_fk foreign key (workspace_id, provider_connection_id)
+    references provider_connections(workspace_id, id) on delete set null,
   constraint ib_actor_fk foreign key (created_by_user_id)
     references users(id) on delete set null
 );
@@ -152,19 +152,19 @@ create table import_batches (
 create trigger import_batches_updated_at before update on import_batches
   for each row execute function set_updated_at();
 
--- Default listing: batches for a tenant, newest first.
-create index import_batches_tenant_started_idx on import_batches(tenant_id, started_at desc);
+-- Default listing: batches for a workspace, newest first.
+create index import_batches_workspace_started_idx on import_batches(workspace_id, started_at desc);
 -- Status filters (failed-batch dashboards, pending-queue drain).
-create index import_batches_status_idx on import_batches(tenant_id, status);
+create index import_batches_status_idx on import_batches(workspace_id, status);
 
 -- Source refs: polymorphic provenance records. `entity_type` is plain text
 -- (not an enum) so adding new entity types doesn't require a migration;
--- the service layer enforces valid values. Dedupe key is tenant-scoped
--- so the same provider external_id can coexist across tenants (common
--- when two tenants use the same aggregator).
+-- the service layer enforces valid values. Dedupe key is workspace-scoped
+-- so the same provider external_id can coexist across workspaces (common
+-- when two workspaces use the same aggregator).
 create table source_refs (
   id                 uuid primary key,
-  tenant_id          uuid not null references tenants(id) on delete cascade,
+  workspace_id          uuid not null references workspaces(id) on delete cascade,
   entity_type        text not null,
   entity_id          uuid not null,
   provider           text,
@@ -173,17 +173,17 @@ create table source_refs (
   raw_payload        jsonb not null default '{}'::jsonb,
   observed_at        timestamptz not null default now(),
   created_at         timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint sr_batch_fk foreign key (tenant_id, import_batch_id)
-    references import_batches(tenant_id, id) on delete set null
+  unique (workspace_id, id),
+  constraint sr_batch_fk foreign key (workspace_id, import_batch_id)
+    references import_batches(workspace_id, id) on delete set null
 );
 
--- Dedupe: a (tenant, entity_type, provider, external_id) tuple is unique.
+-- Dedupe: a (workspace, entity_type, provider, external_id) tuple is unique.
 -- Both provider and external_id must be present for dedupe to apply — rows
 -- with either column null are unique-index-exempt (Postgres treats nulls as
 -- distinct anyway; the explicit predicate just shrinks the index).
 create unique index source_refs_dedupe_idx
-  on source_refs (tenant_id, entity_type, provider, external_id)
+  on source_refs (workspace_id, entity_type, provider, external_id)
   where provider is not null and external_id is not null;
 
 -- Reverse lookup: "show me source refs for this entity" (e.g. on a

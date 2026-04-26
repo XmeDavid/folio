@@ -23,11 +23,11 @@ create type reconciliation_status as enum (
   'open', 'balanced', 'drift'
 );
 
--- Accounts: tenant-scoped ledger containers. No cached balance column —
+-- Accounts: workspace-scoped ledger containers. No cached balance column —
 -- balance is derived from the latest snapshot + post-snapshot transactions.
 create table accounts (
   id                        uuid primary key,
-  tenant_id                 uuid not null references tenants(id) on delete cascade,
+  workspace_id                 uuid not null references workspaces(id) on delete cascade,
   name                      text not null,
   nickname                  text,
   kind                      account_kind not null,
@@ -42,20 +42,20 @@ create table accounts (
   archived_at               timestamptz,
   created_at                timestamptz not null default now(),
   updated_at                timestamptz not null default now(),
-  unique (tenant_id, id)           -- composite-FK target
+  unique (workspace_id, id)           -- composite-FK target
 );
 
 create trigger accounts_updated_at before update on accounts
   for each row execute function set_updated_at();
 
 -- Active-accounts index (most queries filter on non-archived).
-create index accounts_tenant_active_idx on accounts(tenant_id) where archived_at is null;
+create index accounts_workspace_active_idx on accounts(workspace_id) where archived_at is null;
 
 -- Balance snapshots: append-only fact table. No updated_at, no trigger.
--- Composite FK to accounts enforces tenant consistency.
+-- Composite FK to accounts enforces workspace consistency.
 create table account_balance_snapshots (
   id          uuid primary key,
-  tenant_id   uuid not null references tenants(id) on delete cascade,
+  workspace_id   uuid not null references workspaces(id) on delete cascade,
   account_id  uuid not null,
   as_of       timestamptz not null,
   balance     numeric(28,8) not null,
@@ -63,10 +63,10 @@ create table account_balance_snapshots (
   source      balance_snapshot_source not null,
   note        text,
   created_at  timestamptz not null default now(),
-  unique (tenant_id, id),
+  unique (workspace_id, id),
   unique (account_id, as_of, source),
-  constraint abs_account_fk foreign key (tenant_id, account_id)
-    references accounts(tenant_id, id) on delete cascade
+  constraint abs_account_fk foreign key (workspace_id, account_id)
+    references accounts(workspace_id, id) on delete cascade
 );
 
 -- Timeline lookup: latest snapshots per account.
@@ -80,7 +80,7 @@ create index abs_account_timeline_idx
 -- is ever reclassified).
 create table reconciliation_checkpoints (
   id                  uuid primary key,
-  tenant_id           uuid not null references tenants(id) on delete cascade,
+  workspace_id           uuid not null references workspaces(id) on delete cascade,
   account_id          uuid not null,
   statement_date      date not null,
   asserted_balance    numeric(28,8) not null,
@@ -92,9 +92,9 @@ create table reconciliation_checkpoints (
   notes               text,
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint rc_account_fk foreign key (tenant_id, account_id)
-    references accounts(tenant_id, id) on delete cascade
+  unique (workspace_id, id),
+  constraint rc_account_fk foreign key (workspace_id, account_id)
+    references accounts(workspace_id, id) on delete cascade
 );
 
 create trigger reconciliation_checkpoints_updated_at before update on reconciliation_checkpoints

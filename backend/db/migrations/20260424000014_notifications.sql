@@ -8,8 +8,8 @@
 -- cipher-wrapped secret for HMAC signing.
 --
 -- Shape rules threaded throughout:
---   * Every tenant-scoped table carries unique(tenant_id, id) so composite
---     FKs from sibling tables enforce tenant consistency.
+--   * Every workspace-scoped table carries unique(workspace_id, id) so composite
+--     FKs from sibling tables enforce workspace consistency.
 --   * notification_events is APPEND-ONLY: there is no updated_at, no trigger,
 --     no mutation path. Events are an immutable audit log; edits to the
 --     live state happen on the delivery row.
@@ -18,7 +18,7 @@
 --     (sent iff delivered_at, failed iff error, read implies delivered_at).
 --   * nd_destination_chk is a biconditional: channel='webhook' iff
 --     destination_id is not null. In-app / email / web_push deliveries
---     route by (tenant, user) and must NOT carry a destination row.
+--     route by (workspace, user) and must NOT carry a destination row.
 --   * The fanout uniqueness key uses NULLS NOT DISTINCT so (event, channel)
 --     can only be delivered once even when destination_id is null
 --     (i.e. in_app / email / web_push channels). Without it, Postgres'
@@ -43,15 +43,15 @@ create type notification_digest_mode as enum ('realtime', 'daily_digest', 'weekl
 -- web_push tap). `read` is only reachable from `sent`.
 create type notification_delivery_status as enum ('queued', 'sent', 'failed', 'read');
 
--- Notification rules: tenant-scoped subscriptions to a domain event_kind
+-- Notification rules: workspace-scoped subscriptions to a domain event_kind
 -- (e.g. 'budget_overrun', 'large_inflow', 'goal_reached'). `config_jsonb`
 -- carries rule-specific parameters (thresholds, target categories, etc.).
 -- `enabled` is the kill switch; `digest_mode` sets the default emission
 -- cadence (users can override per-channel via notification_preferences).
--- UNIQUE (tenant_id, name) prevents duplicate rule names per tenant.
+-- UNIQUE (workspace_id, name) prevents duplicate rule names per workspace.
 create table notification_rules (
   id           uuid primary key,
-  tenant_id    uuid not null references tenants(id) on delete cascade,
+  workspace_id    uuid not null references workspaces(id) on delete cascade,
   name         text not null,
   event_kind   text not null,
   config_jsonb jsonb not null default '{}'::jsonb,
@@ -59,17 +59,17 @@ create table notification_rules (
   digest_mode  notification_digest_mode not null default 'realtime',
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, name)
+  unique (workspace_id, id),
+  unique (workspace_id, name)
 );
 
 create trigger notification_rules_updated_at before update on notification_rules
   for each row execute function set_updated_at();
 
--- Dispatch-side index: "for tenant T, which enabled rules listen to event
+-- Dispatch-side index: "for workspace T, which enabled rules listen to event
 -- kind K?". Partial on enabled=true since disabled rules shouldn't be
 -- considered by the dispatcher. Rebuilt automatically as rules are toggled.
-create index notification_rules_event_idx on notification_rules(tenant_id, event_kind)
+create index notification_rules_event_idx on notification_rules(workspace_id, event_kind)
   where enabled = true;
 
 -- Notification events: append-only log of domain events that matched a rule
@@ -85,7 +85,7 @@ create index notification_rules_event_idx on notification_rules(tenant_id, event
 -- on the delivery row.
 create table notification_events (
   id                   uuid primary key,
-  tenant_id            uuid not null references tenants(id) on delete cascade,
+  workspace_id            uuid not null references workspaces(id) on delete cascade,
   rule_id              uuid,
   event_kind           text not null,
   subject_entity_type  text not null,
@@ -93,16 +93,16 @@ create table notification_events (
   payload_jsonb        jsonb not null default '{}'::jsonb,
   occurred_at          timestamptz not null default now(),
   created_at           timestamptz not null default now(),
-  unique (tenant_id, id),
-  -- Composite FK to keep the rule's tenant and the event's tenant aligned.
+  unique (workspace_id, id),
+  -- Composite FK to keep the rule's workspace and the event's workspace aligned.
   -- on delete set null: deleting the rule (e.g. user turning off an alert)
   -- must not cascade-delete the historical event log.
-  constraint ne_rule_fk foreign key (tenant_id, rule_id)
-    references notification_rules(tenant_id, id) on delete set null
+  constraint ne_rule_fk foreign key (workspace_id, rule_id)
+    references notification_rules(workspace_id, id) on delete set null
 );
 
--- Timeline query: "load recent events for tenant T, newest first".
-create index notification_events_tenant_occurred_idx on notification_events(tenant_id, occurred_at desc);
+-- Timeline query: "load recent events for workspace T, newest first".
+create index notification_events_workspace_occurred_idx on notification_events(workspace_id, occurred_at desc);
 -- FK-side index so rule deletes can null-out dependent events without a scan.
 -- Partial on non-null to stay small (most events retain their rule_id).
 create index notification_events_rule_idx on notification_events(rule_id) where rule_id is not null;
@@ -114,10 +114,10 @@ create index notification_events_subject_idx on notification_events(subject_enti
 -- cipher (envelope-encrypted by KMS, decrypted in-process before signing).
 -- `last_success_at` / `last_error` are rolling status fields updated by the
 -- delivery worker for UI visibility (health indicator in the webhook list).
--- UNIQUE (tenant_id, name) gives each destination a human-readable handle.
+-- UNIQUE (workspace_id, name) gives each destination a human-readable handle.
 create table webhook_destinations (
   id              uuid primary key,
-  tenant_id       uuid not null references tenants(id) on delete cascade,
+  workspace_id       uuid not null references workspaces(id) on delete cascade,
   name            text not null,
   url             text not null,
   secret_cipher   text not null,
@@ -126,8 +126,8 @@ create table webhook_destinations (
   last_error      text,
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, name)
+  unique (workspace_id, id),
+  unique (workspace_id, name)
 );
 
 create trigger webhook_destinations_updated_at before update on webhook_destinations
@@ -141,7 +141,7 @@ create trigger webhook_destinations_updated_at before update on webhook_destinat
 --
 -- State-machine invariants (enforced by the nd_* check constraints):
 --   * nd_destination_chk (biconditional): channel='webhook' iff destination_id
---     is not null. Non-webhook channels route by (tenant, user) and must not
+--     is not null. Non-webhook channels route by (workspace, user) and must not
 --     carry a destination row; webhook channels require one.
 --   * nd_sent_chk: status='sent' iff delivered_at is populated.
 --   * nd_failed_chk: status='failed' iff error is populated.
@@ -155,7 +155,7 @@ create trigger webhook_destinations_updated_at before update on webhook_destinat
 -- null destination as unique and allow duplicates.
 create table notification_deliveries (
   id                     uuid primary key,
-  tenant_id              uuid not null references tenants(id) on delete cascade,
+  workspace_id              uuid not null references workspaces(id) on delete cascade,
   notification_event_id  uuid not null,
   channel                notification_channel not null,
   -- destination_id points to webhook_destinations.id when channel='webhook';
@@ -167,18 +167,18 @@ create table notification_deliveries (
   read_at                timestamptz,
   error                  text,
   created_at             timestamptz not null default now(),
-  unique (tenant_id, id),
+  unique (workspace_id, id),
   -- A given event delivers at most once per (channel, destination). Uses
   -- NULLS NOT DISTINCT so that null destination_id (in_app/email/web_push)
   -- still collides on retry; see the block comment above for rationale.
   unique nulls not distinct (notification_event_id, channel, destination_id),
-  -- Composite FK keeps event and delivery in the same tenant.
-  constraint nd_event_fk foreign key (tenant_id, notification_event_id)
-    references notification_events(tenant_id, id) on delete cascade,
+  -- Composite FK keeps event and delivery in the same workspace.
+  constraint nd_event_fk foreign key (workspace_id, notification_event_id)
+    references notification_events(workspace_id, id) on delete cascade,
   -- Composite FK to webhook_destinations (nullable). on delete set null so a
   -- destination delete leaves the historical delivery row intact but unbound.
-  constraint nd_webhook_fk foreign key (tenant_id, destination_id)
-    references webhook_destinations(tenant_id, id) on delete set null,
+  constraint nd_webhook_fk foreign key (workspace_id, destination_id)
+    references webhook_destinations(workspace_id, id) on delete set null,
   -- destination_id is required iff channel='webhook' (biconditional).
   constraint nd_destination_chk check (
     (channel = 'webhook') = (destination_id is not null)
@@ -217,22 +217,22 @@ create index notification_deliveries_event_idx on notification_deliveries(notifi
 -- FK-side index on destination_id so webhook deletes don't require a scan.
 -- Partial on non-null to stay small (only webhook rows populate it).
 create index notification_deliveries_destination_idx on notification_deliveries(destination_id) where destination_id is not null;
--- Worker queue index: "give me queued or failed deliveries for tenant T".
+-- Worker queue index: "give me queued or failed deliveries for workspace T".
 -- Partial on in-flight statuses keeps it narrow — sent/read rows are terminal
 -- from the worker's perspective and shouldn't be re-examined.
-create index notification_deliveries_status_idx on notification_deliveries(tenant_id, status) where status in ('queued', 'failed');
+create index notification_deliveries_status_idx on notification_deliveries(workspace_id, status) where status in ('queued', 'failed');
 
 -- Notification preferences: per-user per-event per-channel routing override.
--- UNIQUE (tenant_id, user_id, event_kind, channel) so a user has at most one
+-- UNIQUE (workspace_id, user_id, event_kind, channel) so a user has at most one
 -- preference row for a given (event, channel) pair. Uniqueness leads with
--- tenant_id to keep per-tenant scoping explicit. The user FK is plain
--- users(id); tenant scoping is enforced by the row's own tenant_id FK to
--- tenants(id). `digest_override` lets a user set e.g. daily digest for
+-- workspace_id to keep per-workspace scoping explicit. The user FK is plain
+-- users(id); workspace scoping is enforced by the row's own workspace_id FK to
+-- workspaces(id). `digest_override` lets a user set e.g. daily digest for
 -- 'budget_overrun' email while the rule default is realtime. `enabled=false`
 -- opts out of that specific (event, channel) combination.
 create table notification_preferences (
   id              uuid primary key,
-  tenant_id       uuid not null references tenants(id) on delete cascade,
+  workspace_id       uuid not null references workspaces(id) on delete cascade,
   user_id         uuid not null,
   event_kind      text not null,
   channel         notification_channel not null,
@@ -240,8 +240,8 @@ create table notification_preferences (
   digest_override notification_digest_mode,
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, user_id, event_kind, channel),
+  unique (workspace_id, id),
+  unique (workspace_id, user_id, event_kind, channel),
   constraint np_user_fk foreign key (user_id)
     references users(id) on delete cascade
 );

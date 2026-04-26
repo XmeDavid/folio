@@ -34,11 +34,11 @@ begin
 end;
 $$;
 
--- Categories: hierarchical, tenant-scoped. Self-FK is composite so a child
--- cannot point at a parent in a different tenant.
+-- Categories: hierarchical, workspace-scoped. Self-FK is composite so a child
+-- cannot point at a parent in a different workspace.
 create table categories (
   id           uuid primary key,
-  tenant_id    uuid not null references tenants(id) on delete cascade,
+  workspace_id    uuid not null references workspaces(id) on delete cascade,
   parent_id    uuid,
   name         text not null,
   color        text,
@@ -46,10 +46,10 @@ create table categories (
   archived_at  timestamptz,
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, parent_id, name),
-  constraint categories_parent_fk foreign key (tenant_id, parent_id)
-    references categories(tenant_id, id) on delete set null
+  unique (workspace_id, id),
+  unique (workspace_id, parent_id, name),
+  constraint categories_parent_fk foreign key (workspace_id, parent_id)
+    references categories(workspace_id, id) on delete set null
 );
 
 create trigger categories_updated_at before update on categories
@@ -58,24 +58,24 @@ create trigger categories_updated_at before update on categories
 -- FK-side index on the self-reference; partial because most rows are roots.
 create index categories_parent_idx on categories(parent_id) where parent_id is not null;
 -- Active-only filter: most lookups exclude archived categories.
-create index categories_active_idx on categories(tenant_id) where archived_at is null;
+create index categories_active_idx on categories(workspace_id) where archived_at is null;
 
 -- Category history: append-only audit of renames and merges. No updated_at.
--- tenant_id carried for composite FK consistency.
+-- workspace_id carried for composite FK consistency.
 create table category_history (
   id                        uuid primary key,
-  tenant_id                 uuid not null references tenants(id) on delete cascade,
+  workspace_id                 uuid not null references workspaces(id) on delete cascade,
   category_id               uuid not null,
   renamed_from              text,
   renamed_at                timestamptz not null default now(),
   merged_into_category_id   uuid,
   actor_user_id             uuid,
   created_at                timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint ch_category_fk foreign key (tenant_id, category_id)
-    references categories(tenant_id, id) on delete cascade,
-  constraint ch_merged_into_fk foreign key (tenant_id, merged_into_category_id)
-    references categories(tenant_id, id) on delete set null,
+  unique (workspace_id, id),
+  constraint ch_category_fk foreign key (workspace_id, category_id)
+    references categories(workspace_id, id) on delete cascade,
+  constraint ch_merged_into_fk foreign key (workspace_id, merged_into_category_id)
+    references categories(workspace_id, id) on delete set null,
   constraint ch_actor_fk foreign key (actor_user_id)
     references users(id) on delete set null
 );
@@ -87,7 +87,7 @@ create index category_history_category_idx on category_history(category_id, rena
 -- and clears on category delete (merchants outlive their default category).
 create table merchants (
   id                    uuid primary key,
-  tenant_id             uuid not null references tenants(id) on delete cascade,
+  workspace_id             uuid not null references workspaces(id) on delete cascade,
   canonical_name        text not null,
   logo_url              text,
   default_category_id   uuid,
@@ -97,59 +97,59 @@ create table merchants (
   archived_at           timestamptz,
   created_at            timestamptz not null default now(),
   updated_at            timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, canonical_name),
-  constraint merchants_default_category_fk foreign key (tenant_id, default_category_id)
-    references categories(tenant_id, id) on delete set null
+  unique (workspace_id, id),
+  unique (workspace_id, canonical_name),
+  constraint merchants_default_category_fk foreign key (workspace_id, default_category_id)
+    references categories(workspace_id, id) on delete set null
 );
 
 create trigger merchants_updated_at before update on merchants
   for each row execute function set_updated_at();
 
-create index merchants_active_idx on merchants(tenant_id) where archived_at is null;
+create index merchants_active_idx on merchants(workspace_id) where archived_at is null;
 
 -- Merchant aliases: raw-string patterns that resolve to a canonical merchant.
--- Unique per (tenant, raw_pattern) so the resolver can't have ambiguous rules.
+-- Unique per (workspace, raw_pattern) so the resolver can't have ambiguous rules.
 create table merchant_aliases (
   id           uuid primary key,
-  tenant_id    uuid not null references tenants(id) on delete cascade,
+  workspace_id    uuid not null references workspaces(id) on delete cascade,
   merchant_id  uuid not null,
   raw_pattern  text not null,
   is_regex     bool not null default false,
   created_at   timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, raw_pattern),
-  constraint merchant_aliases_merchant_fk foreign key (tenant_id, merchant_id)
-    references merchants(tenant_id, id) on delete cascade
+  unique (workspace_id, id),
+  unique (workspace_id, raw_pattern),
+  constraint merchant_aliases_merchant_fk foreign key (workspace_id, merchant_id)
+    references merchants(workspace_id, id) on delete cascade
 );
 
 -- FK-side index for cascades and per-merchant alias lookups.
 create index merchant_aliases_merchant_idx on merchant_aliases(merchant_id);
 
--- Tags: free-form labels, tenant-scoped, unique name per tenant.
+-- Tags: free-form labels, workspace-scoped, unique name per workspace.
 create table tags (
   id           uuid primary key,
-  tenant_id    uuid not null references tenants(id) on delete cascade,
+  workspace_id    uuid not null references workspaces(id) on delete cascade,
   name         text not null,
   color        text,
   archived_at  timestamptz,
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, name)
+  unique (workspace_id, id),
+  unique (workspace_id, name)
 );
 
 create trigger tags_updated_at before update on tags
   for each row execute function set_updated_at();
 
-create index tags_active_idx on tags(tenant_id) where archived_at is null;
+create index tags_active_idx on tags(workspace_id) where archived_at is null;
 
 -- Categorization rules: user-defined when→then JSON rules evaluated in
 -- priority order by the rule engine. `last_matched_at` is maintained by the
 -- engine for diagnostics.
 create table categorization_rules (
   id                uuid primary key,
-  tenant_id         uuid not null references tenants(id) on delete cascade,
+  workspace_id         uuid not null references workspaces(id) on delete cascade,
   priority          int not null,
   when_jsonb        jsonb not null,
   then_jsonb        jsonb not null,
@@ -157,7 +157,7 @@ create table categorization_rules (
   last_matched_at   timestamptz,
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now(),
-  unique (tenant_id, id)
+  unique (workspace_id, id)
 );
 
 create trigger categorization_rules_updated_at before update on categorization_rules
@@ -165,7 +165,7 @@ create trigger categorization_rules_updated_at before update on categorization_r
 
 -- Rule-engine scan: enabled rules, priority-ordered.
 create index categorization_rules_priority_idx
-  on categorization_rules(tenant_id, priority) where enabled = true;
+  on categorization_rules(workspace_id, priority) where enabled = true;
 
 -- categorization_suggestions lives in 004_transactions.sql: its FK target
 -- (transactions) doesn't exist until that migration runs.

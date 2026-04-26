@@ -49,12 +49,12 @@ create type savings_rule_action as enum (
 -- (e.g. "Vacation 2027" under "Travel"); auto-redirect via
 -- `auto_redirect_on_reach_goal_id` (e.g. once "Emergency fund" is reached,
 -- contributions flow into "House deposit"). Both self-FKs are composite
--- (tenant_id, id) to keep the tenant-scoped invariant. Cheap self-reference
+-- (workspace_id, id) to keep the workspace-scoped invariant. Cheap self-reference
 -- checks prevent `parent = id` and `redirect = id` — multi-hop cycles
 -- (A->B->A) are not DB-enforced; the service layer handles that.
 create table goals (
   id                               uuid primary key,
-  tenant_id                        uuid not null references tenants(id) on delete cascade,
+  workspace_id                        uuid not null references workspaces(id) on delete cascade,
   name                             text not null,
   target_amount                    numeric(28,8) not null,
   currency                         money_currency not null,
@@ -68,11 +68,11 @@ create table goals (
   archived_at                      timestamptz,
   created_at                       timestamptz not null default now(),
   updated_at                       timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint goals_parent_fk foreign key (tenant_id, parent_goal_id)
-    references goals(tenant_id, id) on delete set null,
-  constraint goals_redirect_fk foreign key (tenant_id, auto_redirect_on_reach_goal_id)
-    references goals(tenant_id, id) on delete set null,
+  unique (workspace_id, id),
+  constraint goals_parent_fk foreign key (workspace_id, parent_goal_id)
+    references goals(workspace_id, id) on delete set null,
+  constraint goals_redirect_fk foreign key (workspace_id, auto_redirect_on_reach_goal_id)
+    references goals(workspace_id, id) on delete set null,
   -- Prevent self-reference through parent or redirect (cheap sanity)
   check (parent_goal_id is null or parent_goal_id <> id),
   check (auto_redirect_on_reach_goal_id is null or auto_redirect_on_reach_goal_id <> id),
@@ -83,7 +83,7 @@ create trigger goals_updated_at before update on goals
   for each row execute function set_updated_at();
 
 -- Partial index: the UI mostly queries active, non-archived goals.
-create index goals_tenant_active_idx on goals(tenant_id)
+create index goals_workspace_active_idx on goals(workspace_id)
   where archived_at is null and status = 'active';
 -- FK-side indexes for `on delete set null` cascades and hierarchy walks.
 create index goals_parent_idx on goals(parent_goal_id) where parent_goal_id is not null;
@@ -97,14 +97,14 @@ create index goals_redirect_idx on goals(auto_redirect_on_reach_goal_id) where a
 create table goal_accounts (
   goal_id           uuid not null,
   account_id        uuid not null,
-  tenant_id         uuid not null references tenants(id) on delete cascade,
+  workspace_id         uuid not null references workspaces(id) on delete cascade,
   share_percentage  numeric(5,2),
   created_at        timestamptz not null default now(),
   primary key (goal_id, account_id),
-  constraint ga_goal_fk foreign key (tenant_id, goal_id)
-    references goals(tenant_id, id) on delete cascade,
-  constraint ga_account_fk foreign key (tenant_id, account_id)
-    references accounts(tenant_id, id) on delete cascade,
+  constraint ga_goal_fk foreign key (workspace_id, goal_id)
+    references goals(workspace_id, id) on delete cascade,
+  constraint ga_account_fk foreign key (workspace_id, account_id)
+    references accounts(workspace_id, id) on delete cascade,
   constraint ga_share_range_chk check (
     share_percentage is null or (share_percentage >= 0 and share_percentage <= 100)
   )
@@ -121,7 +121,7 @@ create index goal_accounts_goal_idx on goal_accounts(goal_id);
 -- (goal_id, account_id, as_of desc) gives cheap "latest snapshot" lookup.
 create table goal_allocations (
   id          uuid primary key,
-  tenant_id   uuid not null references tenants(id) on delete cascade,
+  workspace_id   uuid not null references workspaces(id) on delete cascade,
   goal_id     uuid not null,
   account_id  uuid not null,
   balance     numeric(28,8) not null,
@@ -129,11 +129,11 @@ create table goal_allocations (
   as_of       timestamptz not null,
   source      goal_allocation_source not null,
   created_at  timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint gal_goal_fk foreign key (tenant_id, goal_id)
-    references goals(tenant_id, id) on delete cascade,
-  constraint gal_account_fk foreign key (tenant_id, account_id)
-    references accounts(tenant_id, id) on delete cascade
+  unique (workspace_id, id),
+  constraint gal_goal_fk foreign key (workspace_id, goal_id)
+    references goals(workspace_id, id) on delete cascade,
+  constraint gal_account_fk foreign key (workspace_id, account_id)
+    references accounts(workspace_id, id) on delete cascade
 );
 
 create index goal_allocations_goal_account_idx
@@ -148,7 +148,7 @@ create index goal_allocations_goal_account_idx
 -- row with the transaction ref replaces the pledge (append-only).
 create table goal_contributions (
   id                  uuid primary key,
-  tenant_id           uuid not null references tenants(id) on delete cascade,
+  workspace_id           uuid not null references workspaces(id) on delete cascade,
   goal_id             uuid not null,
   transaction_id      uuid,
   planned_event_id    uuid,
@@ -156,13 +156,13 @@ create table goal_contributions (
   currency            money_currency not null,
   applied_at          timestamptz not null default now(),
   created_at          timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint gc_goal_fk foreign key (tenant_id, goal_id)
-    references goals(tenant_id, id) on delete cascade,
-  constraint gc_txn_fk foreign key (tenant_id, transaction_id)
-    references transactions(tenant_id, id) on delete cascade,
-  constraint gc_planned_fk foreign key (tenant_id, planned_event_id)
-    references planned_events(tenant_id, id) on delete cascade,
+  unique (workspace_id, id),
+  constraint gc_goal_fk foreign key (workspace_id, goal_id)
+    references goals(workspace_id, id) on delete cascade,
+  constraint gc_txn_fk foreign key (workspace_id, transaction_id)
+    references transactions(workspace_id, id) on delete cascade,
+  constraint gc_planned_fk foreign key (workspace_id, planned_event_id)
+    references planned_events(workspace_id, id) on delete cascade,
   -- XOR: exactly one of (transaction_id, planned_event_id) must be set.
   constraint gc_source_chk check (
     (transaction_id is not null) <> (planned_event_id is not null)
@@ -183,7 +183,7 @@ create index goal_contributions_planned_idx on goal_contributions(planned_event_
 -- protection.
 create table savings_rules (
   id               uuid primary key,
-  tenant_id        uuid not null references tenants(id) on delete cascade,
+  workspace_id        uuid not null references workspaces(id) on delete cascade,
   name             text not null,
   priority         int not null default 0,
   trigger          savings_rule_trigger not null,
@@ -194,21 +194,21 @@ create table savings_rules (
   last_fired_at    timestamptz,
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now(),
-  unique (tenant_id, id)
+  unique (workspace_id, id)
 );
 
 create trigger savings_rules_updated_at before update on savings_rules
   for each row execute function set_updated_at();
 
--- Rule-engine scan path: enabled rules for a tenant, ordered by priority.
-create index savings_rules_priority_idx on savings_rules(tenant_id, priority)
+-- Rule-engine scan path: enabled rules for a workspace, ordered by priority.
+create index savings_rules_priority_idx on savings_rules(workspace_id, priority)
   where enabled = true;
 
 -- Back-fill the deferred composite FK on cycle_plan_lines.goal_id.
 -- `cycle_plan_lines` was created in 006_planning.sql without this FK because
 -- `goals` did not yet exist. Now that it does, attach the composite
--- (tenant_id, goal_id) -> (tenant_id, id) FK with on delete set null so a
+-- (workspace_id, goal_id) -> (workspace_id, id) FK with on delete set null so a
 -- deleted goal leaves the plan line intact (but unlinked) for audit.
 alter table cycle_plan_lines add constraint cpl_goal_fk
-  foreign key (tenant_id, goal_id) references goals(tenant_id, id)
+  foreign key (workspace_id, goal_id) references goals(workspace_id, id)
   on delete set null;

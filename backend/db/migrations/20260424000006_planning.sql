@@ -82,11 +82,11 @@ create type tax_hint as enum ('gross', 'net');
 -- Payment cycles: the planning period. `period_start`/`period_end` are
 -- inclusive/exclusive dates (end > start enforced). `anchor` records how
 -- the cycle was generated so future cycles can extend the same cadence.
--- Unique on (tenant_id, period_start) prevents overlapping duplicates for
--- a single tenant.
+-- Unique on (workspace_id, period_start) prevents overlapping duplicates for
+-- a single workspace.
 create table payment_cycles (
   id            uuid primary key,
-  tenant_id     uuid not null references tenants(id) on delete cascade,
+  workspace_id     uuid not null references workspaces(id) on delete cascade,
   period_start  date not null,
   period_end    date not null,
   anchor        cycle_anchor_kind not null,
@@ -95,22 +95,22 @@ create table payment_cycles (
   closed_at     timestamptz,
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, period_start),
+  unique (workspace_id, id),
+  unique (workspace_id, period_start),
   check (period_end > period_start)
 );
 
 create trigger payment_cycles_updated_at before update on payment_cycles
   for each row execute function set_updated_at();
 
-create index payment_cycles_tenant_status_idx on payment_cycles(tenant_id, status);
+create index payment_cycles_workspace_status_idx on payment_cycles(workspace_id, status);
 
 -- Income sources: salary and other recurring inflows the user wants to
 -- forecast. `cadence` is a jsonb schedule definition (rrule-like). `tax_hint`
 -- is optional because freelance sources may not map cleanly to gross/net.
 create table income_sources (
   id                uuid primary key,
-  tenant_id         uuid not null references tenants(id) on delete cascade,
+  workspace_id         uuid not null references workspaces(id) on delete cascade,
   name              text not null,
   account_id        uuid not null,
   amount_type       income_amount_type not null,
@@ -122,16 +122,16 @@ create table income_sources (
   archived_at       timestamptz,
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint income_sources_account_fk foreign key (tenant_id, account_id)
-    references accounts(tenant_id, id) on delete cascade
+  unique (workspace_id, id),
+  constraint income_sources_account_fk foreign key (workspace_id, account_id)
+    references accounts(workspace_id, id) on delete cascade
 );
 
 create trigger income_sources_updated_at before update on income_sources
   for each row execute function set_updated_at();
 
 -- Partial index: the UI mostly queries active (non-archived) sources.
-create index income_sources_tenant_active_idx on income_sources(tenant_id)
+create index income_sources_workspace_active_idx on income_sources(workspace_id)
   where archived_at is null;
 create index income_sources_account_idx on income_sources(account_id);
 
@@ -143,7 +143,7 @@ create index income_sources_account_idx on income_sources(account_id);
 -- (e.g. 50% of rent is mine).
 create table recurring_templates (
   id                   uuid primary key,
-  tenant_id            uuid not null references tenants(id) on delete cascade,
+  workspace_id            uuid not null references workspaces(id) on delete cascade,
   kind                 recurring_template_kind not null,
   name                 text not null,
   account_id           uuid not null,
@@ -163,15 +163,15 @@ create table recurring_templates (
   archived_at          timestamptz,
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint rt_account_fk foreign key (tenant_id, account_id)
-    references accounts(tenant_id, id) on delete cascade,
-  constraint rt_dest_account_fk foreign key (tenant_id, dest_account_id)
-    references accounts(tenant_id, id) on delete set null,
-  constraint rt_category_fk foreign key (tenant_id, category_id)
-    references categories(tenant_id, id) on delete set null,
-  constraint rt_merchant_fk foreign key (tenant_id, merchant_id)
-    references merchants(tenant_id, id) on delete set null,
+  unique (workspace_id, id),
+  constraint rt_account_fk foreign key (workspace_id, account_id)
+    references accounts(workspace_id, id) on delete cascade,
+  constraint rt_dest_account_fk foreign key (workspace_id, dest_account_id)
+    references accounts(workspace_id, id) on delete set null,
+  constraint rt_category_fk foreign key (workspace_id, category_id)
+    references categories(workspace_id, id) on delete set null,
+  constraint rt_merchant_fk foreign key (workspace_id, merchant_id)
+    references merchants(workspace_id, id) on delete set null,
   -- amount vs percentage pair matches amount_type
   constraint rt_amount_shape_chk check (
     (amount_type = 'fixed'                 and amount is not null     and percentage is null) or
@@ -196,7 +196,7 @@ create table recurring_templates (
 create trigger recurring_templates_updated_at before update on recurring_templates
   for each row execute function set_updated_at();
 
-create index recurring_templates_tenant_active_idx on recurring_templates(tenant_id)
+create index recurring_templates_workspace_active_idx on recurring_templates(workspace_id)
   where archived_at is null;
 create index recurring_templates_account_idx on recurring_templates(account_id);
 create index recurring_templates_category_idx on recurring_templates(category_id) where category_id is not null;
@@ -204,26 +204,26 @@ create index recurring_templates_category_idx on recurring_templates(category_id
 -- Cycle plans: a plan is 1:1 with a payment_cycle. `summary` is a denormalised
 -- rollup (totals, savings rate forecast) recomputed on line change. The
 -- global unique on payment_cycle_id enforces the 1:1 relationship without
--- needing a tenant scope — cycles themselves are tenant-scoped so this is
+-- needing a workspace scope — cycles themselves are workspace-scoped so this is
 -- safe.
 create table cycle_plans (
   id               uuid primary key,
-  tenant_id        uuid not null references tenants(id) on delete cascade,
+  workspace_id        uuid not null references workspaces(id) on delete cascade,
   payment_cycle_id uuid not null unique,
   status           cycle_plan_status not null default 'draft',
   summary          jsonb not null default '{}'::jsonb,
   closed_at        timestamptz,
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint cp_cycle_fk foreign key (tenant_id, payment_cycle_id)
-    references payment_cycles(tenant_id, id) on delete cascade
+  unique (workspace_id, id),
+  constraint cp_cycle_fk foreign key (workspace_id, payment_cycle_id)
+    references payment_cycles(workspace_id, id) on delete cascade
 );
 
 create trigger cycle_plans_updated_at before update on cycle_plans
   for each row execute function set_updated_at();
 
-create index cycle_plans_tenant_status_idx on cycle_plans(tenant_id, status);
+create index cycle_plans_workspace_status_idx on cycle_plans(workspace_id, status);
 
 -- Cycle plan lines: individual rows inside a plan. Each line is one of
 -- several kinds and may reference a category, a recurring template, an
@@ -243,7 +243,7 @@ create index cycle_plans_tenant_status_idx on cycle_plans(tenant_id, status);
 -- (e.g. `savings_rule` can reference both goal and recurring_template).
 create table cycle_plan_lines (
   id                    uuid primary key,
-  tenant_id             uuid not null references tenants(id) on delete cascade,
+  workspace_id             uuid not null references workspaces(id) on delete cascade,
   cycle_plan_id         uuid not null,
   kind                  cycle_plan_line_kind not null,
   category_id           uuid,
@@ -259,15 +259,15 @@ create table cycle_plan_lines (
   note                  text,
   sort_order            int not null default 0,
   created_at            timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint cpl_plan_fk foreign key (tenant_id, cycle_plan_id)
-    references cycle_plans(tenant_id, id) on delete cascade,
-  constraint cpl_category_fk foreign key (tenant_id, category_id)
-    references categories(tenant_id, id) on delete set null,
-  constraint cpl_template_fk foreign key (tenant_id, recurring_template_id)
-    references recurring_templates(tenant_id, id) on delete set null,
-  constraint cpl_income_fk foreign key (tenant_id, income_source_id)
-    references income_sources(tenant_id, id) on delete set null
+  unique (workspace_id, id),
+  constraint cpl_plan_fk foreign key (workspace_id, cycle_plan_id)
+    references cycle_plans(workspace_id, id) on delete cascade,
+  constraint cpl_category_fk foreign key (workspace_id, category_id)
+    references categories(workspace_id, id) on delete set null,
+  constraint cpl_template_fk foreign key (workspace_id, recurring_template_id)
+    references recurring_templates(workspace_id, id) on delete set null,
+  constraint cpl_income_fk foreign key (workspace_id, income_source_id)
+    references income_sources(workspace_id, id) on delete set null
 );
 
 create index cycle_plan_lines_plan_idx on cycle_plan_lines(cycle_plan_id, sort_order);
@@ -282,7 +282,7 @@ create index cycle_plan_lines_trip_idx on cycle_plan_lines(trip_id) where trip_i
 -- a backing transaction.
 create table planned_events (
   id                        uuid primary key,
-  tenant_id                 uuid not null references tenants(id) on delete cascade,
+  workspace_id                 uuid not null references workspaces(id) on delete cascade,
   cycle_plan_line_id        uuid,
   recurring_template_id     uuid,
   kind                      recurring_template_kind not null,
@@ -297,21 +297,21 @@ create table planned_events (
   executed_transaction_id   uuid,
   created_at                timestamptz not null default now(),
   updated_at                timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint pe_cpl_fk foreign key (tenant_id, cycle_plan_line_id)
-    references cycle_plan_lines(tenant_id, id) on delete set null,
-  constraint pe_template_fk foreign key (tenant_id, recurring_template_id)
-    references recurring_templates(tenant_id, id) on delete set null,
-  constraint pe_account_fk foreign key (tenant_id, account_id)
-    references accounts(tenant_id, id) on delete cascade,
-  constraint pe_dest_account_fk foreign key (tenant_id, dest_account_id)
-    references accounts(tenant_id, id) on delete set null,
-  constraint pe_category_fk foreign key (tenant_id, category_id)
-    references categories(tenant_id, id) on delete set null,
-  constraint pe_merchant_fk foreign key (tenant_id, merchant_id)
-    references merchants(tenant_id, id) on delete set null,
-  constraint pe_executed_fk foreign key (tenant_id, executed_transaction_id)
-    references transactions(tenant_id, id) on delete set null,
+  unique (workspace_id, id),
+  constraint pe_cpl_fk foreign key (workspace_id, cycle_plan_line_id)
+    references cycle_plan_lines(workspace_id, id) on delete set null,
+  constraint pe_template_fk foreign key (workspace_id, recurring_template_id)
+    references recurring_templates(workspace_id, id) on delete set null,
+  constraint pe_account_fk foreign key (workspace_id, account_id)
+    references accounts(workspace_id, id) on delete cascade,
+  constraint pe_dest_account_fk foreign key (workspace_id, dest_account_id)
+    references accounts(workspace_id, id) on delete set null,
+  constraint pe_category_fk foreign key (workspace_id, category_id)
+    references categories(workspace_id, id) on delete set null,
+  constraint pe_merchant_fk foreign key (workspace_id, merchant_id)
+    references merchants(workspace_id, id) on delete set null,
+  constraint pe_executed_fk foreign key (workspace_id, executed_transaction_id)
+    references transactions(workspace_id, id) on delete set null,
   -- Biconditional: executed_transaction_id is set iff status='executed'.
   -- Rejects both missing-txn-on-executed and spurious-txn-on-cancelled/skipped.
   constraint planned_events_executed_chk check (
@@ -322,8 +322,8 @@ create table planned_events (
 create trigger planned_events_updated_at before update on planned_events
   for each row execute function set_updated_at();
 
-create index planned_events_tenant_date_idx on planned_events(tenant_id, planned_for);
-create index planned_events_status_idx on planned_events(tenant_id, status);
+create index planned_events_workspace_date_idx on planned_events(workspace_id, planned_for);
+create index planned_events_status_idx on planned_events(workspace_id, status);
 create index planned_events_account_idx on planned_events(account_id, planned_for);
 -- FK-side indexes: without these, `on delete set null` cascades from
 -- cycle_plan_lines and recurring_templates do sequential scans on
@@ -334,11 +334,11 @@ create index planned_events_template_idx on planned_events(recurring_template_id
   where recurring_template_id is not null;
 
 -- Action items: actionable reminders derived from planned events ("pay rent
--- on the 1st"). Partial index on (tenant_id, due_at) WHERE pending makes
+-- on the 1st"). Partial index on (workspace_id, due_at) WHERE pending makes
 -- the "what's due today" query cheap and tight.
 create table action_items (
   id                 uuid primary key,
-  tenant_id          uuid not null references tenants(id) on delete cascade,
+  workspace_id          uuid not null references workspaces(id) on delete cascade,
   planned_event_id   uuid not null,
   instruction        text not null,
   due_at             date not null,
@@ -347,19 +347,19 @@ create table action_items (
   notes              text,
   created_at         timestamptz not null default now(),
   updated_at         timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint ai_planned_event_fk foreign key (tenant_id, planned_event_id)
-    references planned_events(tenant_id, id) on delete cascade
+  unique (workspace_id, id),
+  constraint ai_planned_event_fk foreign key (workspace_id, planned_event_id)
+    references planned_events(workspace_id, id) on delete cascade
 );
 
 create trigger action_items_updated_at before update on action_items
   for each row execute function set_updated_at();
 
-create index action_items_tenant_due_idx on action_items(tenant_id, due_at)
+create index action_items_workspace_due_idx on action_items(workspace_id, due_at)
   where status = 'pending';
 create index action_items_planned_event_idx on action_items(planned_event_id);
 
--- Rollover policies: one per category per tenant (enforced by unique
+-- Rollover policies: one per category per workspace (enforced by unique
 -- constraint). Two guards:
 --   rp_cap_pair_chk: cap_amount and cap_currency must be NULL together or
 --   both set (a cap without a currency or vice-versa is malformed).
@@ -367,7 +367,7 @@ create index action_items_planned_event_idx on action_items(planned_event_id);
 --   `rollover_with_cap`; other behaviors must leave cap NULL.
 create table rollover_policies (
   id            uuid primary key,
-  tenant_id     uuid not null references tenants(id) on delete cascade,
+  workspace_id     uuid not null references workspaces(id) on delete cascade,
   category_id   uuid not null,
   behavior      rollover_behavior not null default 'reset',
   cap_amount    numeric(28,8),
@@ -375,10 +375,10 @@ create table rollover_policies (
   overspend     overspend_behavior not null default 'absorb_to_next_cycle',
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, category_id),
-  constraint rp_category_fk foreign key (tenant_id, category_id)
-    references categories(tenant_id, id) on delete cascade,
+  unique (workspace_id, id),
+  unique (workspace_id, category_id),
+  constraint rp_category_fk foreign key (workspace_id, category_id)
+    references categories(workspace_id, id) on delete cascade,
   -- cap_amount and cap_currency must be NULL together
   constraint rp_cap_pair_chk check (
     (cap_amount is null) = (cap_currency is null)
@@ -397,23 +397,23 @@ create trigger rollover_policies_updated_at before update on rollover_policies
 -- that realised it. Relocated here from 004 because it depends on
 -- planned_events (this file) and transactions (004). Append-only (no
 -- updated_at) — if the match is wrong you delete and create a new one.
--- Unique on (tenant_id, planned_event_id, transaction_id) prevents
+-- Unique on (workspace_id, planned_event_id, transaction_id) prevents
 -- duplicate match records for the same pair.
 create table planned_event_matches (
   id                  uuid primary key,
-  tenant_id           uuid not null references tenants(id) on delete cascade,
+  workspace_id           uuid not null references workspaces(id) on delete cascade,
   planned_event_id    uuid not null,
   transaction_id      uuid not null,
   provenance          match_provenance not null,
   matched_at          timestamptz not null default now(),
   matched_by_user_id  uuid,
   created_at          timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, planned_event_id, transaction_id),
-  constraint pem_event_fk foreign key (tenant_id, planned_event_id)
-    references planned_events(tenant_id, id) on delete cascade,
-  constraint pem_txn_fk foreign key (tenant_id, transaction_id)
-    references transactions(tenant_id, id) on delete cascade,
+  unique (workspace_id, id),
+  unique (workspace_id, planned_event_id, transaction_id),
+  constraint pem_event_fk foreign key (workspace_id, planned_event_id)
+    references planned_events(workspace_id, id) on delete cascade,
+  constraint pem_txn_fk foreign key (workspace_id, transaction_id)
+    references transactions(workspace_id, id) on delete cascade,
   constraint pem_actor_fk foreign key (matched_by_user_id)
     references users(id) on delete set null
 );

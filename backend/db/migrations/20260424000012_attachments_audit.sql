@@ -7,11 +7,11 @@
 --
 -- Shape rules threaded throughout:
 --   * attachments.sha256 is bytea (not text) with a length-32 check, and
---     (tenant_id, sha256) is UNIQUE: the same binary content can only be
---     stored once per tenant (tenant-level dedupe).
+--     (workspace_id, sha256) is UNIQUE: the same binary content can only be
+--     stored once per workspace (workspace-level dedupe).
 --   * attachment_links is polymorphic on (entity_type, entity_id) — any
 --     entity can have attachments without explicit FKs. Referential
---     integrity is enforced only against attachments(tenant_id, id) on the
+--     integrity is enforced only against attachments(workspace_id, id) on the
 --     attachment side; the link's entity side is intentionally untyped.
 --   * ocr_documents.attachment_id is bare UNIQUE (1:1) — each attachment
 --     has at most one OCR document.
@@ -21,14 +21,14 @@
 --     current_setting(..., true) (missing_ok = true, so unset = NULL actor),
 --     which keeps system/job writes auditable without requiring a logged-in
 --     user.
---   * audit_events.tenant_id is derived from the row (OLD for DELETE, NEW
---     otherwise), so tenant scoping is preserved even for system events.
+--   * audit_events.workspace_id is derived from the row (OLD for DELETE, NEW
+--     otherwise), so workspace scoping is preserved even for system events.
 
 -- Requires PostgreSQL 13+ for gen_random_uuid() in core (see record_audit_event).
 -- If targeting PG 12 or earlier, install pgcrypto via create extension if not exists.
 
 -- Storage backend for an attachment blob. `local` = on-box filesystem
--- (default in dev / single-tenant deploys); `s3` = object storage. The
+-- (default in dev / single-workspace deploys); `s3` = object storage. The
 -- storage_key is backend-relative (path for local, object key for s3).
 create type attachment_storage as enum ('local', 's3');
 
@@ -47,11 +47,11 @@ create type audit_action as enum ('created', 'updated', 'deleted', 'restored', '
 -- hex text) because it's fixed-width 32 bytes — half the storage of the
 -- hex form, and equality compares on raw bytes. uploaded_by_user_id is
 -- nullable (system uploads have no actor) and references users(id).
--- Tenant scoping is enforced by the row's tenant_id FK to tenants(id),
+-- Workspace scoping is enforced by the row's workspace_id FK to workspaces(id),
 -- not a composite FK into users.
 create table attachments (
   id                  uuid primary key,
-  tenant_id           uuid not null references tenants(id) on delete cascade,
+  workspace_id           uuid not null references workspaces(id) on delete cascade,
   filename            text not null,
   content_type        text not null,
   size_bytes          bigint not null,
@@ -63,11 +63,11 @@ create table attachments (
   ocr_status          ocr_status not null default 'none',
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now(),
-  unique (tenant_id, id),
-  -- Tenant-scoped content dedupe: uploading the same file twice within a
-  -- tenant should collapse to one row. Cross-tenant dedupe is intentionally
-  -- not attempted (tenant isolation > storage savings).
-  unique (tenant_id, sha256),
+  unique (workspace_id, id),
+  -- Workspace-scoped content dedupe: uploading the same file twice within a
+  -- workspace should collapse to one row. Cross-workspace dedupe is intentionally
+  -- not attempted (workspace isolation > storage savings).
+  unique (workspace_id, sha256),
   constraint attachments_uploader_fk foreign key (uploaded_by_user_id)
     references users(id) on delete set null,
   check (size_bytes >= 0),
@@ -78,30 +78,30 @@ create table attachments (
 create trigger attachments_updated_at before update on attachments
   for each row execute function set_updated_at();
 
--- Partial index: the OCR worker polls for `pending` attachments per tenant.
+-- Partial index: the OCR worker polls for `pending` attachments per workspace.
 -- Partial on pending keeps the index tiny (most rows are `done` or `none`).
-create index attachments_ocr_pending_idx on attachments(tenant_id)
+create index attachments_ocr_pending_idx on attachments(workspace_id)
   where ocr_status = 'pending';
 
 -- Attachment links: polymorphic M:N between attachments and any entity.
 -- (entity_type, entity_id) is a loose pointer — no FK, because the target
 -- entity type varies. UNIQUE(attachment_id, entity_type, entity_id)
 -- prevents duplicate links. linked_by_user_id is optional (system links
--- have no actor) and references users(id). Tenant scoping is enforced by
--- the row's tenant_id FK to tenants(id).
+-- have no actor) and references users(id). Workspace scoping is enforced by
+-- the row's workspace_id FK to workspaces(id).
 create table attachment_links (
   id                uuid primary key,
-  tenant_id         uuid not null references tenants(id) on delete cascade,
+  workspace_id         uuid not null references workspaces(id) on delete cascade,
   attachment_id     uuid not null,
   entity_type       text not null,
   entity_id         uuid not null,
   linked_by_user_id uuid,
   linked_at         timestamptz not null default now(),
   created_at        timestamptz not null default now(),
-  unique (tenant_id, id),
+  unique (workspace_id, id),
   unique (attachment_id, entity_type, entity_id),
-  constraint al_attachment_fk foreign key (tenant_id, attachment_id)
-    references attachments(tenant_id, id) on delete cascade,
+  constraint al_attachment_fk foreign key (workspace_id, attachment_id)
+    references attachments(workspace_id, id) on delete cascade,
   constraint al_linker_fk foreign key (linked_by_user_id)
     references users(id) on delete set null
 );
@@ -117,7 +117,7 @@ create index attachment_links_attachment_idx on attachment_links(attachment_id);
 -- engine. `confidence` is the engine's self-reported 0..1 score.
 create table ocr_documents (
   id              uuid primary key,
-  tenant_id       uuid not null references tenants(id) on delete cascade,
+  workspace_id       uuid not null references workspaces(id) on delete cascade,
   attachment_id   uuid not null unique,
   text_content    text,
   extracted_jsonb jsonb not null default '{}'::jsonb,
@@ -125,26 +125,26 @@ create table ocr_documents (
   engine          text not null,
   confidence      numeric(5,4),
   created_at      timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint ocr_attachment_fk foreign key (tenant_id, attachment_id)
-    references attachments(tenant_id, id) on delete cascade,
+  unique (workspace_id, id),
+  constraint ocr_attachment_fk foreign key (workspace_id, attachment_id)
+    references attachments(workspace_id, id) on delete cascade,
   check (confidence is null or (confidence >= 0 and confidence <= 1))
 );
 
 -- Saved searches: per-user named filter presets. filter_jsonb is the
 -- serialized filter state; `pinned` floats favorites in the UI. UNIQUE
--- (tenant_id, user_id, name) prevents duplicate preset names per user.
+-- (workspace_id, user_id, name) prevents duplicate preset names per user.
 create table saved_searches (
   id           uuid primary key,
-  tenant_id    uuid not null references tenants(id) on delete cascade,
+  workspace_id    uuid not null references workspaces(id) on delete cascade,
   user_id      uuid not null,
   name         text not null,
   filter_jsonb jsonb not null,
   pinned       bool not null default false,
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, user_id, name),
+  unique (workspace_id, id),
+  unique (workspace_id, user_id, name),
   constraint ss_user_fk foreign key (user_id)
     references users(id) on delete cascade
 );
@@ -162,7 +162,7 @@ create index saved_searches_user_pinned_idx on saved_searches(user_id, pinned de
 -- populated by the application (when available) for forensic context.
 create table audit_events (
   id              uuid primary key,
-  tenant_id       uuid references tenants(id) on delete cascade,
+  workspace_id       uuid references workspaces(id) on delete cascade,
   entity_type     text not null,
   entity_id       uuid not null,
   action          text not null,
@@ -173,7 +173,7 @@ create table audit_events (
   ip              inet,
   user_agent      text,
   occurred_at     timestamptz not null default now(),
-  unique (tenant_id, id),
+  unique (workspace_id, id),
   constraint ae_actor_fk foreign key (actor_user_id)
     references users(id) on delete set null
 );
@@ -181,7 +181,7 @@ create table audit_events (
 -- Entity timeline: "history of entity X, newest first" — the dominant
 -- audit-UI query. Composite ordered by occurred_at desc.
 create index audit_events_entity_idx
-  on audit_events(tenant_id, entity_type, entity_id, occurred_at desc);
+  on audit_events(workspace_id, entity_type, entity_id, occurred_at desc);
 -- Actor timeline: "what has user Y done lately?" Partial on non-null
 -- actor_user_id keeps it tight (system events skip the index).
 create index audit_events_actor_idx
@@ -208,13 +208,13 @@ create trigger audit_events_no_delete before delete on audit_events
 -- audited table. The actor is read from the session setting
 -- folio.actor_user_id via current_setting(..., true) — the `true` means
 -- missing_ok, so unset (system/job context) yields NULL rather than error.
--- tenant_id and entity_id come from the row itself (OLD for DELETE, NEW
--- otherwise), which preserves tenant scoping for system events too.
+-- workspace_id and entity_id come from the row itself (OLD for DELETE, NEW
+-- otherwise), which preserves workspace scoping for system events too.
 create or replace function record_audit_event() returns trigger language plpgsql as $$
 declare
   v_entity_type text := tg_argv[0];
   v_actor uuid := nullif(current_setting('folio.actor_user_id', true), '')::uuid;
-  v_tenant uuid;
+  v_workspace uuid;
   v_entity_id uuid;
   v_before jsonb;
   v_after jsonb;
@@ -222,29 +222,29 @@ declare
 begin
   if tg_op = 'DELETE' then
     v_action := 'deleted';
-    v_tenant := old.tenant_id;
+    v_workspace := old.workspace_id;
     v_entity_id := old.id;
     v_before := to_jsonb(old);
     v_after := null;
   elsif tg_op = 'UPDATE' then
     v_action := 'updated';
-    v_tenant := new.tenant_id;
+    v_workspace := new.workspace_id;
     v_entity_id := new.id;
     v_before := to_jsonb(old);
     v_after := to_jsonb(new);
   else
     v_action := 'created';
-    v_tenant := new.tenant_id;
+    v_workspace := new.workspace_id;
     v_entity_id := new.id;
     v_before := null;
     v_after := to_jsonb(new);
   end if;
 
   insert into audit_events (
-    id, tenant_id, entity_type, entity_id, action,
+    id, workspace_id, entity_type, entity_id, action,
     actor_user_id, before_jsonb, after_jsonb, occurred_at
   ) values (
-    gen_random_uuid(), v_tenant, v_entity_type, v_entity_id, v_action,
+    gen_random_uuid(), v_workspace, v_entity_type, v_entity_id, v_action,
     v_actor, v_before, v_after, now()
   );
 

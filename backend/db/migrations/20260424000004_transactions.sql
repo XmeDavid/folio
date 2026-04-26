@@ -34,7 +34,7 @@ create type match_provenance as enum (
 -- in `transaction_lines` — enforced by the no-double-classification trigger.
 create table transactions (
   id                  uuid primary key,
-  tenant_id           uuid not null references tenants(id) on delete cascade,
+  workspace_id           uuid not null references workspaces(id) on delete cascade,
   account_id          uuid not null,
   status              transaction_status not null,
   booked_at           date not null,
@@ -53,13 +53,13 @@ create table transactions (
   raw                 jsonb,
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint transactions_account_fk foreign key (tenant_id, account_id)
-    references accounts(tenant_id, id) on delete cascade,
-  constraint transactions_category_fk foreign key (tenant_id, category_id)
-    references categories(tenant_id, id) on delete set null,
-  constraint transactions_merchant_fk foreign key (tenant_id, merchant_id)
-    references merchants(tenant_id, id) on delete set null,
+  unique (workspace_id, id),
+  constraint transactions_account_fk foreign key (workspace_id, account_id)
+    references accounts(workspace_id, id) on delete cascade,
+  constraint transactions_category_fk foreign key (workspace_id, category_id)
+    references categories(workspace_id, id) on delete set null,
+  constraint transactions_merchant_fk foreign key (workspace_id, merchant_id)
+    references merchants(workspace_id, id) on delete set null,
   -- original_amount and original_currency must be NULL together: either both
   -- present (FX-denominated) or both absent (native currency).
   constraint transactions_original_pair_chk
@@ -69,15 +69,15 @@ create table transactions (
 create trigger transactions_updated_at before update on transactions
   for each row execute function set_updated_at();
 
--- Spec §5.4 indexes. Composite (tenant, booked_at desc) supports the default
+-- Spec §5.4 indexes. Composite (workspace, booked_at desc) supports the default
 -- feed; (account, booked_at desc) supports account-detail view; partial
 -- category/merchant indexes keep FK-side cascades cheap while skipping the
 -- majority of unclassified rows.
-create index transactions_tenant_booked_idx on transactions(tenant_id, booked_at desc);
+create index transactions_workspace_booked_idx on transactions(workspace_id, booked_at desc);
 create index transactions_account_booked_idx on transactions(account_id, booked_at desc);
 create index transactions_category_idx on transactions(category_id) where category_id is not null;
 create index transactions_merchant_idx on transactions(merchant_id) where merchant_id is not null;
-create index transactions_status_idx on transactions(tenant_id, status);
+create index transactions_status_idx on transactions(workspace_id, status);
 
 -- Currency-match trigger (spec §3.11 P3): a transaction's currency must
 -- equal its account's currency. Runs on INSERT and on UPDATE of currency
@@ -107,7 +107,7 @@ create trigger transactions_currency_match
 -- merchant (e.g. a grocery line at a megastore).
 create table transaction_lines (
   id               uuid primary key,
-  tenant_id        uuid not null references tenants(id) on delete cascade,
+  workspace_id        uuid not null references workspaces(id) on delete cascade,
   transaction_id   uuid not null,
   amount           numeric(28,8) not null,
   currency         money_currency not null,
@@ -116,13 +116,13 @@ create table transaction_lines (
   note             text,
   sort_order       int not null default 0,
   created_at       timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint tl_transaction_fk foreign key (tenant_id, transaction_id)
-    references transactions(tenant_id, id) on delete cascade,
-  constraint tl_category_fk foreign key (tenant_id, category_id)
-    references categories(tenant_id, id) on delete restrict,
-  constraint tl_merchant_fk foreign key (tenant_id, merchant_id)
-    references merchants(tenant_id, id) on delete set null
+  unique (workspace_id, id),
+  constraint tl_transaction_fk foreign key (workspace_id, transaction_id)
+    references transactions(workspace_id, id) on delete cascade,
+  constraint tl_category_fk foreign key (workspace_id, category_id)
+    references categories(workspace_id, id) on delete restrict,
+  constraint tl_merchant_fk foreign key (workspace_id, merchant_id)
+    references merchants(workspace_id, id) on delete set null
 );
 
 -- Per-transaction line lookup, ordered by sort_order (UI display order).
@@ -130,19 +130,19 @@ create index transaction_lines_tx_idx on transaction_lines(transaction_id, sort_
 -- FK-side index for category cascades and per-category reporting.
 create index transaction_lines_category_idx on transaction_lines(category_id);
 
--- Transaction tags: many-to-many between transactions and tags. tenant_id
+-- Transaction tags: many-to-many between transactions and tags. workspace_id
 -- carried for composite-FK safety. PK is (transaction_id, tag_id), so a tag
 -- can only be applied once per transaction.
 create table transaction_tags (
   transaction_id  uuid not null,
   tag_id          uuid not null,
-  tenant_id       uuid not null references tenants(id) on delete cascade,
+  workspace_id       uuid not null references workspaces(id) on delete cascade,
   created_at      timestamptz not null default now(),
   primary key (transaction_id, tag_id),
-  constraint tt_transaction_fk foreign key (tenant_id, transaction_id)
-    references transactions(tenant_id, id) on delete cascade,
-  constraint tt_tag_fk foreign key (tenant_id, tag_id)
-    references tags(tenant_id, id) on delete cascade
+  constraint tt_transaction_fk foreign key (workspace_id, transaction_id)
+    references transactions(workspace_id, id) on delete cascade,
+  constraint tt_tag_fk foreign key (workspace_id, tag_id)
+    references tags(workspace_id, id) on delete cascade
 );
 
 -- Reverse lookup: transactions by tag.
@@ -155,7 +155,7 @@ create index transaction_tags_tag_idx on transaction_tags(tag_id);
 -- capture wire/FX fees attributed to the transfer.
 create table transfer_matches (
   id                           uuid primary key,
-  tenant_id                    uuid not null references tenants(id) on delete cascade,
+  workspace_id                    uuid not null references workspaces(id) on delete cascade,
   source_transaction_id        uuid not null,
   destination_transaction_id   uuid,                    -- null = outbound-to-external
   fx_rate                      numeric(28,10),
@@ -166,11 +166,11 @@ create table transfer_matches (
   matched_by_user_id           uuid,
   matched_at                   timestamptz not null default now(),
   created_at                   timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint tm_source_fk foreign key (tenant_id, source_transaction_id)
-    references transactions(tenant_id, id) on delete cascade,
-  constraint tm_dest_fk foreign key (tenant_id, destination_transaction_id)
-    references transactions(tenant_id, id) on delete cascade,
+  unique (workspace_id, id),
+  constraint tm_source_fk foreign key (workspace_id, source_transaction_id)
+    references transactions(workspace_id, id) on delete cascade,
+  constraint tm_dest_fk foreign key (workspace_id, destination_transaction_id)
+    references transactions(workspace_id, id) on delete cascade,
   constraint tm_actor_fk foreign key (matched_by_user_id)
     references users(id) on delete set null,
   -- fee_amount and fee_currency must be NULL together.
@@ -187,7 +187,7 @@ create index transfer_matches_dest_idx on transfer_matches(destination_transacti
 -- case); a false value flags partial refunds for reporting.
 create table refund_matches (
   id                        uuid primary key,
-  tenant_id                 uuid not null references tenants(id) on delete cascade,
+  workspace_id                 uuid not null references workspaces(id) on delete cascade,
   original_transaction_id   uuid not null,
   refund_transaction_id     uuid not null,
   net_to_zero               bool not null default true,
@@ -195,11 +195,11 @@ create table refund_matches (
   matched_by_user_id        uuid,
   matched_at                timestamptz not null default now(),
   created_at                timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint rm_original_fk foreign key (tenant_id, original_transaction_id)
-    references transactions(tenant_id, id) on delete cascade,
-  constraint rm_refund_fk foreign key (tenant_id, refund_transaction_id)
-    references transactions(tenant_id, id) on delete cascade,
+  unique (workspace_id, id),
+  constraint rm_original_fk foreign key (workspace_id, original_transaction_id)
+    references transactions(workspace_id, id) on delete cascade,
+  constraint rm_refund_fk foreign key (workspace_id, refund_transaction_id)
+    references transactions(workspace_id, id) on delete cascade,
   constraint rm_actor_fk foreign key (matched_by_user_id)
     references users(id) on delete set null
 );
@@ -215,7 +215,7 @@ create index refund_matches_refund_idx on refund_matches(refund_transaction_id);
 -- the hot query.
 create table categorization_suggestions (
   id                     uuid primary key,
-  tenant_id              uuid not null references tenants(id) on delete cascade,
+  workspace_id              uuid not null references workspaces(id) on delete cascade,
   transaction_id         uuid not null,
   suggested_category_id  uuid not null,
   confidence             numeric(5,4) not null,
@@ -223,11 +223,11 @@ create table categorization_suggestions (
   created_at             timestamptz not null default now(),
   accepted_at            timestamptz,
   dismissed_at           timestamptz,
-  unique (tenant_id, id),
-  constraint cs_txn_fk foreign key (tenant_id, transaction_id)
-    references transactions(tenant_id, id) on delete cascade,
-  constraint cs_cat_fk foreign key (tenant_id, suggested_category_id)
-    references categories(tenant_id, id) on delete cascade
+  unique (workspace_id, id),
+  constraint cs_txn_fk foreign key (workspace_id, transaction_id)
+    references transactions(workspace_id, id) on delete cascade,
+  constraint cs_cat_fk foreign key (workspace_id, suggested_category_id)
+    references categories(workspace_id, id) on delete cascade
 );
 
 -- Per-transaction lookup (also covers FK-side for cs_txn_fk cascade).
@@ -235,7 +235,7 @@ create index categorization_suggestions_txn_idx on categorization_suggestions(tr
 -- Open suggestions (not yet accepted or dismissed): the primary worklist
 -- query. Partial index keeps it tight as the historical log grows.
 create index categorization_suggestions_open_idx
-  on categorization_suggestions(tenant_id, created_at desc)
+  on categorization_suggestions(workspace_id, created_at desc)
   where accepted_at is null and dismissed_at is null;
 
 -- Leaf-category triggers. Uses assert_leaf_category() defined in 003. On

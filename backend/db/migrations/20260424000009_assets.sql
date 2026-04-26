@@ -1,8 +1,8 @@
 -- Folio v2 domain — physical assets and retirement (spec §5.9).
--- Assets are a 1:1 extension of asset-kind accounts (tenant-scoped).
--- Valuations and events are tenant-scoped and cascade from the asset.
+-- Assets are a 1:1 extension of asset-kind accounts (workspace-scoped).
+-- Valuations and events are workspace-scoped and cascade from the asset.
 -- Depreciation schedules are 1:1 with assets. Retirement contribution
--- limits are GLOBAL reference data (no tenant_id). Mortgage schedules
+-- limits are GLOBAL reference data (no workspace_id). Mortgage schedules
 -- are 1:1 extensions of mortgage-kind accounts, with a payment stream
 -- that can link to the materialized transaction when a payment lands.
 
@@ -56,7 +56,7 @@ create type mortgage_payment_status as enum ('upcoming', 'due', 'paid', 'skipped
 -- Disposal fields move together to prevent partial disposal records.
 create table assets (
   id                  uuid primary key,
-  tenant_id           uuid not null references tenants(id) on delete cascade,
+  workspace_id           uuid not null references workspaces(id) on delete cascade,
   account_id          uuid not null,
   category            asset_category not null,
   description         text not null,
@@ -70,10 +70,10 @@ create table assets (
   notes               text,
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, account_id),     -- 1:1 with its asset-kind account
-  constraint assets_account_fk foreign key (tenant_id, account_id)
-    references accounts(tenant_id, id) on delete cascade,
+  unique (workspace_id, id),
+  unique (workspace_id, account_id),     -- 1:1 with its asset-kind account
+  constraint assets_account_fk foreign key (workspace_id, account_id)
+    references accounts(workspace_id, id) on delete cascade,
   check (acquired_cost >= 0),
   -- disposal amount/currency/date move together
   constraint assets_disposal_pair_chk check (
@@ -90,7 +90,7 @@ create trigger assets_updated_at before update on assets
   for each row execute function set_updated_at();
 
 create index assets_account_idx on assets(account_id);
-create index assets_tenant_category_idx on assets(tenant_id, category);
+create index assets_workspace_category_idx on assets(workspace_id, category);
 
 -- Asset valuations: time-series of values over the life of the asset.
 -- Rows with source='manual' are user-entered; 'plugin' rows come from
@@ -98,7 +98,7 @@ create index assets_tenant_category_idx on assets(tenant_id, category);
 -- query "latest valuation" via ORDER BY as_of DESC LIMIT 1.
 create table asset_valuations (
   id          uuid primary key,
-  tenant_id   uuid not null references tenants(id) on delete cascade,
+  workspace_id   uuid not null references workspaces(id) on delete cascade,
   asset_id    uuid not null,
   as_of       date not null,
   value       numeric(28,8) not null,
@@ -106,9 +106,9 @@ create table asset_valuations (
   source      asset_valuation_source not null,
   note        text,
   created_at  timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint av_asset_fk foreign key (tenant_id, asset_id)
-    references assets(tenant_id, id) on delete cascade,
+  unique (workspace_id, id),
+  constraint av_asset_fk foreign key (workspace_id, asset_id)
+    references assets(workspace_id, id) on delete cascade,
   check (value >= 0)
 );
 
@@ -120,7 +120,7 @@ create index asset_valuations_asset_asof_idx on asset_valuations(asset_id, as_of
 -- transaction); on-delete-set-null preserves the event if the txn is purged.
 create table asset_events (
   id                    uuid primary key,
-  tenant_id             uuid not null references tenants(id) on delete cascade,
+  workspace_id             uuid not null references workspaces(id) on delete cascade,
   asset_id              uuid not null,
   kind                  asset_event_kind not null,
   occurred_at           date not null,
@@ -129,11 +129,11 @@ create table asset_events (
   linked_transaction_id uuid,
   note                  text,
   created_at            timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint ae_asset_fk foreign key (tenant_id, asset_id)
-    references assets(tenant_id, id) on delete cascade,
-  constraint ae_transaction_fk foreign key (tenant_id, linked_transaction_id)
-    references transactions(tenant_id, id) on delete set null,
+  unique (workspace_id, id),
+  constraint ae_asset_fk foreign key (workspace_id, asset_id)
+    references assets(workspace_id, id) on delete cascade,
+  constraint ae_transaction_fk foreign key (workspace_id, linked_transaction_id)
+    references transactions(workspace_id, id) on delete set null,
   -- amount and currency move together
   constraint ae_amount_pair_chk check (
     (amount is null) = (currency is null)
@@ -149,7 +149,7 @@ create index asset_events_transaction_idx on asset_events(linked_transaction_id)
 -- balance. `salvage_value` is the residual book value floor.
 create table asset_depreciation_schedules (
   id              uuid primary key,
-  tenant_id       uuid not null references tenants(id) on delete cascade,
+  workspace_id       uuid not null references workspaces(id) on delete cascade,
   asset_id        uuid not null unique,
   method          depreciation_method not null,
   start_date      date not null,
@@ -159,9 +159,9 @@ create table asset_depreciation_schedules (
   schedule_jsonb  jsonb,
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint ads_asset_fk foreign key (tenant_id, asset_id)
-    references assets(tenant_id, id) on delete cascade,
+  unique (workspace_id, id),
+  constraint ads_asset_fk foreign key (workspace_id, asset_id)
+    references assets(workspace_id, id) on delete cascade,
   check (end_date is null or end_date >= start_date),
   check (salvage_value is null or salvage_value >= 0),
   check (rate is null or (rate >= 0 and rate <= 1))
@@ -171,9 +171,9 @@ create trigger asset_depreciation_schedules_updated_at
   before update on asset_depreciation_schedules
   for each row execute function set_updated_at();
 
--- Retirement contribution limits: GLOBAL reference data. No tenant_id —
--- every tenant sees the same (country, year, pillar, amount) row. This
--- table is maintained by platform ops, not per-tenant.
+-- Retirement contribution limits: GLOBAL reference data. No workspace_id —
+-- every workspace sees the same (country, year, pillar, amount) row. This
+-- table is maintained by platform ops, not per-workspace.
 create table retirement_contribution_limits (
   id         uuid primary key,
   country    char(2) not null,
@@ -194,7 +194,7 @@ create index retirement_contribution_limits_country_year_idx
 -- The payment stream (below) materializes the per-period breakdown.
 create table mortgage_schedules (
   id                 uuid primary key,
-  tenant_id          uuid not null references tenants(id) on delete cascade,
+  workspace_id          uuid not null references workspaces(id) on delete cascade,
   account_id         uuid not null,
   original_principal numeric(28,8) not null,
   currency           money_currency not null,
@@ -203,10 +203,10 @@ create table mortgage_schedules (
   start_date         date not null,
   created_at         timestamptz not null default now(),
   updated_at         timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, account_id),
-  constraint ms_account_fk foreign key (tenant_id, account_id)
-    references accounts(tenant_id, id) on delete cascade,
+  unique (workspace_id, id),
+  unique (workspace_id, account_id),
+  constraint ms_account_fk foreign key (workspace_id, account_id)
+    references accounts(workspace_id, id) on delete cascade,
   check (original_principal > 0),
   check (interest_rate >= 0 and interest_rate <= 1),
   check (term_months > 0)
@@ -221,7 +221,7 @@ create trigger mortgage_schedules_updated_at before update on mortgage_schedules
 -- status transitions to 'paid' (biconditional with paid_at non-null).
 create table mortgage_payments (
   id                     uuid primary key,
-  tenant_id              uuid not null references tenants(id) on delete cascade,
+  workspace_id              uuid not null references workspaces(id) on delete cascade,
   mortgage_schedule_id   uuid not null,
   due_on                 date not null,
   principal_amount       numeric(28,8) not null,
@@ -232,12 +232,12 @@ create table mortgage_payments (
   paid_at                timestamptz,
   created_at             timestamptz not null default now(),
   updated_at             timestamptz not null default now(),
-  unique (tenant_id, id),
+  unique (workspace_id, id),
   unique (mortgage_schedule_id, due_on),
-  constraint mp_schedule_fk foreign key (tenant_id, mortgage_schedule_id)
-    references mortgage_schedules(tenant_id, id) on delete cascade,
-  constraint mp_transaction_fk foreign key (tenant_id, linked_transaction_id)
-    references transactions(tenant_id, id) on delete set null,
+  constraint mp_schedule_fk foreign key (workspace_id, mortgage_schedule_id)
+    references mortgage_schedules(workspace_id, id) on delete cascade,
+  constraint mp_transaction_fk foreign key (workspace_id, linked_transaction_id)
+    references transactions(workspace_id, id) on delete set null,
   check (principal_amount >= 0),
   check (interest_amount >= 0),
   -- paid status requires paid_at; other statuses forbid it
@@ -250,5 +250,5 @@ create trigger mortgage_payments_updated_at before update on mortgage_payments
   for each row execute function set_updated_at();
 
 create index mortgage_payments_schedule_due_idx on mortgage_payments(mortgage_schedule_id, due_on);
-create index mortgage_payments_status_idx on mortgage_payments(tenant_id, status) where status in ('upcoming', 'due');
+create index mortgage_payments_status_idx on mortgage_payments(workspace_id, status) where status in ('upcoming', 'due');
 create index mortgage_payments_transaction_idx on mortgage_payments(linked_transaction_id) where linked_transaction_id is not null;

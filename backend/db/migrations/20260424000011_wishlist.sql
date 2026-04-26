@@ -28,11 +28,11 @@ create type wishlist_price_source as enum ('manual', 'scraper');
 -- because early-stage wishes may lack a concrete price. `linked_goal_id`
 -- optionally ties the item to a savings goal (so progress toward the goal
 -- doubles as progress toward the purchase); set-null on goal delete so the
--- wish persists. Partial index on (tenant_id, priority desc) targets the
+-- wish persists. Partial index on (workspace_id, priority desc) targets the
 -- dominant UI query: "what do I still want, most important first?"
 create table wishlist_items (
   id                uuid primary key,
-  tenant_id         uuid not null references tenants(id) on delete cascade,
+  workspace_id         uuid not null references workspaces(id) on delete cascade,
   name              text not null,
   estimated_price   numeric(28,8),
   currency          money_currency not null,
@@ -44,9 +44,9 @@ create table wishlist_items (
   archived_at       timestamptz,
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint wi_goal_fk foreign key (tenant_id, linked_goal_id)
-    references goals(tenant_id, id) on delete set null,
+  unique (workspace_id, id),
+  constraint wi_goal_fk foreign key (workspace_id, linked_goal_id)
+    references goals(workspace_id, id) on delete set null,
   check (estimated_price is null or estimated_price >= 0)
 );
 
@@ -56,7 +56,7 @@ create trigger wishlist_items_updated_at before update on wishlist_items
 -- Partial indexes: the active-wishlist view is overwhelmingly "unarchived
 -- wanted items by priority", and the goal rollup needs a fast reverse
 -- lookup from goal -> linked wishlist items.
-create index wishlist_items_tenant_active_idx on wishlist_items(tenant_id, priority desc)
+create index wishlist_items_workspace_active_idx on wishlist_items(workspace_id, priority desc)
   where archived_at is null and status = 'wanted';
 create index wishlist_items_goal_idx on wishlist_items(linked_goal_id) where linked_goal_id is not null;
 
@@ -66,7 +66,7 @@ create index wishlist_items_goal_idx on wishlist_items(linked_goal_id) where lin
 -- No updated_at: history is immutable.
 create table wishlist_price_observations (
   id                  uuid primary key,
-  tenant_id           uuid not null references tenants(id) on delete cascade,
+  workspace_id           uuid not null references workspaces(id) on delete cascade,
   wishlist_item_id    uuid not null,
   observed_at         timestamptz not null,
   price               numeric(28,8) not null,
@@ -75,9 +75,9 @@ create table wishlist_price_observations (
   scraper_run_id      uuid,
   note                text,
   created_at          timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint wpo_item_fk foreign key (tenant_id, wishlist_item_id)
-    references wishlist_items(tenant_id, id) on delete cascade,
+  unique (workspace_id, id),
+  constraint wpo_item_fk foreign key (workspace_id, wishlist_item_id)
+    references wishlist_items(workspace_id, id) on delete cascade,
   check (price >= 0),
   -- scraper_run_id is set iff source='scraper'. Manual entries must not
   -- carry a run id (would imply scraper provenance); scraper entries must
@@ -98,11 +98,11 @@ create index wishlist_price_observations_item_time_idx
 -- nullable because items without an estimate have no variance to compute.
 -- Bare UNIQUE on wishlist_item_id enforces 1:1 (one purchase per item);
 -- re-buying requires a new wishlist row. Bare UNIQUE is cleaner than the
--- composite form — the composite FK already scopes the item to the tenant,
+-- composite form — the composite FK already scopes the item to the workspace,
 -- so a bare UNIQUE is sufficient and more explicit about the 1:1 intent.
 create table wishlist_purchase_links (
   id                  uuid primary key,
-  tenant_id           uuid not null references tenants(id) on delete cascade,
+  workspace_id           uuid not null references workspaces(id) on delete cascade,
   wishlist_item_id    uuid not null,
   transaction_id      uuid not null,
   purchased_at        date not null,
@@ -110,12 +110,12 @@ create table wishlist_purchase_links (
   currency            money_currency not null,
   variance            numeric(28,8),                  -- actual - estimated (null if no estimate)
   created_at          timestamptz not null default now(),
-  unique (tenant_id, id),
+  unique (workspace_id, id),
   unique (wishlist_item_id),                          -- 1:1 — one purchase per item
-  constraint wpl_item_fk foreign key (tenant_id, wishlist_item_id)
-    references wishlist_items(tenant_id, id) on delete cascade,
-  constraint wpl_txn_fk foreign key (tenant_id, transaction_id)
-    references transactions(tenant_id, id) on delete cascade,
+  constraint wpl_item_fk foreign key (workspace_id, wishlist_item_id)
+    references wishlist_items(workspace_id, id) on delete cascade,
+  constraint wpl_txn_fk foreign key (workspace_id, transaction_id)
+    references transactions(workspace_id, id) on delete cascade,
   check (actual_amount >= 0)
 );
 

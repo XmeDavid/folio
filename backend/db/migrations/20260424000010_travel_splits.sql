@@ -50,7 +50,7 @@ create type split_allocation_method as enum ('equal', 'fixed_amounts', 'percenta
 -- fully repaid (biconditional with settled_at).
 create type split_bill_state as enum ('open', 'settled');
 
--- Direction of a receivable from the tenant's perspective. `i_am_owed`
+-- Direction of a receivable from the workspace's perspective. `i_am_owed`
 -- means the counterparty owes the user; `i_owe` is the reverse.
 create type receivable_direction as enum ('i_am_owed', 'i_owe');
 
@@ -70,11 +70,11 @@ create type reimbursement_claim_status as enum ('draft', 'submitted', 'approved'
 
 -- People: free-text counterparties (friends, family, colleagues) who are
 -- NOT app users. Distinct from `users` which is the auth principal table.
--- Unique on (tenant_id, name) prevents duplicate Alices; archived_at is
+-- Unique on (workspace_id, name) prevents duplicate Alices; archived_at is
 -- the soft-delete marker so historical receivables keep their target.
 create table people (
   id           uuid primary key,
-  tenant_id    uuid not null references tenants(id) on delete cascade,
+  workspace_id    uuid not null references workspaces(id) on delete cascade,
   name         text not null,
   email        citext,
   phone        text,
@@ -82,15 +82,15 @@ create table people (
   archived_at  timestamptz,
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, name)
+  unique (workspace_id, id),
+  unique (workspace_id, name)
 );
 
 create trigger people_updated_at before update on people
   for each row execute function set_updated_at();
 
 -- Partial index: the UI mostly queries active (non-archived) people.
-create index people_tenant_active_idx on people(tenant_id) where archived_at is null;
+create index people_workspace_active_idx on people(workspace_id) where archived_at is null;
 
 -- Trips: the top-level travel record. `destinations` is a text[] so a
 -- single trip can span multiple cities without forcing a child table.
@@ -99,7 +99,7 @@ create index people_tenant_active_idx on people(tenant_id) where archived_at is 
 -- single-day trip is legitimate.
 create table trips (
   id               uuid primary key,
-  tenant_id        uuid not null references tenants(id) on delete cascade,
+  workspace_id        uuid not null references workspaces(id) on delete cascade,
   name             text not null,
   destinations     text[] not null default '{}',
   start_date       date not null,
@@ -110,7 +110,7 @@ create table trips (
   notes            text,
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now(),
-  unique (tenant_id, id),
+  unique (workspace_id, id),
   check (end_date >= start_date),
   check (overall_budget is null or overall_budget >= 0)
 );
@@ -118,15 +118,15 @@ create table trips (
 create trigger trips_updated_at before update on trips
   for each row execute function set_updated_at();
 
-create index trips_tenant_date_idx on trips(tenant_id, start_date desc);
-create index trips_tenant_status_idx on trips(tenant_id, status);
+create index trips_workspace_date_idx on trips(workspace_id, start_date desc);
+create index trips_workspace_status_idx on trips(workspace_id, status);
 
 -- Back-fill the deferred composite FK on cycle_plan_lines.trip_id. The
 -- column was declared in 006_planning.sql without a FK because trips did
 -- not yet exist. `on delete set null` preserves the plan line if the trip
 -- is deleted — the line becomes a plain flexible budget.
 alter table cycle_plan_lines add constraint cpl_trip_fk
-  foreign key (tenant_id, trip_id) references trips(tenant_id, id)
+  foreign key (workspace_id, trip_id) references trips(workspace_id, id)
   on delete set null;
 
 -- Trip budgets: per-category caps within a trip. Unique on
@@ -136,7 +136,7 @@ alter table cycle_plan_lines add constraint cpl_trip_fk
 -- `category='custom'` and a non-null custom_label.
 create table trip_budgets (
   id              uuid primary key,
-  tenant_id       uuid not null references tenants(id) on delete cascade,
+  workspace_id       uuid not null references workspaces(id) on delete cascade,
   trip_id         uuid not null,
   category        trip_category not null,
   custom_label    text,
@@ -144,7 +144,7 @@ create table trip_budgets (
   currency        money_currency not null,
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
-  unique (tenant_id, id),
+  unique (workspace_id, id),
   -- Per-trip uniqueness: one row per (trip, category, custom_label).
   -- NULLS NOT DISTINCT (Postgres 15+) is required so two rows with
   -- custom_label=NULL on the same (trip, category) collide. The default
@@ -152,8 +152,8 @@ create table trip_budgets (
   -- budgets (both `food` rows with NULL label would pass), defeating the
   -- intended "one budget per (trip, category)" invariant.
   unique nulls not distinct (trip_id, category, custom_label),
-  constraint tb_trip_fk foreign key (tenant_id, trip_id)
-    references trips(tenant_id, id) on delete cascade,
+  constraint tb_trip_fk foreign key (workspace_id, trip_id)
+    references trips(workspace_id, id) on delete cascade,
   check (budget_amount >= 0),
   -- custom_label required iff category='custom'
   constraint tb_custom_label_chk check (
@@ -173,18 +173,18 @@ create trigger trip_budgets_updated_at before update on trip_budgets
 -- the underlying `people.name`.
 create table trip_participants (
   id              uuid primary key,
-  tenant_id       uuid not null references tenants(id) on delete cascade,
+  workspace_id       uuid not null references workspaces(id) on delete cascade,
   trip_id         uuid not null,
   person_id       uuid,                            -- null when is_self
   is_self         bool not null default false,
   display_name    text not null,
   share_default   trip_participant_share_default not null default 'equal',
   created_at      timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint tp_trip_fk foreign key (tenant_id, trip_id)
-    references trips(tenant_id, id) on delete cascade,
-  constraint tp_person_fk foreign key (tenant_id, person_id)
-    references people(tenant_id, id) on delete cascade,
+  unique (workspace_id, id),
+  constraint tp_trip_fk foreign key (workspace_id, trip_id)
+    references trips(workspace_id, id) on delete cascade,
+  constraint tp_person_fk foreign key (workspace_id, person_id)
+    references people(workspace_id, id) on delete cascade,
   -- XOR: either is_self or person_id, not both, not neither
   constraint tp_self_or_person_chk check (
     (person_id is not null) <> is_self
@@ -209,15 +209,15 @@ create unique index trip_participants_person_idx
 create table trip_transaction_links (
   trip_id         uuid not null,
   transaction_id  uuid not null,
-  tenant_id       uuid not null references tenants(id) on delete cascade,
+  workspace_id       uuid not null references workspaces(id) on delete cascade,
   trip_category   trip_category not null,
   custom_label    text,
   created_at      timestamptz not null default now(),
   primary key (trip_id, transaction_id),
-  constraint ttl_trip_fk foreign key (tenant_id, trip_id)
-    references trips(tenant_id, id) on delete cascade,
-  constraint ttl_txn_fk foreign key (tenant_id, transaction_id)
-    references transactions(tenant_id, id) on delete cascade,
+  constraint ttl_trip_fk foreign key (workspace_id, trip_id)
+    references trips(workspace_id, id) on delete cascade,
+  constraint ttl_txn_fk foreign key (workspace_id, transaction_id)
+    references transactions(workspace_id, id) on delete cascade,
   constraint ttl_custom_label_chk check (
     (trip_category = 'custom' and custom_label is not null) or
     (trip_category <> 'custom' and custom_label is null)
@@ -236,7 +236,7 @@ create index trip_transaction_links_txn_idx on trip_transaction_links(transactio
 -- state='settled' and settled_at.
 create table split_bill_events (
   id                   uuid primary key,
-  tenant_id            uuid not null references tenants(id) on delete cascade,
+  workspace_id            uuid not null references workspaces(id) on delete cascade,
   transaction_id       uuid,                -- null if not yet linked to real txn
   trip_id              uuid,                -- null if standalone
   total_amount         numeric(28,8) not null,
@@ -247,11 +247,11 @@ create table split_bill_events (
   settled_at           timestamptz,
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint sbe_txn_fk foreign key (tenant_id, transaction_id)
-    references transactions(tenant_id, id) on delete set null,
-  constraint sbe_trip_fk foreign key (tenant_id, trip_id)
-    references trips(tenant_id, id) on delete set null,
+  unique (workspace_id, id),
+  constraint sbe_txn_fk foreign key (workspace_id, transaction_id)
+    references transactions(workspace_id, id) on delete set null,
+  constraint sbe_trip_fk foreign key (workspace_id, trip_id)
+    references trips(workspace_id, id) on delete set null,
   check (total_amount > 0),
   -- settled state requires settled_at
   constraint sbe_settled_chk check (
@@ -264,7 +264,7 @@ create trigger split_bill_events_updated_at before update on split_bill_events
 
 create index split_bill_events_txn_idx on split_bill_events(transaction_id) where transaction_id is not null;
 create index split_bill_events_trip_idx on split_bill_events(trip_id) where trip_id is not null;
-create index split_bill_events_state_idx on split_bill_events(tenant_id, state);
+create index split_bill_events_state_idx on split_bill_events(workspace_id, state);
 
 -- Split bill allocations: each participant's share of a split bill. XOR
 -- via sba_participant_or_person_chk — the allocation targets either a
@@ -273,7 +273,7 @@ create index split_bill_events_state_idx on split_bill_events(tenant_id, state);
 -- allocation_method='by_items' where each allocation pairs with a line.
 create table split_bill_allocations (
   id                        uuid primary key,
-  tenant_id                 uuid not null references tenants(id) on delete cascade,
+  workspace_id                 uuid not null references workspaces(id) on delete cascade,
   split_bill_event_id       uuid not null,
   participant_trip_id       uuid,                    -- trip_participants.id (trip scenario)
   person_id                 uuid,                    -- people.id (free-standing scenario)
@@ -282,15 +282,15 @@ create table split_bill_allocations (
   item_description          text,
   transaction_line_id       uuid,
   created_at                timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint sba_event_fk foreign key (tenant_id, split_bill_event_id)
-    references split_bill_events(tenant_id, id) on delete cascade,
-  constraint sba_participant_fk foreign key (tenant_id, participant_trip_id)
-    references trip_participants(tenant_id, id) on delete cascade,
-  constraint sba_person_fk foreign key (tenant_id, person_id)
-    references people(tenant_id, id) on delete cascade,
-  constraint sba_txn_line_fk foreign key (tenant_id, transaction_line_id)
-    references transaction_lines(tenant_id, id) on delete set null,
+  unique (workspace_id, id),
+  constraint sba_event_fk foreign key (workspace_id, split_bill_event_id)
+    references split_bill_events(workspace_id, id) on delete cascade,
+  constraint sba_participant_fk foreign key (workspace_id, participant_trip_id)
+    references trip_participants(workspace_id, id) on delete cascade,
+  constraint sba_person_fk foreign key (workspace_id, person_id)
+    references people(workspace_id, id) on delete cascade,
+  constraint sba_txn_line_fk foreign key (workspace_id, transaction_line_id)
+    references transaction_lines(workspace_id, id) on delete set null,
   check (amount_owed > 0),
   -- Exactly one of participant_trip_id / person_id
   constraint sba_participant_or_person_chk check (
@@ -311,7 +311,7 @@ create index split_bill_allocations_line_idx on split_bill_allocations(transacti
 -- reimbursement claim, or free-form). rcv_settled_chk enforces biconditional.
 create table receivables (
   id                       uuid primary key,
-  tenant_id                uuid not null references tenants(id) on delete cascade,
+  workspace_id                uuid not null references workspaces(id) on delete cascade,
   counterparty_person_id   uuid,
   counterparty_label       text not null,
   direction                receivable_direction not null,
@@ -325,9 +325,9 @@ create table receivables (
   settled_at               timestamptz,
   created_at               timestamptz not null default now(),
   updated_at               timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint rcv_person_fk foreign key (tenant_id, counterparty_person_id)
-    references people(tenant_id, id) on delete set null,
+  unique (workspace_id, id),
+  constraint rcv_person_fk foreign key (workspace_id, counterparty_person_id)
+    references people(workspace_id, id) on delete set null,
   check (amount > 0),
   -- settled status requires settled_at
   constraint rcv_settled_chk check (
@@ -340,7 +340,7 @@ create trigger receivables_updated_at before update on receivables
 
 -- Partial indexes: the UI asks "what's still outstanding?" (open +
 -- partially_settled) far more often than it asks for historical totals.
-create index receivables_tenant_open_idx on receivables(tenant_id, status) where status in ('open', 'partially_settled');
+create index receivables_workspace_open_idx on receivables(workspace_id, status) where status in ('open', 'partially_settled');
 create index receivables_person_idx on receivables(counterparty_person_id) where counterparty_person_id is not null;
 
 -- Settlements: partial/full repayments against a receivable. Append-only
@@ -350,7 +350,7 @@ create index receivables_person_idx on receivables(counterparty_person_id) where
 -- on sum(settlements.amount); that rollup is service-layer logic.
 create table settlements (
   id                       uuid primary key,
-  tenant_id                uuid not null references tenants(id) on delete cascade,
+  workspace_id                uuid not null references workspaces(id) on delete cascade,
   receivable_id            uuid not null,
   settling_transaction_id  uuid,
   amount                   numeric(28,8) not null,
@@ -358,11 +358,11 @@ create table settlements (
   settled_at               timestamptz not null default now(),
   note                     text,
   created_at               timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint settlements_receivable_fk foreign key (tenant_id, receivable_id)
-    references receivables(tenant_id, id) on delete cascade,
-  constraint settlements_txn_fk foreign key (tenant_id, settling_transaction_id)
-    references transactions(tenant_id, id) on delete set null,
+  unique (workspace_id, id),
+  constraint settlements_receivable_fk foreign key (workspace_id, receivable_id)
+    references receivables(workspace_id, id) on delete cascade,
+  constraint settlements_txn_fk foreign key (workspace_id, settling_transaction_id)
+    references transactions(workspace_id, id) on delete set null,
   check (amount > 0)
 );
 
@@ -378,7 +378,7 @@ create index settlements_txn_idx on settlements(settling_transaction_id) where s
 -- rejected).
 create table reimbursement_claims (
   id                          uuid primary key,
-  tenant_id                   uuid not null references tenants(id) on delete cascade,
+  workspace_id                   uuid not null references workspaces(id) on delete cascade,
   transaction_id              uuid not null,
   employer_or_counterparty    text not null,
   claim_status                reimbursement_claim_status not null default 'draft',
@@ -388,11 +388,11 @@ create table reimbursement_claims (
   notes                       text,
   created_at                  timestamptz not null default now(),
   updated_at                  timestamptz not null default now(),
-  unique (tenant_id, id),
-  constraint rc_txn_fk foreign key (tenant_id, transaction_id)
-    references transactions(tenant_id, id) on delete cascade,
-  constraint rc_paid_txn_fk foreign key (tenant_id, paid_transaction_id)
-    references transactions(tenant_id, id) on delete set null,
+  unique (workspace_id, id),
+  constraint rc_txn_fk foreign key (workspace_id, transaction_id)
+    references transactions(workspace_id, id) on delete cascade,
+  constraint rc_paid_txn_fk foreign key (workspace_id, paid_transaction_id)
+    references transactions(workspace_id, id) on delete set null,
   -- paid status requires paid_at AND paid_transaction_id
   constraint rc_paid_chk check (
     (claim_status = 'paid') = (paid_at is not null and paid_transaction_id is not null)
@@ -412,4 +412,4 @@ create trigger reimbursement_claims_updated_at before update on reimbursement_cl
   for each row execute function set_updated_at();
 
 create index reimbursement_claims_txn_idx on reimbursement_claims(transaction_id);
-create index reimbursement_claims_status_idx on reimbursement_claims(tenant_id, claim_status);
+create index reimbursement_claims_status_idx on reimbursement_claims(workspace_id, claim_status);

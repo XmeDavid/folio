@@ -1,27 +1,27 @@
 -- Folio v2 domain — FX rates and reporting (spec §5.13).
 -- The cross-cutting "valuation and exports" slice: a GLOBAL foreign-exchange
--- reference table (fx_rates, shared across tenants), a materialised net-worth
+-- reference table (fx_rates, shared across workspaces), a materialised net-worth
 -- cache (networth_snapshots), user-annotatable timeline markers (event_markers),
 -- asynchronous report export jobs (report_exports), and reusable export
 -- definitions (export_templates).
 --
 -- Shape rules threaded throughout:
---   * fx_rates is GLOBAL — no tenant_id. FX rates are public market data
---     and identical across tenants; scoping them would multiply storage and
---     complicate multi-tenant revaluation. Uniqueness is on the rate
+--   * fx_rates is GLOBAL — no workspace_id. FX rates are public market data
+--     and identical across workspaces; scoping them would multiply storage and
+--     complicate multi-workspace revaluation. Uniqueness is on the rate
 --     coordinate (base, quote, as_of, source) so the same pair can be
 --     carried from multiple providers (ECB + OXR) without collision.
---   * networth_snapshots is a cache: (tenant_id, as_of) is UNIQUE so at most
---     one snapshot per day per tenant. Recomputation overwrites by
+--   * networth_snapshots is a cache: (workspace_id, as_of) is UNIQUE so at most
+--     one snapshot per day per workspace. Recomputation overwrites by
 --     upsert-replace, not accumulate.
 --   * report_exports implements a state machine: queued -> running ->
 --     (ready | failed | expired). Three CHECK constraints enforce the
 --     invariants between status and the other nullable columns so no row
 --     can land in a self-inconsistent state. See the check comments below.
---   * Every tenant-scoped table carries unique(tenant_id, id) so composite
---     FKs from sibling tables can enforce tenant consistency.
+--   * Every workspace-scoped table carries unique(workspace_id, id) so composite
+--     FKs from sibling tables can enforce workspace consistency.
 --   * report_exports uses composite FKs for both user and attachment refs
---     so a report's file and requester must belong to the same tenant as
+--     so a report's file and requester must belong to the same workspace as
 --     the report itself.
 
 -- FX data provider. `ecb` = European Central Bank daily reference rates
@@ -53,7 +53,7 @@ create type report_export_status as enum (
   'queued', 'running', 'ready', 'failed', 'expired'
 );
 
--- FX rates: GLOBAL reference table (NO tenant_id). Stores a rate for
+-- FX rates: GLOBAL reference table (NO workspace_id). Stores a rate for
 -- converting `base_currency` -> `quote_currency` as observed `as_of` a date
 -- from `source`. rate is numeric(28,10) to preserve provider precision
 -- (ECB publishes 6 dp, OXR up to 8 dp; the extra headroom is future-proofing).
@@ -81,51 +81,51 @@ create table fx_rates (
 -- revaluation query, so the planner can walk the index forward.
 create index fx_rates_pair_asof_idx on fx_rates(base_currency, quote_currency, as_of desc);
 
--- Net-worth snapshots: materialised cache, one per (tenant, day). Computed
+-- Net-worth snapshots: materialised cache, one per (workspace, day). Computed
 -- by a background job (or on demand) from accounts + investments + assets
 -- valued against fx_rates at `as_of`. breakdown_jsonb carries the per-bucket
 -- detail (by account, by asset class, by currency, etc.) so the timeline UI
 -- can drill down without recomputing. total_value is in base_currency for
--- quick charting. UNIQUE (tenant_id, as_of) enforces the cache semantics:
+-- quick charting. UNIQUE (workspace_id, as_of) enforces the cache semantics:
 -- recomputation replaces, it doesn't append.
 create table networth_snapshots (
   id                uuid primary key,
-  tenant_id         uuid not null references tenants(id) on delete cascade,
+  workspace_id         uuid not null references workspaces(id) on delete cascade,
   as_of             date not null,
   total_value       numeric(28,8) not null,
-  -- base_currency is stored per snapshot on purpose: if the tenant ever changes
+  -- base_currency is stored per snapshot on purpose: if the workspace ever changes
   -- its base_currency, prior snapshots remain interpretable in the currency they
-  -- were computed under. Service layer ensures new snapshots use tenants.base_currency.
+  -- were computed under. Service layer ensures new snapshots use workspaces.base_currency.
   base_currency     money_currency not null,
   breakdown_jsonb   jsonb not null default '{}'::jsonb,
   computed_at       timestamptz not null default now(),
   created_at        timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, as_of)
+  unique (workspace_id, id),
+  unique (workspace_id, as_of)
 );
 
 -- Timeline query: "show my net worth over the last N days/months/years".
 -- as_of desc matches the chart's right-edge-latest convention.
-create index networth_snapshots_tenant_asof_idx on networth_snapshots(tenant_id, as_of desc);
+create index networth_snapshots_workspace_asof_idx on networth_snapshots(workspace_id, as_of desc);
 
 -- Event markers: annotations on the net-worth / cashflow timeline. `kind`
 -- distinguishes auto-detected anomalies from user pins. `label` is shown on
 -- the chart tooltip; `note` is the optional expanded description shown in a
--- side panel. No unique constraint on (tenant_id, as_of) — a single day can
+-- side panel. No unique constraint on (workspace_id, as_of) — a single day can
 -- carry multiple markers (e.g. auto-detected inflow + user annotation).
 create table event_markers (
   id          uuid primary key,
-  tenant_id   uuid not null references tenants(id) on delete cascade,
+  workspace_id   uuid not null references workspaces(id) on delete cascade,
   as_of       date not null,
   kind        event_marker_kind not null,
   label       text not null,
   note        text,
   created_at  timestamptz not null default now(),
-  unique (tenant_id, id)
+  unique (workspace_id, id)
 );
 
 -- Same query shape as networth_snapshots: load markers for a date window.
-create index event_markers_tenant_asof_idx on event_markers(tenant_id, as_of desc);
+create index event_markers_workspace_asof_idx on event_markers(workspace_id, as_of desc);
 
 -- Report exports: async job rows for file-generating reports. Clients poll
 -- status; when it reaches `ready`, file_attachment_id points to the
@@ -141,10 +141,10 @@ create index event_markers_tenant_asof_idx on event_markers(tenant_id, as_of des
 --     completed_at is populated. queued/running must not have completed_at.
 --   * re_failed_chk: status='failed' iff error is populated. Non-failed
 --     must not carry an error message.
--- Composite FKs to users and attachments keep tenant consistency.
+-- Composite FKs to users and attachments keep workspace consistency.
 create table report_exports (
   id                    uuid primary key,
-  tenant_id             uuid not null references tenants(id) on delete cascade,
+  workspace_id             uuid not null references workspaces(id) on delete cascade,
   requested_by_user_id  uuid not null,
   kind                  report_export_kind not null,
   params_jsonb          jsonb not null default '{}'::jsonb,
@@ -156,7 +156,7 @@ create table report_exports (
   error                 text,
   created_at            timestamptz not null default now(),
   updated_at            timestamptz not null default now(),
-  unique (tenant_id, id),
+  unique (workspace_id, id),
   constraint re_user_fk foreign key (requested_by_user_id)
     references users(id) on delete cascade,
   -- file_attachment_id uses on delete restrict (not set null) so that deleting
@@ -165,8 +165,8 @@ create table report_exports (
   -- The TTL worker is responsible for transitioning ready reports to expired
   -- (clearing file_attachment_id and setting completed_at) before purging the
   -- backing attachment.
-  constraint re_attachment_fk foreign key (tenant_id, file_attachment_id)
-    references attachments(tenant_id, id) on delete restrict,
+  constraint re_attachment_fk foreign key (workspace_id, file_attachment_id)
+    references attachments(workspace_id, id) on delete restrict,
   -- ready status requires file_attachment_id (and vice versa).
   constraint re_ready_chk check (
     (status = 'ready') = (file_attachment_id is not null)
@@ -187,11 +187,11 @@ create trigger report_exports_updated_at before update on report_exports
   for each row execute function set_updated_at();
 
 -- Primary list view: "my exports, newest first".
-create index report_exports_tenant_requested_idx on report_exports(tenant_id, requested_at desc);
+create index report_exports_workspace_requested_idx on report_exports(workspace_id, requested_at desc);
 -- Worker queue index: partial on in-flight statuses keeps it tight (most
--- rows are terminal). The worker polls (tenant_id, status) with status in
+-- rows are terminal). The worker polls (workspace_id, status) with status in
 -- queued/running and claims the oldest.
-create index report_exports_status_idx on report_exports(tenant_id, status) where status in ('queued', 'running');
+create index report_exports_status_idx on report_exports(workspace_id, status) where status in ('queued', 'running');
 -- FK-side index on file_attachment_id so attachment delete-restrict checks
 -- don't require a full scan. Partial on non-null to stay small.
 create index report_exports_file_idx on report_exports(file_attachment_id) where file_attachment_id is not null;
@@ -204,18 +204,18 @@ create index report_exports_expires_idx on report_exports(expires_at)
 -- Export templates: reusable named definitions, typically for
 -- kind='custom_template' (e.g. a user's preferred CSV column set or tax
 -- report layout). definition_jsonb is the template DSL (columns, filters,
--- grouping, formatting). UNIQUE (tenant_id, name) prevents duplicate names
--- per tenant.
+-- grouping, formatting). UNIQUE (workspace_id, name) prevents duplicate names
+-- per workspace.
 create table export_templates (
   id               uuid primary key,
-  tenant_id        uuid not null references tenants(id) on delete cascade,
+  workspace_id        uuid not null references workspaces(id) on delete cascade,
   name             text not null,
   kind             report_export_kind not null,
   definition_jsonb jsonb not null,
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now(),
-  unique (tenant_id, id),
-  unique (tenant_id, name),
+  unique (workspace_id, id),
+  unique (workspace_id, name),
   -- definition_jsonb is the template DSL root; it must be a JSON object (not
   -- an array or scalar) so downstream code can safely index into it by key.
   check (jsonb_typeof(definition_jsonb) = 'object')

@@ -1,5 +1,5 @@
 -- Folio v2 domain — identity, tenancy, auth, memberships.
--- Tenants own financial data; users authenticate and can belong to many tenants.
+-- Workspaces own financial data; users authenticate and can belong to many workspaces.
 
 create extension if not exists citext;
 
@@ -15,12 +15,12 @@ $$;
 create domain money_currency as varchar(10)
   check (value ~ '^[A-Z0-9]{3,10}$');
 
--- Shared: tenant_role enum. Owner and member are the only roles in v1.
-create type tenant_role as enum ('owner', 'member');
+-- Shared: workspace_role enum. Owner and member are the only roles in v1.
+create type workspace_role as enum ('owner', 'member');
 
--- Tenants: root of the financial data graph. Not tenant-scoped itself.
--- FKs to tenants always reference tenants(id); never composite.
-create table tenants (
+-- Workspaces: root of the financial data graph. Not workspace-scoped itself.
+-- FKs to workspaces always reference workspaces(id); never composite.
+create table workspaces (
   id                uuid primary key,
   name              text not null,
   slug              citext not null unique
@@ -34,14 +34,14 @@ create table tenants (
   updated_at        timestamptz not null default now()
 );
 
-create trigger tenants_updated_at before update on tenants
+create trigger workspaces_updated_at before update on workspaces
   for each row execute function set_updated_at();
 
-create index tenants_deleted_at_idx
-  on tenants (deleted_at)
+create index workspaces_deleted_at_idx
+  on workspaces (deleted_at)
   where deleted_at is not null;
 
--- Users: authenticate into zero or more tenants via tenant_memberships.
+-- Users: authenticate into zero or more workspaces via workspace_memberships.
 -- password_hash is NOT NULL; signup always sets it.
 create table users (
   id                 uuid primary key,
@@ -49,7 +49,7 @@ create table users (
   password_hash      text not null,
   display_name       text not null,
   email_verified_at  timestamptz,
-  last_tenant_id     uuid references tenants(id) on delete set null,
+  last_workspace_id     uuid references workspaces(id) on delete set null,
   is_admin           boolean not null default false,
   last_login_at      timestamptz,
   created_at         timestamptz not null default now(),
@@ -59,7 +59,7 @@ create table users (
 create trigger users_updated_at before update on users
   for each row execute function set_updated_at();
 
--- user_preferences: per-user UI settings. No tenant_id; reaches tenant via
+-- user_preferences: per-user UI settings. No workspace_id; reaches workspace via
 -- the user's active membership at read time.
 create table user_preferences (
   user_id           uuid primary key references users(id) on delete cascade,
@@ -74,35 +74,35 @@ create table user_preferences (
 create trigger user_preferences_updated_at before update on user_preferences
   for each row execute function set_updated_at();
 
--- tenant_memberships: a user can belong to many tenants with a role each.
--- Primary key (tenant_id, user_id) — a user cannot have two roles in one tenant.
-create table tenant_memberships (
-  tenant_id   uuid not null references tenants(id) on delete cascade,
+-- workspace_memberships: a user can belong to many workspaces with a role each.
+-- Primary key (workspace_id, user_id) — a user cannot have two roles in one workspace.
+create table workspace_memberships (
+  workspace_id   uuid not null references workspaces(id) on delete cascade,
   user_id     uuid not null references users(id)   on delete cascade,
-  role        tenant_role not null,
+  role        workspace_role not null,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now(),
-  primary key (tenant_id, user_id)
+  primary key (workspace_id, user_id)
 );
 
-create index tenant_memberships_user_id_idx
-  on tenant_memberships (user_id);
+create index workspace_memberships_user_id_idx
+  on workspace_memberships (user_id);
 
--- Partial index for the "does this tenant still have an owner?" check.
-create index tenant_memberships_owners
-  on tenant_memberships (tenant_id)
+-- Partial index for the "does this workspace still have an owner?" check.
+create index workspace_memberships_owners
+  on workspace_memberships (workspace_id)
   where role = 'owner';
 
-create trigger tenant_memberships_updated_at before update on tenant_memberships
+create trigger workspace_memberships_updated_at before update on workspace_memberships
   for each row execute function set_updated_at();
 
--- tenant_invites: pending invitations to join a tenant.
+-- workspace_invites: pending invitations to join a workspace.
 -- token_hash is sha256(plaintext); plaintext ships only in the email.
-create table tenant_invites (
+create table workspace_invites (
   id                  uuid primary key,
-  tenant_id           uuid not null references tenants(id) on delete cascade,
+  workspace_id           uuid not null references workspaces(id) on delete cascade,
   email               citext not null,
-  role                tenant_role not null,
+  role                workspace_role not null,
   token_hash          bytea not null unique,
   invited_by_user_id  uuid not null references users(id) on delete restrict,
   created_at          timestamptz not null default now(),
@@ -111,13 +111,13 @@ create table tenant_invites (
   revoked_at          timestamptz
 );
 
-create index tenant_invites_tenant_id_idx on tenant_invites (tenant_id);
-create index tenant_invites_pending_email_idx
-  on tenant_invites (email)
+create index workspace_invites_workspace_id_idx on workspace_invites (workspace_id);
+create index workspace_invites_pending_email_idx
+  on workspace_invites (email)
   where accepted_at is null and revoked_at is null;
 
-create index tenant_invites_invited_by_idx
-  on tenant_invites (invited_by_user_id);
+create index workspace_invites_invited_by_idx
+  on workspace_invites (invited_by_user_id);
 
 -- auth_tokens: unified single-use tokens for email verify / password reset /
 -- email change. Plan 3 populates this.
