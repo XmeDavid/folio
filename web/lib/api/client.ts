@@ -39,7 +39,7 @@ async function parseError(res: Response): Promise<ApiError> {
 
 async function request<T>(
   path: string,
-  init: RequestInit & { json?: unknown } = {},
+  init: RequestInit & { json?: unknown } = {}
 ): Promise<T> {
   const { json, headers, ...rest } = init;
   const mergedHeaders: Record<string, string> = {
@@ -107,23 +107,31 @@ export async function enrollTOTP(): Promise<TOTPSetup> {
   return request<TOTPSetup>("/api/v1/me/mfa/totp/enroll", { method: "POST" });
 }
 
-export async function confirmTOTP(code: string): Promise<{ recoveryCodes: string[] }> {
+export async function confirmTOTP(
+  code: string
+): Promise<{ recoveryCodes: string[] }> {
   return request<{ recoveryCodes: string[] }>("/api/v1/me/mfa/totp/confirm", {
     method: "POST",
     json: { code },
   });
 }
 
-export async function beginPasskeyEnrollment(): Promise<{ options: unknown; session: string }> {
-  return request<{ options: unknown; session: string }>("/api/v1/me/mfa/passkeys/begin", {
-    method: "POST",
-  });
+export async function beginPasskeyEnrollment(): Promise<{
+  options: unknown;
+  session: string;
+}> {
+  return request<{ options: unknown; session: string }>(
+    "/api/v1/me/mfa/passkeys/begin",
+    {
+      method: "POST",
+    }
+  );
 }
 
 export async function completePasskeyEnrollment(
   session: string,
   credential: unknown,
-  label = "Passkey",
+  label = "Passkey"
 ): Promise<void> {
   return request<void>("/api/v1/me/mfa/passkeys/complete", {
     method: "POST",
@@ -131,7 +139,9 @@ export async function completePasskeyEnrollment(
   });
 }
 
-export async function regenerateRecoveryCodes(): Promise<{ recoveryCodes: string[] }> {
+export async function regenerateRecoveryCodes(): Promise<{
+  recoveryCodes: string[];
+}> {
   return request<{ recoveryCodes: string[] }>("/api/v1/me/mfa/recovery-codes", {
     method: "POST",
   });
@@ -169,7 +179,7 @@ export type TenantRow = {
 
 export async function patchTenant(
   tenantId: string,
-  body: TenantPatchInput,
+  body: TenantPatchInput
 ): Promise<TenantRow> {
   return request<TenantRow>(`/api/v1/t/${tenantId}`, {
     method: "PATCH",
@@ -233,20 +243,17 @@ export async function getMembers(tenantId: string): Promise<MembersResponse> {
 export async function patchMember(
   tenantId: string,
   userId: string,
-  role: MemberRole,
+  role: MemberRole
 ): Promise<MemberWithUser> {
-  return request<MemberWithUser>(
-    `/api/v1/t/${tenantId}/members/${userId}`,
-    {
-      method: "PATCH",
-      json: { role },
-    },
-  );
+  return request<MemberWithUser>(`/api/v1/t/${tenantId}/members/${userId}`, {
+    method: "PATCH",
+    json: { role },
+  });
 }
 
 export async function removeMember(
   tenantId: string,
-  userId: string,
+  userId: string
 ): Promise<void> {
   return request<void>(`/api/v1/t/${tenantId}/members/${userId}`, {
     method: "DELETE",
@@ -260,7 +267,7 @@ export type InviteCreateInput = {
 
 export async function createInvite(
   tenantId: string,
-  body: InviteCreateInput,
+  body: InviteCreateInput
 ): Promise<PendingInvite> {
   return request<PendingInvite>(`/api/v1/t/${tenantId}/invites`, {
     method: "POST",
@@ -270,7 +277,7 @@ export async function createInvite(
 
 export async function revokeInvite(
   tenantId: string,
-  inviteId: string,
+  inviteId: string
 ): Promise<void> {
   return request<void>(`/api/v1/t/${tenantId}/invites/${inviteId}`, {
     method: "DELETE",
@@ -297,16 +304,16 @@ export type InviteAcceptResponse = {
 export async function previewInvite(token: string): Promise<InvitePreview> {
   return request<InvitePreview>(
     `/api/v1/auth/invites/${encodeURIComponent(token)}`,
-    { method: "GET" },
+    { method: "GET" }
   );
 }
 
 export async function acceptInvite(
-  token: string,
+  token: string
 ): Promise<InviteAcceptResponse> {
   return request<InviteAcceptResponse>(
     `/api/v1/auth/invites/${encodeURIComponent(token)}/accept`,
-    { method: "POST" },
+    { method: "POST" }
   );
 }
 
@@ -316,7 +323,7 @@ export async function acceptInvite(
 
 export async function fetchAccounts(
   tenantId: string,
-  opts: { includeArchived?: boolean } = {},
+  opts: { includeArchived?: boolean } = {}
 ): Promise<Account[]> {
   const qs = opts.includeArchived ? "?includeArchived=true" : "";
   return request<Account[]>(`/api/v1/t/${tenantId}/accounts${qs}`, {
@@ -326,7 +333,7 @@ export async function fetchAccounts(
 
 export async function createAccount(
   tenantId: string,
-  body: AccountCreateInput,
+  body: AccountCreateInput
 ): Promise<Account> {
   return request<Account>(`/api/v1/t/${tenantId}/accounts`, {
     method: "POST",
@@ -348,7 +355,7 @@ export type AccountPatchInput = {
 export async function updateAccount(
   tenantId: string,
   accountId: string,
-  body: AccountPatchInput,
+  body: AccountPatchInput
 ): Promise<Account> {
   return request<Account>(`/api/v1/t/${tenantId}/accounts/${accountId}`, {
     method: "PATCH",
@@ -358,7 +365,7 @@ export async function updateAccount(
 
 export async function deleteAccount(
   tenantId: string,
-  accountId: string,
+  accountId: string
 ): Promise<void> {
   return request<void>(`/api/v1/t/${tenantId}/accounts/${accountId}`, {
     method: "DELETE",
@@ -459,7 +466,7 @@ export type ImportApplyResult = {
 export async function previewAccountImport(
   tenantId: string,
   file: File,
-  accountId?: string,
+  accountId?: string
 ): Promise<ImportPreview> {
   const form = new FormData();
   form.append("file", file);
@@ -473,28 +480,28 @@ export async function applyAccountImport(
   tenantId: string,
   accountId: string,
   fileToken: string,
-  currency?: string,
+  currency?: string
 ): Promise<ImportApplyResult> {
   return request<ImportApplyResult>(
     `/api/v1/t/${tenantId}/accounts/${accountId}/imports`,
     {
       method: "POST",
       json: { fileToken, currency },
-    },
+    }
   );
 }
 
 export async function applyAccountImportPlan(
   tenantId: string,
   fileToken: string,
-  groups: ImportPlanGroup[],
+  groups: ImportPlanGroup[]
 ): Promise<ImportApplyResult> {
   return request<ImportApplyResult>(
     `/api/v1/t/${tenantId}/accounts/imports/apply-plan`,
     {
       method: "POST",
       json: { fileToken, groups },
-    },
+    }
   );
 }
 
@@ -507,6 +514,7 @@ type TransactionsQuery = {
   from?: string;
   to?: string;
   status?: TransactionStatus;
+  uncategorized?: boolean;
   limit?: number;
 };
 
@@ -522,21 +530,130 @@ function buildQuery(q?: Record<string, unknown>): string {
 
 export async function fetchTransactions(
   tenantId: string,
-  query: TransactionsQuery = {},
+  query: TransactionsQuery = {}
 ): Promise<Transaction[]> {
   return request<Transaction[]>(
     `/api/v1/t/${tenantId}/transactions${buildQuery(query)}`,
-    { method: "GET" },
+    { method: "GET" }
   );
 }
 
 export async function createTransaction(
   tenantId: string,
-  body: TransactionCreateInput,
+  body: TransactionCreateInput
 ): Promise<Transaction> {
   return request<Transaction>(`/api/v1/t/${tenantId}/transactions`, {
     method: "POST",
     json: body,
+  });
+}
+
+export type TransactionUpdateInput =
+  components["schemas"]["TransactionUpdateInput"];
+
+export async function fetchTransaction(
+  tenantId: string,
+  transactionId: string
+): Promise<Transaction> {
+  return request<Transaction>(
+    `/api/v1/t/${tenantId}/transactions/${transactionId}`,
+    { method: "GET" }
+  );
+}
+
+export async function updateTransaction(
+  tenantId: string,
+  transactionId: string,
+  body: TransactionUpdateInput
+): Promise<Transaction> {
+  return request<Transaction>(
+    `/api/v1/t/${tenantId}/transactions/${transactionId}`,
+    {
+      method: "PATCH",
+      json: body,
+    }
+  );
+}
+
+export async function deleteTransaction(
+  tenantId: string,
+  transactionId: string
+): Promise<void> {
+  return request<void>(`/api/v1/t/${tenantId}/transactions/${transactionId}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Classification
+// ---------------------------------------------------------------------------
+
+export type Category = {
+  id: string;
+  tenantId: string;
+  parentId?: string | null;
+  name: string;
+  color?: string | null;
+  sortOrder: number;
+  archivedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CategoryCreateInput = {
+  parentId?: string | null;
+  name: string;
+  color?: string | null;
+  sortOrder?: number;
+};
+
+export type CategoryPatchInput = {
+  parentId?: string | null;
+  name?: string;
+  color?: string | null;
+  sortOrder?: number;
+  archived?: boolean;
+};
+
+export async function fetchCategories(
+  tenantId: string,
+  opts: { includeArchived?: boolean } = {}
+): Promise<Category[]> {
+  return request<Category[]>(
+    `/api/v1/t/${tenantId}/categories${buildQuery({
+      includeArchived: opts.includeArchived,
+    })}`,
+    { method: "GET" }
+  );
+}
+
+export async function createCategory(
+  tenantId: string,
+  body: CategoryCreateInput
+): Promise<Category> {
+  return request<Category>(`/api/v1/t/${tenantId}/categories`, {
+    method: "POST",
+    json: body,
+  });
+}
+
+export async function updateCategory(
+  tenantId: string,
+  categoryId: string,
+  body: CategoryPatchInput
+): Promise<Category> {
+  return request<Category>(`/api/v1/t/${tenantId}/categories/${categoryId}`, {
+    method: "PATCH",
+    json: body,
+  });
+}
+
+export async function archiveCategory(
+  tenantId: string,
+  categoryId: string
+): Promise<void> {
+  return request<void>(`/api/v1/t/${tenantId}/categories/${categoryId}`, {
+    method: "DELETE",
   });
 }
 

@@ -9,12 +9,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { EmptyState, ErrorBanner, LoadingText } from "@/components/app/empty";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   fetchAccounts,
   fetchTransactions,
@@ -24,6 +19,7 @@ import {
 import { useCurrentTenant } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
 import { addDecimalStrings } from "@/lib/decimal";
+import { convertAmount, fetchLatestFxRates, type FxRate } from "@/lib/fx";
 
 export default function TenantDashboardPage({
   params,
@@ -45,13 +41,35 @@ export default function TenantDashboardPage({
     enabled: !!tenantId,
   });
 
-  if (!tenant) return null;
-
-  const locale = tenant.locale;
+  const locale = tenant?.locale;
   const accountRows = accounts.data ?? [];
   const transactionRows = transactions.data ?? [];
-  const balances = balanceByCurrency(accountRows);
+  const baseCurrency = tenant?.baseCurrency ?? "CHF";
+  const networthAccounts = accountRows.filter(
+    (account) => account.includeInNetworth
+  );
+  const balances = balanceByCurrency(networthAccounts);
+  const networthCurrencies = [
+    ...new Set(
+      networthAccounts.map((account) => account.currency.toUpperCase())
+    ),
+  ].sort();
+  const fxRates = useQuery({
+    queryKey: ["fx-rates", baseCurrency, networthCurrencies],
+    queryFn: () => fetchLatestFxRates(networthCurrencies, baseCurrency),
+    enabled:
+      !!tenantId &&
+      networthCurrencies.length > 0 &&
+      networthCurrencies.some((currency) => currency !== baseCurrency),
+    staleTime: 1000 * 60 * 60 * 6,
+  });
+  const networth = netWorthInBase(
+    networthAccounts,
+    baseCurrency,
+    fxRates.data ?? {}
+  );
   const uncategorized = transactionRows.filter((t) => !t.categoryId).length;
+  if (!tenant) return null;
   const basePath = `/t/${tenant.slug}`;
 
   return (
@@ -59,7 +77,7 @@ export default function TenantDashboardPage({
       <PageHeader
         eyebrow="Workspace"
         title={tenant.name}
-        description={`Base currency ${tenant.baseCurrency}. Current cycle anchors on day ${tenant.cycleAnchorDay}.`}
+        description={`Base currency ${baseCurrency}. Current cycle anchors on day ${tenant.cycleAnchorDay}.`}
         actions={
           <div className="flex flex-wrap gap-2">
             <Button asChild variant="secondary">
@@ -85,7 +103,27 @@ export default function TenantDashboardPage({
         />
       ) : null}
 
-      <section className="grid gap-4 md:grid-cols-3">
+      <section className="grid gap-4 md:grid-cols-4">
+        <MetricCard
+          icon={<Banknote className="h-4 w-4" />}
+          label="Net worth"
+          value={
+            accounts.isLoading || fxRates.isLoading
+              ? "..."
+              : networthAccounts.length === 0
+                ? "-"
+                : networth.missingCurrencies.length > 0 || fxRates.isError
+                  ? "Unavailable"
+                  : formatAmount(networth.total, baseCurrency, locale)
+          }
+          detail={
+            fxRates.isError
+              ? "FX rates unavailable"
+              : networth.missingCurrencies.length > 0
+                ? `Missing ${networth.missingCurrencies.join(", ")}`
+                : "Converted to base currency"
+          }
+        />
         <MetricCard
           icon={<Banknote className="h-4 w-4" />}
           label="Accounts"
@@ -112,7 +150,7 @@ export default function TenantDashboardPage({
           action={
             <Link
               href={`${basePath}/transactions` as Route}
-              className="text-[12px] font-medium text-accent hover:underline"
+              className="text-accent text-[12px] font-medium hover:underline"
             >
               Review
             </Link>
@@ -123,7 +161,7 @@ export default function TenantDashboardPage({
       <section className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <Card>
           <CardHeader className="flex-row items-center justify-between">
-            <CardTitle>Total balance</CardTitle>
+            <CardTitle>Net worth</CardTitle>
             <Button asChild variant="ghost" size="sm">
               <Link href={`${basePath}/accounts` as Route}>
                 Accounts
@@ -135,25 +173,50 @@ export default function TenantDashboardPage({
             {accounts.isLoading ? (
               <LoadingText />
             ) : balances.length > 0 ? (
-              <div className="flex flex-col divide-y divide-border">
-                {balances.map(([currency, amount]) => (
-                  <div
-                    key={currency}
-                    className="flex items-center justify-between py-3"
-                  >
-                    <span className="text-[13px] text-fg-muted">
-                      {currency.toUpperCase()}
-                    </span>
-                    <span className="tabular text-[18px] font-medium">
-                      {formatAmount(amount, currency, locale)}
-                    </span>
+              <div className="flex flex-col gap-5">
+                <div>
+                  <div className="text-fg-muted text-[12px] font-medium">
+                    Workspace total
                   </div>
-                ))}
+                  <div className="tabular mt-1 text-[30px] leading-tight font-normal">
+                    {fxRates.isError || networth.missingCurrencies.length > 0
+                      ? "-"
+                      : formatAmount(networth.total, baseCurrency, locale)}
+                  </div>
+                  <div className="text-fg-faint mt-1 text-[12px]">
+                    {fxRates.data && Object.values(fxRates.data).length > 0
+                      ? `Latest FX from Frankfurter, dated ${latestFxDate(fxRates.data)}`
+                      : `All net-worth accounts are already in ${baseCurrency}`}
+                  </div>
+                </div>
+                <div className="divide-border flex flex-col divide-y">
+                  {balances.map(([currency, amount]) => (
+                    <div
+                      key={currency}
+                      className="flex items-center justify-between py-3"
+                    >
+                      <span className="text-fg-muted text-[13px]">
+                        {currency.toUpperCase()}
+                      </span>
+                      <span className="tabular text-[18px] font-medium">
+                        {formatAmount(amount, currency, locale)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : (
               <EmptyState
-                title="No accounts yet"
-                description="Create the first account to start tracking balances."
+                title={
+                  accountRows.length > 0
+                    ? "No net-worth accounts"
+                    : "No accounts yet"
+                }
+                description={
+                  accountRows.length > 0
+                    ? "Turn on net-worth inclusion for at least one account."
+                    : "Create the first account to start tracking balances."
+                }
                 action={
                   <Button asChild>
                     <Link href={`${basePath}/accounts` as Route}>
@@ -230,14 +293,14 @@ function MetricCard({
     <Card>
       <CardContent className="flex items-start justify-between gap-4 pt-5">
         <div className="flex min-w-0 flex-col gap-1">
-          <div className="flex items-center gap-2 text-[12px] font-medium text-fg-muted">
+          <div className="text-fg-muted flex items-center gap-2 text-[12px] font-medium">
             {icon}
             {label}
           </div>
           <div className="tabular text-[28px] leading-tight font-normal">
             {value}
           </div>
-          <div className="text-[12px] text-fg-faint">{detail}</div>
+          <div className="text-fg-faint text-[12px]">{detail}</div>
         </div>
         {action ? <div className="shrink-0">{action}</div> : null}
       </CardContent>
@@ -256,32 +319,32 @@ function RecentTransactions({
 }) {
   const accountById = new Map(accounts.map((a) => [a.id, a]));
   return (
-    <ul className="divide-y divide-border">
+    <ul className="divide-border divide-y">
       {transactions.map((t) => {
         const account = accountById.get(t.accountId);
         return (
           <li
             key={t.id}
-            className="grid grid-cols-[1fr_auto] gap-3 px-5 py-3 transition-colors hover:bg-surface-subtle"
+            className="hover:bg-surface-subtle grid grid-cols-[1fr_auto] gap-3 px-5 py-3 transition-colors"
           >
             <div className="min-w-0">
               <div className="truncate text-[14px] font-medium">
                 {t.description ?? t.counterpartyRaw ?? "Untitled transaction"}
               </div>
-              <div className="flex flex-wrap items-center gap-2 text-[12px] text-fg-muted">
+              <div className="text-fg-muted flex flex-wrap items-center gap-2 text-[12px]">
                 <span>{formatDate(t.bookedAt, locale)}</span>
                 <span>·</span>
                 <span className="truncate">
                   {account ? account.name : t.accountId.slice(0, 8)}
                 </span>
-                {!t.categoryId ? <Badge variant="amber">Uncategorized</Badge> : null}
+                {!t.categoryId ? (
+                  <Badge variant="amber">Uncategorized</Badge>
+                ) : null}
               </div>
             </div>
             <div
               className={`tabular text-right text-[14px] font-medium ${
-                t.amount.startsWith("-")
-                  ? "text-fg"
-                  : "text-success"
+                t.amount.startsWith("-") ? "text-fg" : "text-success"
               }`}
             >
               {formatAmount(t.amount, t.currency, locale)}
@@ -303,4 +366,34 @@ function balanceByCurrency(accounts: Account[]): [string, string][] {
     );
   }
   return [...balances.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+function netWorthInBase(
+  accounts: Account[],
+  baseCurrency: string,
+  rates: Record<string, FxRate>
+): { total: string; missingCurrencies: string[] } {
+  let total = "0";
+  const missing = new Set<string>();
+  for (const account of accounts) {
+    const converted = convertAmount(
+      account.balance,
+      account.currency,
+      baseCurrency,
+      rates
+    );
+    if (converted == null) {
+      missing.add(account.currency.toUpperCase());
+      continue;
+    }
+    total = addDecimalStrings(total, converted);
+  }
+  return { total, missingCurrencies: [...missing].sort() };
+}
+
+function latestFxDate(rates: Record<string, FxRate>): string {
+  const dates = Object.values(rates)
+    .map((rate) => rate.date)
+    .sort();
+  return dates[dates.length - 1] ?? "latest";
 }

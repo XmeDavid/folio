@@ -30,3 +30,9 @@ export function addDecimalStrings(a: string, b: string): string {
     right.units * 10n ** BigInt(scale - right.scale);
   return formatDecimal(total, scale);
 }
+
+export function multiplyDecimalStrings(a: string, b: string): string {
+  const left = parseDecimal(a);
+  const right = parseDecimal(b);
+  return formatDecimal(left.units * right.units, left.scale + right.scale);
+}
