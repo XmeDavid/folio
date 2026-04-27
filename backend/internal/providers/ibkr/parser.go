@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 
@@ -25,6 +26,12 @@ import (
 
 	"github.com/xmedavid/folio/backend/internal/investments/importevent"
 )
+
+// symbolFromDividendDesc captures the leading "TICKER(ISIN) ..." that IBKR
+// uses on dividend / withholding-tax descriptions. Group 1 is the symbol,
+// group 2 the optional ISIN.
+var symbolFromDividendDesc = regexp.MustCompile(`^\s*([A-Z][A-Z0-9.]*)\(([A-Z]{2}[A-Z0-9]{9}\d)?\)`)
+var perShareFromDividendDesc = regexp.MustCompile(`(?i)([A-Z]{3})\s+([0-9]+(?:\.[0-9]+)?)\s+per\s+share`)
 
 // Format identifies the detected input shape.
 type Format string
@@ -97,6 +104,15 @@ func parseJSON(content []byte) (*ParseResult, error) {
 	return &ParseResult{BaseCurrency: currency, Format: FormatJSON, Events: out}, nil
 }
 
+// dividendKey groups dividend rows with their matching withholding-tax row.
+// IBKR emits both in separate sections but with identical (date, symbol,
+// currency) triples, so this composite is enough to pair them.
+type dividendKey struct {
+	Date     string
+	Symbol   string
+	Currency string
+}
+
 func parseActivityCSV(content []byte) (*ParseResult, error) {
 	r := csv.NewReader(strings.NewReader(string(content)))
 	r.FieldsPerRecord = -1 // IBKR rows have inconsistent widths
@@ -104,6 +120,7 @@ func parseActivityCSV(content []byte) (*ParseResult, error) {
 
 	baseCurrency := "USD"
 	out := make([]importevent.Event, 0, 64)
+	dividends := make(map[dividendKey]*importevent.Event)
 
 	for {
 		row, err := r.Read()
@@ -167,9 +184,110 @@ func parseActivityCSV(content []byte) (*ParseResult, error) {
 				Fee:       decimal.NewFromFloat(absFloat(commFee)),
 				Currency:  currency,
 			})
+			continue
+		}
+
+		// "Dividends,Data,USD,2025-12-15,GOOGL(US02079K3059) Cash Dividend ...,0.21"
+		if section == "Dividends" && rowType == "Data" && len(row) >= 6 {
+			currency, dateRaw, desc, amount := strings.ToUpper(strings.TrimSpace(row[2])), row[3], row[4], parseFloat(row[5])
+			if dateRaw == "" || strings.HasPrefix(strings.ToLower(desc), "total") {
+				continue
+			}
+			symbol, isin := dividendSymbolFromDesc(desc)
+			if symbol == "" {
+				continue
+			}
+			d, err := time.Parse("2006-01-02", strings.TrimSpace(dateRaw))
+			if err != nil {
+				continue
+			}
+			key := dividendKey{Date: dateRaw, Symbol: symbol, Currency: currency}
+			ev := dividends[key]
+			if ev == nil {
+				ev = &importevent.Event{
+					Kind:     importevent.Dividend,
+					Symbol:   symbol,
+					ISIN:     isin,
+					Date:     d,
+					Currency: currency,
+				}
+				dividends[key] = ev
+			}
+			ev.AmountTotal = ev.AmountTotal.Add(decimal.NewFromFloat(absFloat(amount)))
+			ev.AmountPerUnit = perShareFromDesc(desc)
+			continue
+		}
+
+		// "Withholding Tax,Data,USD,2025-12-15,GOOGL(...) - US Tax,-0.03,"
+		if section == "Withholding Tax" && rowType == "Data" && len(row) >= 6 {
+			currency, dateRaw, desc, amount := strings.ToUpper(strings.TrimSpace(row[2])), row[3], row[4], parseFloat(row[5])
+			if dateRaw == "" || strings.HasPrefix(strings.ToLower(desc), "total") {
+				continue
+			}
+			symbol, _ := dividendSymbolFromDesc(desc)
+			if symbol == "" {
+				continue
+			}
+			key := dividendKey{Date: dateRaw, Symbol: symbol, Currency: currency}
+			ev := dividends[key]
+			if ev == nil {
+				// Tax row arrived before the dividend; create a stub so the
+				// pairing still happens when the dividend row lands later.
+				d, err := time.Parse("2006-01-02", strings.TrimSpace(dateRaw))
+				if err != nil {
+					continue
+				}
+				ev = &importevent.Event{
+					Kind:     importevent.Dividend,
+					Symbol:   symbol,
+					Date:     d,
+					Currency: currency,
+				}
+				dividends[key] = ev
+			}
+			ev.TaxWithheld = ev.TaxWithheld.Add(decimal.NewFromFloat(absFloat(amount)))
+			continue
 		}
 	}
+
+	for _, ev := range dividends {
+		// Cap tax_withheld at total_amount; the schema check enforces it.
+		if ev.TaxWithheld.GreaterThan(ev.AmountTotal) {
+			ev.TaxWithheld = ev.AmountTotal
+		}
+		out = append(out, *ev)
+	}
+
 	return &ParseResult{BaseCurrency: baseCurrency, Format: FormatActivityCSV, Events: out}, nil
+}
+
+// dividendSymbolFromDesc extracts (symbol, isin) from an IBKR dividend or
+// withholding-tax description. ISIN may be empty on legacy rows.
+func dividendSymbolFromDesc(desc string) (string, string) {
+	m := symbolFromDividendDesc.FindStringSubmatch(desc)
+	if len(m) < 2 {
+		return "", ""
+	}
+	isin := ""
+	if len(m) >= 3 {
+		isin = m[2]
+	}
+	return strings.ToUpper(m[1]), isin
+}
+
+// perShareFromDesc extracts the "USD 0.21 per Share" amount from a dividend
+// description, returning Zero when not present (some Payment-in-Lieu rows
+// don't carry it).
+func perShareFromDesc(desc string) decimal.Decimal {
+	m := perShareFromDividendDesc.FindStringSubmatch(desc)
+	if len(m) < 3 {
+		return decimal.Zero
+	}
+	d, err := decimal.NewFromString(m[2])
+	if err != nil {
+		return decimal.Zero
+	}
+	return d
 }
 
 func parseIBKRDateTime(raw string) (time.Time, error) {

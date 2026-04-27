@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/money"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
@@ -32,40 +33,44 @@ func NewService(pool *pgxpool.Pool) *Service {
 // Me returns the user + every workspace they belong to, with their role per
 // workspace. Soft-deleted workspaces are excluded.
 func (s *Service) Me(ctx context.Context, userID uuid.UUID) (User, []WorkspaceWithRole, error) {
-	var u User
-	err := s.pool.QueryRow(ctx, `
-		select id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at
-		from users
-		where id = $1
-	`, userID).Scan(&u.ID, &u.Email, &u.DisplayName, &u.EmailVerifiedAt, &u.IsAdmin, &u.LastWorkspaceID, &u.CreatedAt)
+	q := dbq.New(s.pool)
+	row, err := q.GetUserByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return u, nil, httpx.NewNotFoundError("user")
+			return User{}, nil, httpx.NewNotFoundError("user")
 		}
-		return u, nil, fmt.Errorf("select user: %w", err)
+		return User{}, nil, fmt.Errorf("select user: %w", err)
 	}
-	rows, err := s.pool.Query(ctx, `
-		select t.id, t.name, t.slug, t.base_currency, t.cycle_anchor_day, t.locale, t.timezone, t.deleted_at, t.created_at, m.role
-		from workspace_memberships m
-		join workspaces t on t.id = m.workspace_id
-		where m.user_id = $1 and t.deleted_at is null
-		order by t.name
-	`, userID)
+	u := User{
+		ID:              row.ID,
+		Email:           row.Email,
+		DisplayName:     row.DisplayName,
+		EmailVerifiedAt: row.EmailVerifiedAt,
+		IsAdmin:         row.IsAdmin,
+		LastWorkspaceID: row.LastWorkspaceID,
+		CreatedAt:       row.CreatedAt,
+	}
+
+	rows, err := q.ListWorkspacesWithRoleByUser(ctx, userID)
 	if err != nil {
 		return u, nil, fmt.Errorf("list memberships: %w", err)
 	}
-	defer rows.Close()
 	var workspaces []WorkspaceWithRole
-	for rows.Next() {
-		var tr WorkspaceWithRole
-		if err := rows.Scan(&tr.ID, &tr.Name, &tr.Slug, &tr.BaseCurrency, &tr.CycleAnchorDay,
-			&tr.Locale, &tr.Timezone, &tr.DeletedAt, &tr.CreatedAt, &tr.Role); err != nil {
-			return u, nil, fmt.Errorf("scan membership: %w", err)
-		}
-		workspaces = append(workspaces, tr)
-	}
-	if rows.Err() != nil {
-		return u, nil, rows.Err()
+	for _, r := range rows {
+		workspaces = append(workspaces, WorkspaceWithRole{
+			Workspace: Workspace{
+				ID:             r.ID,
+				Name:           r.Name,
+				Slug:           r.Slug,
+				BaseCurrency:   r.BaseCurrency,
+				CycleAnchorDay: int(r.CycleAnchorDay),
+				Locale:         r.Locale,
+				Timezone:       r.Timezone,
+				DeletedAt:      r.DeletedAt,
+				CreatedAt:      r.CreatedAt,
+			},
+			Role: Role(r.Role),
+		})
 	}
 	return u, workspaces, nil
 }
@@ -139,56 +144,40 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID uuid.UUID, raw Cre
 // AND revoked_at IS NULL AND expires_at > now().
 func (s *Service) ListMembers(ctx context.Context, workspaceID uuid.UUID) (*MembersResponse, error) {
 	out := &MembersResponse{Members: []MemberWithUser{}, PendingInvites: []PendingInvite{}}
+	q := dbq.New(s.pool)
 
-	rows, err := s.pool.Query(ctx, `
-		select m.workspace_id, m.user_id, m.role::text, m.created_at,
-		       u.email, u.display_name
-		from workspace_memberships m
-		join users u on u.id = m.user_id
-		where m.workspace_id = $1
-		order by m.created_at
-	`, workspaceID)
+	mRows, err := q.ListMembersWithUser(ctx, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list memberships: %w", err)
 	}
-	for rows.Next() {
-		var m MemberWithUser
-		var role string
-		if err := rows.Scan(&m.WorkspaceID, &m.UserID, &role, &m.CreatedAt, &m.Email, &m.DisplayName); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		m.Role = Role(role)
-		out.Members = append(out.Members, m)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
+	for _, r := range mRows {
+		out.Members = append(out.Members, MemberWithUser{
+			Membership: Membership{
+				WorkspaceID: r.WorkspaceID,
+				UserID:      r.UserID,
+				Role:        Role(r.Role),
+				CreatedAt:   r.CreatedAt,
+			},
+			Email:       r.Email,
+			DisplayName: r.DisplayName,
+		})
 	}
 
-	iRows, err := s.pool.Query(ctx, `
-		select id, email, role::text, invited_by_user_id, created_at, expires_at
-		from workspace_invites
-		where workspace_id = $1
-		  and accepted_at is null
-		  and revoked_at is null
-		  and expires_at > now()
-		order by created_at desc
-	`, workspaceID)
+	iRows, err := q.ListPendingInvites(ctx, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list invites: %w", err)
 	}
-	defer iRows.Close()
-	for iRows.Next() {
-		var inv PendingInvite
-		var role string
-		if err := iRows.Scan(&inv.ID, &inv.Email, &role, &inv.InvitedBy, &inv.InvitedAt, &inv.ExpiresAt); err != nil {
-			return nil, err
-		}
-		inv.Role = Role(role)
-		out.PendingInvites = append(out.PendingInvites, inv)
+	for _, r := range iRows {
+		out.PendingInvites = append(out.PendingInvites, PendingInvite{
+			ID:        r.ID,
+			Email:     r.Email,
+			Role:      Role(r.Role),
+			InvitedBy: r.InvitedByUserID,
+			InvitedAt: r.CreatedAt,
+			ExpiresAt: r.ExpiresAt,
+		})
 	}
-	return out, iRows.Err()
+	return out, nil
 }
 
 // UpdateWorkspaceInput is the PATCH body for workspace settings. Pointer fields
@@ -254,26 +243,32 @@ func (in UpdateWorkspaceInput) normalize() (UpdateWorkspaceInput, error) {
 
 // GetWorkspace returns a workspace by id, skipping soft-deleted rows.
 func (s *Service) GetWorkspace(ctx context.Context, workspaceID uuid.UUID) (*Workspace, error) {
-	var t Workspace
-	err := s.pool.QueryRow(ctx, `
-		select id, name, slug, base_currency, cycle_anchor_day, locale, timezone,
-		       deleted_at, created_at
-		from workspaces where id = $1 and deleted_at is null
-	`, workspaceID).Scan(
-		&t.ID, &t.Name, &t.Slug, &t.BaseCurrency, &t.CycleAnchorDay,
-		&t.Locale, &t.Timezone, &t.DeletedAt, &t.CreatedAt,
-	)
+	row, err := dbq.New(s.pool).GetWorkspaceByID(ctx, workspaceID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("workspace")
 		}
 		return nil, err
 	}
-	return &t, nil
+	t := &Workspace{
+		ID:             row.ID,
+		Name:           row.Name,
+		Slug:           row.Slug,
+		BaseCurrency:   row.BaseCurrency,
+		CycleAnchorDay: int(row.CycleAnchorDay),
+		Locale:         row.Locale,
+		Timezone:       row.Timezone,
+		DeletedAt:      row.DeletedAt,
+		CreatedAt:      row.CreatedAt,
+	}
+	return t, nil
 }
 
 // UpdateWorkspace applies the PATCH and returns the updated workspace. Soft-deleted
 // workspaces are not updatable — restore first.
+//
+// NOTE: This method uses dynamic SQL (conditional SET clauses) which cannot be
+// expressed as a single sqlc query. The raw pool.QueryRow call is intentional.
 func (s *Service) UpdateWorkspace(ctx context.Context, workspaceID uuid.UUID, raw UpdateWorkspaceInput) (*Workspace, error) {
 	in, err := raw.normalize()
 	if err != nil {
@@ -333,12 +328,11 @@ func (s *Service) UpdateWorkspace(ctx context.Context, workspaceID uuid.UUID, ra
 // SoftDeleteWorkspace sets deleted_at = now(). Idempotent (coalesce keeps the
 // first deletion timestamp). NotFound if the workspace id doesn't exist at all.
 func (s *Service) SoftDeleteWorkspace(ctx context.Context, workspaceID uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx,
-		`update workspaces set deleted_at = coalesce(deleted_at, now()) where id = $1`, workspaceID)
+	n, err := dbq.New(s.pool).SoftDeleteWorkspace(ctx, workspaceID)
 	if err != nil {
 		return fmt.Errorf("soft-delete workspace: %w", err)
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return httpx.NewNotFoundError("workspace")
 	}
 	return nil
@@ -347,12 +341,11 @@ func (s *Service) SoftDeleteWorkspace(ctx context.Context, workspaceID uuid.UUID
 // RestoreWorkspace clears deleted_at. Idempotent (restoring a non-deleted workspace
 // is a no-op, not an error). NotFound if the workspace id doesn't exist at all.
 func (s *Service) RestoreWorkspace(ctx context.Context, workspaceID uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx,
-		`update workspaces set deleted_at = null where id = $1`, workspaceID)
+	n, err := dbq.New(s.pool).RestoreWorkspace(ctx, workspaceID)
 	if err != nil {
 		return fmt.Errorf("restore workspace: %w", err)
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return httpx.NewNotFoundError("workspace")
 	}
 	return nil
@@ -378,18 +371,30 @@ func InsertWorkspaceTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in CreateWo
 			return Workspace{}, fmt.Errorf("savepoint: %w", err)
 		}
 
-		var t Workspace
-		err := tx.QueryRow(ctx, `
-			insert into workspaces (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
-			values ($1,$2,$3,$4,$5,$6,$7)
-			returning id, name, slug, base_currency, cycle_anchor_day, locale, timezone, deleted_at, created_at
-		`, id, in.Name, slug, in.BaseCurrency, in.CycleAnchorDay, in.Locale, in.Timezone).
-			Scan(&t.ID, &t.Name, &t.Slug, &t.BaseCurrency, &t.CycleAnchorDay, &t.Locale, &t.Timezone, &t.DeletedAt, &t.CreatedAt)
+		row, err := dbq.New(tx).InsertWorkspace(ctx, dbq.InsertWorkspaceParams{
+			ID:             id,
+			Name:           in.Name,
+			Slug:           slug,
+			BaseCurrency:   in.BaseCurrency,
+			CycleAnchorDay: int16(in.CycleAnchorDay),
+			Locale:         in.Locale,
+			Timezone:       in.Timezone,
+		})
 		if err == nil {
 			if _, relErr := tx.Exec(ctx, `release savepoint insert_workspace`); relErr != nil {
 				return Workspace{}, fmt.Errorf("release savepoint: %w", relErr)
 			}
-			return t, nil
+			return Workspace{
+				ID:             row.ID,
+				Name:           row.Name,
+				Slug:           row.Slug,
+				BaseCurrency:   row.BaseCurrency,
+				CycleAnchorDay: int(row.CycleAnchorDay),
+				Locale:         row.Locale,
+				Timezone:       row.Timezone,
+				DeletedAt:      row.DeletedAt,
+				CreatedAt:      row.CreatedAt,
+			}, nil
 		}
 		// Rollback to the savepoint so the outer tx stays alive.
 		if _, rbErr := tx.Exec(ctx, `rollback to savepoint insert_workspace`); rbErr != nil {
@@ -405,16 +410,20 @@ func InsertWorkspaceTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in CreateWo
 
 // InsertMembershipTx inserts a workspace_memberships row. Exported for reuse.
 func InsertMembershipTx(ctx context.Context, tx pgx.Tx, workspaceID, userID uuid.UUID, role Role) (Membership, error) {
-	var m Membership
-	err := tx.QueryRow(ctx, `
-		insert into workspace_memberships (workspace_id, user_id, role)
-		values ($1, $2, $3)
-		returning workspace_id, user_id, role, created_at
-	`, workspaceID, userID, role).Scan(&m.WorkspaceID, &m.UserID, &m.Role, &m.CreatedAt)
+	row, err := dbq.New(tx).InsertMembership(ctx, dbq.InsertMembershipParams{
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+		Role:        dbq.WorkspaceRole(role),
+	})
 	if err != nil {
 		return Membership{}, fmt.Errorf("insert membership: %w", err)
 	}
-	return m, nil
+	return Membership{
+		WorkspaceID: row.WorkspaceID,
+		UserID:      row.UserID,
+		Role:        Role(row.Role),
+		CreatedAt:   row.CreatedAt,
+	}, nil
 }
 
 // isUniqueViolation reports whether err is a Postgres 23505 unique-violation
@@ -439,26 +448,20 @@ func isUniqueViolation(err error, constraint string) bool {
 // Sentinel errors surfaced by the member-management methods. Handlers map
 // these to typed 422 responses so the UI can show stable error codes.
 var (
-	ErrLastOwner  = errors.New("identity: operation would leave workspace without an owner")
+	ErrLastOwner     = errors.New("identity: operation would leave workspace without an owner")
 	ErrLastWorkspace = errors.New("identity: user cannot leave their last workspace")
-	ErrNotAMember = errors.New("identity: user is not a member of the workspace")
+	ErrNotAMember    = errors.New("identity: user is not a member of the workspace")
 )
 
 func lockWorkspaceMembershipsTx(ctx context.Context, tx pgx.Tx, workspaceID uuid.UUID) error {
-	_, err := tx.Exec(ctx,
-		`select pg_advisory_xact_lock(hashtextextended($1::text, 0))`,
-		workspaceID.String())
-	if err != nil {
+	if err := dbq.New(tx).AcquireWorkspaceMembershipLock(ctx, workspaceID.String()); err != nil {
 		return fmt.Errorf("lock workspace memberships: %w", err)
 	}
 	return nil
 }
 
 func lockUserMembershipsTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
-	_, err := tx.Exec(ctx,
-		`select pg_advisory_xact_lock(hashtextextended($1::text, 1))`,
-		userID.String())
-	if err != nil {
+	if err := dbq.New(tx).AcquireUserMembershipLock(ctx, userID.String()); err != nil {
 		return fmt.Errorf("lock user memberships: %w", err)
 	}
 	return nil
@@ -481,28 +484,25 @@ func (s *Service) ChangeRole(ctx context.Context, workspaceID, userID uuid.UUID,
 		return err
 	}
 
-	var current Role
-	err = tx.QueryRow(ctx, `
-		select role from workspace_memberships
-		where workspace_id = $1 and user_id = $2 for update
-	`, workspaceID, userID).Scan(&current)
+	q := dbq.New(tx)
+	current, err := q.GetMembershipRoleForUpdate(ctx, dbq.GetMembershipRoleForUpdateParams{
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotAMember
 		}
 		return fmt.Errorf("lock membership: %w", err)
 	}
-	if current == newRole {
+	if Role(current) == newRole {
 		return tx.Commit(ctx) // no-op
 	}
 
 	// Demoting the last owner is forbidden.
-	if current == RoleOwner && newRole == RoleMember {
-		var ownerCount int
-		if err := tx.QueryRow(ctx, `
-			select count(*) from workspace_memberships
-			where workspace_id = $1 and role = 'owner'
-		`, workspaceID).Scan(&ownerCount); err != nil {
+	if Role(current) == RoleOwner && newRole == RoleMember {
+		ownerCount, err := q.CountWorkspaceOwners(ctx, workspaceID)
+		if err != nil {
 			return fmt.Errorf("count owners: %w", err)
 		}
 		if ownerCount <= 1 {
@@ -510,10 +510,11 @@ func (s *Service) ChangeRole(ctx context.Context, workspaceID, userID uuid.UUID,
 		}
 	}
 
-	if _, err := tx.Exec(ctx, `
-		update workspace_memberships set role = $3, updated_at = now()
-		where workspace_id = $1 and user_id = $2
-	`, workspaceID, userID, newRole); err != nil {
+	if err := q.UpdateMembershipRole(ctx, dbq.UpdateMembershipRoleParams{
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+		Role:        dbq.WorkspaceRole(newRole),
+	}); err != nil {
 		return fmt.Errorf("update role: %w", err)
 	}
 	return tx.Commit(ctx)
@@ -531,11 +532,11 @@ func (s *Service) RemoveMember(ctx context.Context, workspaceID, userID uuid.UUI
 		return err
 	}
 
-	var role Role
-	err = tx.QueryRow(ctx, `
-		select role from workspace_memberships
-		where workspace_id = $1 and user_id = $2 for update
-	`, workspaceID, userID).Scan(&role)
+	q := dbq.New(tx)
+	role, err := q.GetMembershipRoleForUpdate(ctx, dbq.GetMembershipRoleForUpdateParams{
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotAMember
@@ -543,12 +544,9 @@ func (s *Service) RemoveMember(ctx context.Context, workspaceID, userID uuid.UUI
 		return fmt.Errorf("lock membership: %w", err)
 	}
 
-	if role == RoleOwner {
-		var ownerCount int
-		if err := tx.QueryRow(ctx, `
-			select count(*) from workspace_memberships
-			where workspace_id = $1 and role = 'owner'
-		`, workspaceID).Scan(&ownerCount); err != nil {
+	if Role(role) == RoleOwner {
+		ownerCount, err := q.CountWorkspaceOwners(ctx, workspaceID)
+		if err != nil {
 			return fmt.Errorf("count owners: %w", err)
 		}
 		if ownerCount <= 1 {
@@ -556,9 +554,10 @@ func (s *Service) RemoveMember(ctx context.Context, workspaceID, userID uuid.UUI
 		}
 	}
 
-	if _, err := tx.Exec(ctx, `
-		delete from workspace_memberships where workspace_id = $1 and user_id = $2
-	`, workspaceID, userID); err != nil {
+	if err := q.DeleteMembership(ctx, dbq.DeleteMembershipParams{
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+	}); err != nil {
 		return fmt.Errorf("delete membership: %w", err)
 	}
 	return tx.Commit(ctx)
@@ -580,11 +579,11 @@ func (s *Service) LeaveWorkspace(ctx context.Context, workspaceID, userID uuid.U
 		return err
 	}
 
-	var role Role
-	err = tx.QueryRow(ctx, `
-		select role from workspace_memberships
-		where workspace_id = $1 and user_id = $2 for update
-	`, workspaceID, userID).Scan(&role)
+	q := dbq.New(tx)
+	role, err := q.GetMembershipRoleForUpdate(ctx, dbq.GetMembershipRoleForUpdateParams{
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotAMember
@@ -593,10 +592,8 @@ func (s *Service) LeaveWorkspace(ctx context.Context, workspaceID, userID uuid.U
 	}
 
 	// Last-workspace guard.
-	var membershipCount int
-	if err := tx.QueryRow(ctx, `
-		select count(*) from workspace_memberships where user_id = $1
-	`, userID).Scan(&membershipCount); err != nil {
+	membershipCount, err := q.CountUserMemberships(ctx, userID)
+	if err != nil {
 		return fmt.Errorf("count memberships: %w", err)
 	}
 	if membershipCount <= 1 {
@@ -604,12 +601,9 @@ func (s *Service) LeaveWorkspace(ctx context.Context, workspaceID, userID uuid.U
 	}
 
 	// Last-owner guard.
-	if role == RoleOwner {
-		var ownerCount int
-		if err := tx.QueryRow(ctx, `
-			select count(*) from workspace_memberships
-			where workspace_id = $1 and role = 'owner'
-		`, workspaceID).Scan(&ownerCount); err != nil {
+	if Role(role) == RoleOwner {
+		ownerCount, err := q.CountWorkspaceOwners(ctx, workspaceID)
+		if err != nil {
 			return fmt.Errorf("count owners: %w", err)
 		}
 		if ownerCount <= 1 {
@@ -617,9 +611,10 @@ func (s *Service) LeaveWorkspace(ctx context.Context, workspaceID, userID uuid.U
 		}
 	}
 
-	if _, err := tx.Exec(ctx, `
-		delete from workspace_memberships where workspace_id = $1 and user_id = $2
-	`, workspaceID, userID); err != nil {
+	if err := q.DeleteMembership(ctx, dbq.DeleteMembershipParams{
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+	}); err != nil {
 		return fmt.Errorf("delete membership: %w", err)
 	}
 	return tx.Commit(ctx)

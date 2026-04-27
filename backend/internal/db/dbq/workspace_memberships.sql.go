@@ -12,6 +12,78 @@ import (
 	"github.com/google/uuid"
 )
 
+const acquireUserMembershipLock = `-- name: AcquireUserMembershipLock :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 1))
+`
+
+func (q *Queries) AcquireUserMembershipLock(ctx context.Context, dollar_1 string) error {
+	_, err := q.db.Exec(ctx, acquireUserMembershipLock, dollar_1)
+	return err
+}
+
+const acquireWorkspaceMembershipLock = `-- name: AcquireWorkspaceMembershipLock :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
+`
+
+func (q *Queries) AcquireWorkspaceMembershipLock(ctx context.Context, dollar_1 string) error {
+	_, err := q.db.Exec(ctx, acquireWorkspaceMembershipLock, dollar_1)
+	return err
+}
+
+const countUserMemberships = `-- name: CountUserMemberships :one
+SELECT count(*) FROM workspace_memberships WHERE user_id = $1
+`
+
+func (q *Queries) CountUserMemberships(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countUserMemberships, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countWorkspaceOwners = `-- name: CountWorkspaceOwners :one
+SELECT count(*) FROM workspace_memberships
+WHERE workspace_id = $1 AND role = 'owner'
+`
+
+func (q *Queries) CountWorkspaceOwners(ctx context.Context, workspaceID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countWorkspaceOwners, workspaceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deleteMembership = `-- name: DeleteMembership :exec
+DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2
+`
+
+type DeleteMembershipParams struct {
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	UserID      uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error {
+	_, err := q.db.Exec(ctx, deleteMembership, arg.WorkspaceID, arg.UserID)
+	return err
+}
+
+const getMembershipRoleForUpdate = `-- name: GetMembershipRoleForUpdate :one
+SELECT role FROM workspace_memberships
+WHERE workspace_id = $1 AND user_id = $2 FOR UPDATE
+`
+
+type GetMembershipRoleForUpdateParams struct {
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	UserID      uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) GetMembershipRoleForUpdate(ctx context.Context, arg GetMembershipRoleForUpdateParams) (WorkspaceRole, error) {
+	row := q.db.QueryRow(ctx, getMembershipRoleForUpdate, arg.WorkspaceID, arg.UserID)
+	var role WorkspaceRole
+	err := row.Scan(&role)
+	return role, err
+}
+
 const getWorkspaceWithMembership = `-- name: GetWorkspaceWithMembership :one
 SELECT t.id, t.name, t.slug, t.base_currency, t.cycle_anchor_day,
        t.locale, t.timezone, t.deleted_at, t.created_at, m.role
@@ -98,4 +170,96 @@ func (q *Queries) GetWorkspaceWithOwnership(ctx context.Context, arg GetWorkspac
 		&i.Role,
 	)
 	return i, err
+}
+
+const insertMembership = `-- name: InsertMembership :one
+INSERT INTO workspace_memberships (workspace_id, user_id, role)
+VALUES ($1, $2, $3)
+RETURNING workspace_id, user_id, role, created_at
+`
+
+type InsertMembershipParams struct {
+	WorkspaceID uuid.UUID     `json:"workspace_id"`
+	UserID      uuid.UUID     `json:"user_id"`
+	Role        WorkspaceRole `json:"role"`
+}
+
+type InsertMembershipRow struct {
+	WorkspaceID uuid.UUID     `json:"workspace_id"`
+	UserID      uuid.UUID     `json:"user_id"`
+	Role        WorkspaceRole `json:"role"`
+	CreatedAt   time.Time     `json:"created_at"`
+}
+
+func (q *Queries) InsertMembership(ctx context.Context, arg InsertMembershipParams) (InsertMembershipRow, error) {
+	row := q.db.QueryRow(ctx, insertMembership, arg.WorkspaceID, arg.UserID, arg.Role)
+	var i InsertMembershipRow
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const listMembersWithUser = `-- name: ListMembersWithUser :many
+SELECT m.workspace_id, m.user_id, m.role::text AS role, m.created_at,
+       u.email, u.display_name
+FROM workspace_memberships m
+JOIN users u ON u.id = m.user_id
+WHERE m.workspace_id = $1
+ORDER BY m.created_at
+`
+
+type ListMembersWithUserRow struct {
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	UserID      uuid.UUID `json:"user_id"`
+	Role        string    `json:"role"`
+	CreatedAt   time.Time `json:"created_at"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
+}
+
+func (q *Queries) ListMembersWithUser(ctx context.Context, workspaceID uuid.UUID) ([]ListMembersWithUserRow, error) {
+	rows, err := q.db.Query(ctx, listMembersWithUser, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMembersWithUserRow{}
+	for rows.Next() {
+		var i ListMembersWithUserRow
+		if err := rows.Scan(
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.Role,
+			&i.CreatedAt,
+			&i.Email,
+			&i.DisplayName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateMembershipRole = `-- name: UpdateMembershipRole :exec
+UPDATE workspace_memberships SET role = $3, updated_at = now()
+WHERE workspace_id = $1 AND user_id = $2
+`
+
+type UpdateMembershipRoleParams struct {
+	WorkspaceID uuid.UUID     `json:"workspace_id"`
+	UserID      uuid.UUID     `json:"user_id"`
+	Role        WorkspaceRole `json:"role"`
+}
+
+func (q *Queries) UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) error {
+	_, err := q.db.Exec(ctx, updateMembershipRole, arg.WorkspaceID, arg.UserID, arg.Role)
+	return err
 }

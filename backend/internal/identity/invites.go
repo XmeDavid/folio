@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
@@ -36,9 +37,9 @@ var (
 // InvitePreview is the payload for the no-auth preview endpoint — workspace
 // name, inviter display name, role, expiry. No token / hash surfaced.
 type InvitePreview struct {
-	WorkspaceID           uuid.UUID `json:"workspaceId"`
-	WorkspaceName         string    `json:"workspaceName"`
-	WorkspaceSlug         string    `json:"workspaceSlug"`
+	WorkspaceID        uuid.UUID `json:"workspaceId"`
+	WorkspaceName      string    `json:"workspaceName"`
+	WorkspaceSlug      string    `json:"workspaceSlug"`
 	InviterDisplayName string    `json:"inviterDisplayName"`
 	Email              string    `json:"email"`
 	Role               Role      `json:"role"`
@@ -93,26 +94,31 @@ func (s *InviteService) Create(
 	// The partial unique index `workspace_invites_pending_email_unique` makes
 	// the duplicate-check authoritative: two concurrent Create calls for the
 	// same (workspace_id, email) pair can no longer both succeed.
-	var inv Invite
-	var roleText string
-	err = s.pool.QueryRow(ctx, `
-		insert into workspace_invites (id, workspace_id, email, role, token_hash,
-		                            invited_by_user_id, expires_at)
-		values ($1, $2, $3, $4::workspace_role, $5, $6, $7)
-		returning id, workspace_id, email, role::text, invited_by_user_id,
-		          created_at, expires_at
-	`, id, workspaceID, email, role, HashInviteToken(plaintext), inviterID, expiresAt).Scan(
-		&inv.ID, &inv.WorkspaceID, &inv.Email, &roleText, &inv.InvitedByUserID,
-		&inv.CreatedAt, &inv.ExpiresAt,
-	)
+	row, err := dbq.New(s.pool).InsertWorkspaceInvite(ctx, dbq.InsertWorkspaceInviteParams{
+		ID:              id,
+		WorkspaceID:     workspaceID,
+		Email:           email,
+		Column4:         dbq.WorkspaceRole(role),
+		TokenHash:       HashInviteToken(plaintext),
+		InvitedByUserID: inviterID,
+		ExpiresAt:       expiresAt,
+	})
 	if err != nil {
 		if isPendingInviteUnique(err) {
 			return nil, "", httpx.NewValidationError("a pending invite already exists for this email")
 		}
 		return nil, "", fmt.Errorf("insert invite: %w", err)
 	}
-	inv.Role = Role(roleText)
-	return &inv, plaintext, nil
+	inv := &Invite{
+		ID:              row.ID,
+		WorkspaceID:     row.WorkspaceID,
+		Email:           row.Email,
+		Role:            Role(row.Role),
+		InvitedByUserID: row.InvitedByUserID,
+		CreatedAt:       row.CreatedAt,
+		ExpiresAt:       row.ExpiresAt,
+	}
+	return inv, plaintext, nil
 }
 
 // isPendingInviteUnique reports whether err is a 23505 unique violation on
@@ -130,37 +136,32 @@ func isPendingInviteUnique(err error) bool {
 // role, and expiry — plus the invited email (so the UI can gate "sign up
 // with a different email"). Omits token/hash.
 func (s *InviteService) Preview(ctx context.Context, plaintext string) (*InvitePreview, error) {
-	var p InvitePreview
-	var roleText string
-	var revokedAt, acceptedAt *time.Time
-	err := s.pool.QueryRow(ctx, `
-		select i.workspace_id, t.name, t.slug, u.display_name,
-		       i.email, i.role::text, i.expires_at, i.revoked_at, i.accepted_at
-		from workspace_invites i
-		join workspaces t on t.id = i.workspace_id
-		join users   u on u.id = i.invited_by_user_id
-		where i.token_hash = $1 and t.deleted_at is null
-	`, HashInviteToken(plaintext)).Scan(
-		&p.WorkspaceID, &p.WorkspaceName, &p.WorkspaceSlug, &p.InviterDisplayName,
-		&p.Email, &roleText, &p.ExpiresAt, &revokedAt, &acceptedAt,
-	)
+	row, err := dbq.New(s.pool).GetInvitePreview(ctx, HashInviteToken(plaintext))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrInviteNotFound
 		}
 		return nil, err
 	}
-	if revokedAt != nil {
+	if row.RevokedAt != nil {
 		return nil, ErrInviteRevoked
 	}
-	if acceptedAt != nil {
+	if row.AcceptedAt != nil {
 		return nil, ErrInviteAlreadyUsed
 	}
-	if p.ExpiresAt.Before(s.now()) {
+	if row.ExpiresAt.Before(s.now()) {
 		return nil, ErrInviteExpired
 	}
-	p.Role = Role(roleText)
-	return &p, nil
+	p := &InvitePreview{
+		WorkspaceID:        row.WorkspaceID,
+		WorkspaceName:      row.WorkspaceName,
+		WorkspaceSlug:      row.WorkspaceSlug,
+		InviterDisplayName: row.InviterDisplayName,
+		Email:              row.Email,
+		Role:               Role(row.Role),
+		ExpiresAt:          row.ExpiresAt,
+	}
+	return p, nil
 }
 
 // Accept consumes the invite on behalf of userID. Requires the user's email
@@ -175,64 +176,46 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var (
-		inviteID    uuid.UUID
-		workspaceID    uuid.UUID
-		inviteEmail string
-		roleText    string
-		expiresAt   time.Time
-		revokedAt   *time.Time
-		acceptedAt  *time.Time
-	)
-	err = tx.QueryRow(ctx, `
-		select id, workspace_id, email, role::text, expires_at, revoked_at, accepted_at
-		from workspace_invites
-		where token_hash = $1
-		for update
-	`, HashInviteToken(plaintext)).Scan(&inviteID, &workspaceID, &inviteEmail, &roleText,
-		&expiresAt, &revokedAt, &acceptedAt)
+	q := dbq.New(tx)
+	inv, err := q.GetInviteForAccept(ctx, HashInviteToken(plaintext))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrInviteNotFound
 		}
 		return nil, err
 	}
-	if revokedAt != nil {
+	if inv.RevokedAt != nil {
 		return nil, ErrInviteRevoked
 	}
-	if acceptedAt != nil {
+	if inv.AcceptedAt != nil {
 		return nil, ErrInviteAlreadyUsed
 	}
-	if expiresAt.Before(s.now()) {
+	if inv.ExpiresAt.Before(s.now()) {
 		return nil, ErrInviteExpired
 	}
 
-	var userEmail string
-	var verifiedAt *time.Time
-	if err := tx.QueryRow(ctx,
-		`select email, email_verified_at from users where id = $1`, userID).
-		Scan(&userEmail, &verifiedAt); err != nil {
+	uRow, err := q.GetUserEmailAndVerification(ctx, userID)
+	if err != nil {
 		return nil, err
 	}
-	if strings.ToLower(userEmail) != strings.ToLower(inviteEmail) {
+	if strings.ToLower(uRow.Email) != strings.ToLower(inv.Email) {
 		return nil, ErrInviteEmailMismatch
 	}
-	if verifiedAt == nil {
+	if uRow.EmailVerifiedAt == nil {
 		return nil, ErrEmailUnverified
 	}
 
 	// Upsert-style: if user is already a member of this workspace, keep the
 	// existing row and just consume the invite.
-	if _, err := tx.Exec(ctx, `
-		insert into workspace_memberships (workspace_id, user_id, role)
-		values ($1, $2, $3::workspace_role)
-		on conflict (workspace_id, user_id) do nothing
-	`, workspaceID, userID, roleText); err != nil {
+	if err := q.UpsertMembershipOnInvite(ctx, dbq.UpsertMembershipOnInviteParams{
+		WorkspaceID: inv.WorkspaceID,
+		UserID:      userID,
+		Column3:     dbq.WorkspaceRole(inv.Role),
+	}); err != nil {
 		return nil, fmt.Errorf("insert membership: %w", err)
 	}
 
-	if _, err := tx.Exec(ctx,
-		`update workspace_invites set accepted_at = now() where id = $1`, inviteID); err != nil {
+	if err := q.MarkInviteAccepted(ctx, inv.ID); err != nil {
 		return nil, err
 	}
 
@@ -241,10 +224,10 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
 	}
 
 	return &Membership{
-		WorkspaceID:  workspaceID,
-		UserID:    userID,
-		Role:      Role(roleText),
-		CreatedAt: s.now(),
+		WorkspaceID: inv.WorkspaceID,
+		UserID:      userID,
+		Role:        Role(inv.Role),
+		CreatedAt:   s.now(),
 	}, nil
 }
 
@@ -258,30 +241,27 @@ func (s *InviteService) Revoke(ctx context.Context, workspaceID, inviteID, reque
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var invitedBy uuid.UUID
-	var revokedAt, acceptedAt *time.Time
-	err = tx.QueryRow(ctx, `
-		select invited_by_user_id, revoked_at, accepted_at
-		from workspace_invites where id = $1 and workspace_id = $2 for update
-	`, inviteID, workspaceID).Scan(&invitedBy, &revokedAt, &acceptedAt)
+	q := dbq.New(tx)
+	row, err := q.GetInviteForRevoke(ctx, dbq.GetInviteForRevokeParams{
+		ID:          inviteID,
+		WorkspaceID: workspaceID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInviteNotFound
 		}
 		return err
 	}
-	if revokedAt != nil || acceptedAt != nil {
+	if row.RevokedAt != nil || row.AcceptedAt != nil {
 		return nil // idempotent
 	}
 
-	if invitedBy != requesterUserID {
-		var isOwner bool
-		if err := tx.QueryRow(ctx, `
-			select exists(
-				select 1 from workspace_memberships
-				where workspace_id = $1 and user_id = $2 and role = 'owner'
-			)
-		`, workspaceID, requesterUserID).Scan(&isOwner); err != nil {
+	if row.InvitedByUserID != requesterUserID {
+		isOwner, err := q.CheckIsWorkspaceOwner(ctx, dbq.CheckIsWorkspaceOwnerParams{
+			WorkspaceID: workspaceID,
+			UserID:      requesterUserID,
+		})
+		if err != nil {
 			return err
 		}
 		if !isOwner {
@@ -289,8 +269,7 @@ func (s *InviteService) Revoke(ctx context.Context, workspaceID, inviteID, reque
 		}
 	}
 
-	if _, err := tx.Exec(ctx,
-		`update workspace_invites set revoked_at = now() where id = $1`, inviteID); err != nil {
+	if err := q.MarkInviteRevoked(ctx, inviteID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

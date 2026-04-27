@@ -14,15 +14,21 @@ import (
 type Querier interface {
 	AcceptWorkspaceInvite(ctx context.Context, id uuid.UUID) error
 	AcquireFirstRunLock(ctx context.Context, pgAdvisoryXactLock int64) error
+	AcquireUserMembershipLock(ctx context.Context, dollar_1 string) error
+	AcquireWorkspaceMembershipLock(ctx context.Context, dollar_1 string) error
 	BumpMFAChallengeAttempts(ctx context.Context, arg BumpMFAChallengeAttemptsParams) (int32, error)
 	BumpTOTPLastUsedStep(ctx context.Context, arg BumpTOTPLastUsedStepParams) (int64, error)
 	CheckEmailExistsExcludingUser(ctx context.Context, arg CheckEmailExistsExcludingUserParams) (bool, error)
+	CheckIsWorkspaceOwner(ctx context.Context, arg CheckIsWorkspaceOwnerParams) (bool, error)
 	ConfirmTOTPCredential(ctx context.Context, arg ConfirmTOTPCredentialParams) error
 	ConsumeAuthToken(ctx context.Context, id uuid.UUID) error
 	ConsumeMFAChallenge(ctx context.Context, arg ConsumeMFAChallengeParams) (int64, error)
 	ConsumeOpenMFAChallengesByUser(ctx context.Context, userID uuid.UUID) error
 	ConsumeRecoveryCode(ctx context.Context, arg ConsumeRecoveryCodeParams) error
 	CountUnconsumedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int64, error)
+	CountUserMemberships(ctx context.Context, userID uuid.UUID) (int64, error)
+	CountWorkspaceOwners(ctx context.Context, workspaceID uuid.UUID) (int64, error)
+	DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error
 	DeleteOtherSessionsByUser(ctx context.Context, arg DeleteOtherSessionsByUserParams) error
 	DeleteRecoveryCodesByUser(ctx context.Context, userID uuid.UUID) error
 	DeleteSessionByID(ctx context.Context, id string) error
@@ -30,8 +36,12 @@ type Querier interface {
 	DeleteSessionsByUser(ctx context.Context, userID uuid.UUID) error
 	DeleteTOTPCredential(ctx context.Context, userID uuid.UUID) (int64, error)
 	GetAuthTokenForConsume(ctx context.Context, arg GetAuthTokenForConsumeParams) (GetAuthTokenForConsumeRow, error)
+	GetInviteForAccept(ctx context.Context, tokenHash []byte) (GetInviteForAcceptRow, error)
+	GetInviteForRevoke(ctx context.Context, arg GetInviteForRevokeParams) (GetInviteForRevokeRow, error)
+	GetInvitePreview(ctx context.Context, tokenHash []byte) (GetInvitePreviewRow, error)
 	GetMFAChallengeByID(ctx context.Context, id uuid.UUID) (GetMFAChallengeByIDRow, error)
 	GetMFAStatus(ctx context.Context, userID uuid.UUID) (GetMFAStatusRow, error)
+	GetMembershipRoleForUpdate(ctx context.Context, arg GetMembershipRoleForUpdateParams) (WorkspaceRole, error)
 	GetSessionByID(ctx context.Context, id string) (GetSessionByIDRow, error)
 	GetTOTPSecretCipher(ctx context.Context, userID uuid.UUID) (string, error)
 	GetTOTPSecretCipherAny(ctx context.Context, userID uuid.UUID) (string, error)
@@ -40,11 +50,13 @@ type Querier interface {
 	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
 	GetUserEmailAndDisplayName(ctx context.Context, id uuid.UUID) (GetUserEmailAndDisplayNameRow, error)
 	GetUserEmailAndName(ctx context.Context, id uuid.UUID) (GetUserEmailAndNameRow, error)
+	GetUserEmailAndVerification(ctx context.Context, id uuid.UUID) (GetUserEmailAndVerificationRow, error)
 	GetUserForPasswordReset(ctx context.Context, arg GetUserForPasswordResetParams) (GetUserForPasswordResetRow, error)
 	GetUserIDAndNameByEmail(ctx context.Context, email string) (GetUserIDAndNameByEmailRow, error)
 	GetUserIDByEmail(ctx context.Context, email string) (uuid.UUID, error)
 	GetUserIsAdmin(ctx context.Context, id uuid.UUID) (bool, error)
 	GetUserPasswordHash(ctx context.Context, id uuid.UUID) (string, error)
+	GetWorkspaceByID(ctx context.Context, id uuid.UUID) (GetWorkspaceByIDRow, error)
 	GetWorkspaceInviteByTokenHash(ctx context.Context, tokenHash []byte) (GetWorkspaceInviteByTokenHashRow, error)
 	GetWorkspaceWithMembership(ctx context.Context, arg GetWorkspaceWithMembershipParams) (GetWorkspaceWithMembershipRow, error)
 	GetWorkspaceWithOwnership(ctx context.Context, arg GetWorkspaceWithOwnershipParams) (GetWorkspaceWithOwnershipRow, error)
@@ -56,14 +68,25 @@ type Querier interface {
 	InsertInvitedMembership(ctx context.Context, arg InsertInvitedMembershipParams) error
 	InsertLoginFailedAudit(ctx context.Context, arg InsertLoginFailedAuditParams) error
 	InsertMFAChallenge(ctx context.Context, arg InsertMFAChallengeParams) error
+	InsertMembership(ctx context.Context, arg InsertMembershipParams) (InsertMembershipRow, error)
 	InsertRecoveryCode(ctx context.Context, arg InsertRecoveryCodeParams) error
 	InsertSession(ctx context.Context, arg InsertSessionParams) error
 	InsertUserReturning(ctx context.Context, arg InsertUserReturningParams) (InsertUserReturningRow, error)
 	InsertWebAuthnCredential(ctx context.Context, arg InsertWebAuthnCredentialParams) error
+	InsertWorkspace(ctx context.Context, arg InsertWorkspaceParams) (InsertWorkspaceRow, error)
+	InsertWorkspaceInvite(ctx context.Context, arg InsertWorkspaceInviteParams) (InsertWorkspaceInviteRow, error)
 	ListAdminUsers(ctx context.Context) ([]ListAdminUsersRow, error)
+	ListMembersWithUser(ctx context.Context, workspaceID uuid.UUID) ([]ListMembersWithUserRow, error)
+	ListPendingInvites(ctx context.Context, workspaceID uuid.UUID) ([]ListPendingInvitesRow, error)
 	ListUnconsumedRecoveryCodes(ctx context.Context, userID uuid.UUID) ([]ListUnconsumedRecoveryCodesRow, error)
 	ListWebAuthnCredentials(ctx context.Context, userID uuid.UUID) ([]ListWebAuthnCredentialsRow, error)
+	ListWorkspacesWithRoleByUser(ctx context.Context, userID uuid.UUID) ([]ListWorkspacesWithRoleByUserRow, error)
+	MarkInviteAccepted(ctx context.Context, id uuid.UUID) error
+	MarkInviteRevoked(ctx context.Context, id uuid.UUID) error
+	RestoreWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
+	SoftDeleteWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
 	UpdateMFAChallengeWebAuthnState(ctx context.Context, arg UpdateMFAChallengeWebAuthnStateParams) error
+	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) error
 	UpdateSessionLastSeen(ctx context.Context, arg UpdateSessionLastSeenParams) error
 	UpdateSessionReauthAt(ctx context.Context, arg UpdateSessionReauthAtParams) error
 	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) error
@@ -71,6 +94,7 @@ type Querier interface {
 	UpdateUserLastWorkspace(ctx context.Context, arg UpdateUserLastWorkspaceParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpdateWebAuthnSignCount(ctx context.Context, arg UpdateWebAuthnSignCountParams) error
+	UpsertMembershipOnInvite(ctx context.Context, arg UpsertMembershipOnInviteParams) error
 	UpsertTOTPCredential(ctx context.Context, arg UpsertTOTPCredentialParams) (int64, error)
 	UserExists(ctx context.Context) (bool, error)
 	VerifyUserEmail(ctx context.Context, arg VerifyUserEmailParams) (int64, error)
