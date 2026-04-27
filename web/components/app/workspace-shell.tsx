@@ -9,6 +9,7 @@ import {
   ArrowDownUp,
   Banknote,
   Gauge,
+  LineChart,
   LogOut,
   Plus,
   ReceiptText,
@@ -27,6 +28,7 @@ import { cn } from "@/lib/utils";
 const nav = [
   { label: "Dashboard", href: "", icon: Gauge, exact: true },
   { label: "Accounts", href: "/accounts", icon: Banknote },
+  { label: "Investments", href: "/investments", icon: LineChart },
   { label: "Transactions", href: "/transactions", icon: ReceiptText },
   { label: "Categories", href: "/categories", icon: Shapes },
   { label: "Merchants", href: "/merchants", icon: Store },

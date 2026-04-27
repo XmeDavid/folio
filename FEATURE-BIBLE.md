@@ -1,7 +1,7 @@
 # Folio — Feature Specification
 
 **Status:** Living reference document
-**Last updated:** 2026-04-25
+**Last updated:** 2026-04-27
 **Audience:** Future-you, contributors, planning sessions
 
 This document captures **everything Folio intends to be**. It is domain-organised and **does not prioritise**. Implementation sequencing happens in a separate plan. If a feature is listed here, it is in scope for Folio — the only question is when.
@@ -15,6 +15,7 @@ Folio is a self-hosted personal finance & planning app. **Workspace-scoped:** ea
 **Core principles:**
 
 - **Bank is the source of truth for what happened**; Folio is the source of truth for what you plan to happen and what things mean.
+- **Close the loop between intention and reality.** Folio is not only a tracker and not only a planner: it plans money before it moves, observes what actually happened from transactions and balances, reconciles the two, then improves the next plan.
 - **Every amount carries a currency.** Base currency per workspace (chosen on workspace creation, eg. CHF) for reporting rollups; original currency always preserved.
 - **No float math.** Decimal everywhere.
 - **Users own their data.** Full export, full delete, offline-capable PWA. Export and delete operate at workspace scope (per workspace) and at account scope (a user account, with all the workspaces it solely owns).
@@ -85,6 +86,8 @@ accounts into the user's mental buckets without changing the ledger model.
 
 - **Direct bank connections** via GoCardless Bank Account Data (~2,500 banks, EEA/UK).
 - **Interactive Brokers** via IBKR Flex Web Service (per-user token).
+- **Revolut Trading CSV import** for brokerage transactions, including original FX rate capture where the export provides it.
+- **Revolut Savings / Money Market import** for mixed banking + investment statements: banking rows become cash transactions; fund buy/sell rows become investment events.
 - **CAMT.053 XML import** (ISO-20022) for PostFinance and other banks providing XML statements.
 - **Generic CSV import** with user-defined column mapping. Saved profiles per bank/format for reuse.
 - **Named import presets** for other finance apps: Mint, YNAB, Actual, Firefly. Preset fills in the CSV mapping.
@@ -233,11 +236,28 @@ Transfers between the user's own accounts are **not a separate data type**; they
 
 ## 8. Payment cycles & planning
 
+Planning is Folio's forward-looking layer over the ledger. The core promise:
+turn a salary/payment cycle into a practical deployment plan, then use real
+transactions and balances to prove whether the plan happened.
+
+Most budgeting tools stop at "you planned 600 for groceries". Folio should
+answer:
+
+- What does this paycheck need to cover before the next one arrives?
+- Where should the money go, account by account and currency by currency?
+- Which transfers/payments/conversions must happen?
+- Did the income arrive as expected?
+- Did the payments, transfers, and investments actually happen?
+- Is the user still on track, and what should change now?
+- What did this cycle teach us about the next one?
+
 ### Payment cycles
 
 - Workspace-defined cycle anchor (typically the primary earner's salary date, e.g. "25th of each month"). Lives on the workspace, so all members share the same cycle.
 - Cycle = one planning unit. Most workspaces = monthly; biweekly / custom supported.
 - Stats and budgets default to cycle-aligned windows; user can switch to calendar-month views.
+- Cycle windows are payday-to-payday, not necessarily calendar months. A cycle can be 28, 30, 31, or custom days, and daily budget pace adapts to the actual length.
+- Folio knows which obligations fall before the next payday and surfaces timing risk when a heavy bill cluster happens early in the cycle.
 
 ### Planning a cycle
 
@@ -251,16 +271,56 @@ For each upcoming cycle, user sees / edits:
 - **Travel budgets** (pulled from active trips falling in cycle — see §14).
 - **Planned investments** (recurring DCA buys, etc.).
 
+The user should not need to duplicate data. A plan is assembled from existing
+Folio facts:
+
+- Income sources and detected paydays.
+- Recurring templates and subscriptions.
+- Category budgets and rollover policies.
+- One-off transactions, wishlist items, trips, reimbursements, tax events, asset maintenance, and other dated commitments.
+- Existing account balances, account groups, goal buckets, investment accounts, liabilities, and available cash.
+- Historical transaction patterns that suggest recurring costs, unusual one-offs, or unrealistic budgets.
+
 ### Pre-fill
 
 - If previous cycle exists → pre-fill every slot with that cycle's values.
 - First-ever cycle → pre-fill recurring from templates, leave flexible/one-off blank, prompt user.
+- Later cycles should pre-fill from a blend of user intent and history: last plan, previous actuals, seasonal patterns, known annual/quarterly bills, and confirmed recurring discoveries.
+- Folio can propose changes before the cycle starts: "Groceries has averaged 680 for three cycles; planned 500 may be unrealistic."
+- Suggested lines are always reviewable. The user remains in control of the plan.
+
+### Allocation plan
+
+The allocation plan describes where money should live after income lands.
+
+- Supports fixed amounts: "move 500 CHF to Emergency Fund".
+- Supports percentage rules: "invest 15% of actual net income".
+- Supports priority order: rent and bills first, sinking funds next, savings/investments after, flexible spending last.
+- Supports percentage-of-remainder rules: "after commitments and buffers, send 70% of remainder to brokerage and 30% to travel".
+- Supports account targets: checking buffer, credit-card payoff, savings pot, brokerage contribution, mortgage overpayment, virtual goal bucket.
+- Supports multiple currencies and detects when an allocation needs conversion before it is executable.
+- Can be saved as the default for future cycles, with per-cycle overrides.
 
 ### Action plan
 
 - Derived view: given the plan, what payments / transfers does the user need to execute?
 - Per-instruction: "transfer 2,000 from Salary Checking → UBS Savings on May 26", "pay rent 1,800 on May 28".
-- Instructions have status: `pending → done`. Marking done auto-creates the scheduled/paid transaction or links to one.
+- Instructions include ordinary payments, internal transfers, credit-card payoff, goal contributions, investment contributions, currency conversions, reimbursement follow-ups, and liquidity/buffer actions.
+- Instructions have status: `pending → scheduled → done → skipped/dismissed`.
+- Marking done can create/link a scheduled/paid transaction, but bank-synced transactions can also auto-complete the instruction.
+- Folio watches the ledger for matching transactions: "500 moved from Checking to Savings" closes the planned transfer automatically.
+- Missing execution is visible: "Rent expected by Apr 30; no matching payment detected."
+- Partial execution is visible: "Planned 900 to investments; 600 detected, 300 remaining."
+- The action plan should be exportable/shareable as a compact checklist for the current cycle.
+
+### Currency conversions
+
+- Every plan line keeps its native currency and reporting/base-currency value.
+- The plan highlights cross-currency obligations before they become surprises.
+- Example: salary lands in CHF, rent is EUR, investment buy is USD, trip budget is GBP.
+- Folio computes the estimated conversion need using current/historical FX and later reconciles against the actual conversion transaction/rate.
+- Conversion actions can be explicit: "Convert 850 CHF → EUR before rent on Apr 28."
+- FX variance is tracked separately from spending variance, so the user can tell whether the plan drift came from behavior or rates.
 
 ### Planned vs. actual
 
@@ -269,6 +329,44 @@ For each upcoming cycle, user sees / edits:
   - Flexible (Groceries): planned 400 / spent-so-far 312 / projected 387
   - Income: expected 8,000 / received 8,042 ✓
 - End-of-cycle summary: overall variance, category breakdowns, rollover calculations (see below).
+- Actual income replaces expected income when it lands. Percentage allocations and remainder rules recompute from the actual number.
+- If income is lower than planned, Folio proposes safe adjustments in priority order instead of silently leaving the plan impossible.
+- If income is higher than planned, Folio proposes where the surplus should go according to rules: goals, investments, debt, buffer, or discretionary.
+- Category budgets show spent, remaining, daily pace, projected end-of-cycle spend, and transactions causing drift.
+- Recurring expenses show expected, paid, unpaid, amount changed, paid early/late, and likely duplicate/missed payment.
+- One-off expenses can be planned ahead or detected from unusual actual transactions during/after the cycle.
+- Transfer and investment allocations are tracked against real account movements, not just marked done manually.
+- The plan is a living forecast: every sync can update remainder, runway, savings rate, investment rate, and cash buffer risk.
+
+### Automatic discovery
+
+Folio should use transaction history to reduce manual setup:
+
+- Detect recurring income and paydays.
+- Detect recurring expenses, subscriptions, quarterly/yearly bills, and amount changes.
+- Detect one-off expenses that should be named and explained rather than hidden inside ordinary category spend.
+- Detect planned transfers that did not happen, extra transfers that happened without a plan, and mismatched amounts.
+- Detect category budgets that are consistently too low/high.
+- Detect upcoming obligations from historical cadence even before the user creates a template.
+- Every detection is a suggestion first; user confirmation turns it into durable planning data.
+
+### Retrospective loop
+
+At cycle close, Folio summarizes what the plan got right and wrong:
+
+- Planned inflow vs. actual inflow.
+- Planned commitments vs. actual paid commitments.
+- Flexible budget variance by category, merchant, and transaction.
+- Planned transfers/allocations vs. detected account movements.
+- Planned investments vs. actual contributions/trades.
+- Currency conversion estimate vs. actual conversion rate/amount.
+- Savings rate, investment rate, runway, and net worth change for the cycle.
+- Which assumptions should change next cycle.
+
+The retrospective feeds the next plan. Folio should learn user-specific truth:
+"restaurants is usually 20% over", "salary sometimes lands one day early",
+"December has higher gifts/travel", "insurance hits quarterly", "this sinking
+fund needs a larger monthly contribution".
 
 ### Rollover (per-category)
 
@@ -350,16 +448,40 @@ For each upcoming cycle, user sees / edits:
 - Ticker / symbol, quantity, average cost, current price, market value, unrealised P/L.
 - Per-account breakdown (same ticker across IBKR + Revolut = two lot sets, or user-merged).
 - Cost basis method: FIFO default; specific-lot available for tax-sensitive cases.
+- Position history is replayable from underlying events; current positions are a cache, not the source of truth.
 
 ### Trades
 
 - Buy / sell history: date, price, quantity, fees, account.
 - Derived: realised gains/losses per trade, holding period.
+- Every investment event is captured: buys, sells, transfers in/out, deposits/withdrawals, fees, taxes, dividend reinvestments, rewards/airdrops for crypto-like assets, and manual adjustments.
+- Trades can link to cash ledger transactions without making the cash movement count as ordinary income/expense.
+- Broker import taxonomies are preserved and mapped into canonical investment events: market/limit buys and sells, stock splits, mergers paid in stock, position closures, custody/robo fees, dividend tax corrections, and broker-side FX buy/sell rows.
+- Account-level investment fees that are not tied to a ticker still count against portfolio return.
 
 ### Dividends
 
 - Dividend events per position: pay date, amount, currency, tax withheld (optional).
 - Yield-on-cost calculation.
+- Gross dividends, withholding tax, net received, and reinvested dividends are all separately reportable.
+- Dividend income can appear in income views when the user wants that lens, but investment dashboards also show it as portfolio return.
+
+### Valuation history & performance
+
+- Daily position valuation history: quantity held, close price, market value, cost basis, unrealised P/L, realised P/L, dividends, fees, and total return.
+- Portfolio performance views separate **contributions/withdrawals**, **market movement**, **realised gains**, **unrealised gains**, **dividends**, **fees/taxes**, and **FX impact**.
+- Supports money-weighted and time-weighted return where enough history exists; simple P/L remains the default view.
+- Investment dashboard: total value, day/month/YTD/all-time P/L, realised vs unrealised, dividend income, allocation, top movers, exposure by currency/asset class/bucket/account.
+- Charts can switch between **total return** (price movement + realised P/L + dividends - fees/taxes) and **price-only return** (price movement + realised P/L).
+- Drill-down from dashboard → account → position → lot/trade/dividend history. Individual stock view shows holdings over time, trade markers, dividends, cost basis, and price/value chart.
+
+### Multi-currency investment views
+
+- Instrument currency is preserved (e.g. AAPL in USD), account currency is preserved, and reporting currency is user-selectable per view.
+- Any investment chart can be displayed in the workspace base currency or another chosen currency (e.g. USD-priced stock shown in CHF).
+- Historical valuations use the FX rate for that valuation date, not today's FX rate.
+- FX impact is shown separately where useful: "AAPL rose in USD, but USD/CHF movement reduced CHF return."
+- Missing FX rates use the latest available prior business-day rate, with gaps surfaced if the date is outside provider coverage.
 
 ### Asset-class tagging
 
@@ -372,11 +494,27 @@ For each upcoming cycle, user sees / edits:
 - Splits, reverse splits, mergers, delistings, spin-offs, symbol changes.
 - Manual entry UI: "PARAA delisted on 2025-08-06, became PSKY at ratio X" or "received $23 cash per share".
 - System re-bases cost and quantity correctly.
+- Symbol aliases and ticker lifecycle cleanup are first-class: broker exports may refer to the same instrument under old/new symbols, exchange suffixes, ISINs, or delisted tickers.
+- Manual closure policy for dead/delisted positions: user can close remaining quantity at zero or with cash received, with an auditable event.
 
 ### Price source
 
 - Broker-reported prices where available (IBKR sync provides latest).
 - External provider for manually-tracked positions (Revolut Shares, crypto) — one primary, one fallback.
+- Historical instrument prices are stored server-side as global reference data, shared across workspaces.
+- Refresh policy: daily end-of-day backfill for held/watchlisted instruments; intraday/latest quotes are optional and never required for historical reports.
+- Current/latest quotes are short-lived cache data; historical closes are durable shared reference data.
+- Provider data is cached; Folio does not call market-data or FX providers on every chart render.
+- Market-data views expose stale/error states and a manual refresh/bypass-cache action.
+- Manual price overrides are available for private/illiquid assets and for correcting provider gaps.
+
+### FX source
+
+- FX rates are global reference data, shared across workspaces and stored separately from transactions/trades.
+- Preferred free baseline: ECB daily reference rates for supported currencies; compute non-EUR pairs (e.g. USD→CHF) via EUR when needed.
+- Optional fallback/wider-coverage provider for currencies ECB does not cover.
+- Daily refresh after provider publication time, plus on-demand historical backfill when importing older trades.
+- Provider rows are immutable reference observations; corrected/replaced rates are inserted with source metadata rather than rewriting user transactions.
 
 ### Investment reports
 
@@ -384,6 +522,10 @@ For each upcoming cycle, user sees / edits:
 - Realised gains/losses by tax year (export-ready).
 - Bucket composition pie / weights.
 - Allocation vs. target over time.
+- Dividend report: gross/net/withheld by year, account, instrument, and currency.
+- FX exposure report: holdings and returns by currency, including base-currency drag/boost.
+- Performance attribution: return by position, bucket, account, currency, and time period.
+- Exportable transaction/lot/dividend/valuation history for audit and tax work.
 
 ### Other ideas
 
@@ -422,21 +564,84 @@ On if user is in Swizerland
 
 ## 14. Travel
 
+Travel is a full trip-planning workspace inside Folio, not only a tag on
+transactions. A trip combines itinerary, budget, booking records, documents,
+participants, split bills, reimbursements, FX, and actual transaction
+reconciliation.
+
 ### Trip entity
 
-- **Fields**: name, destination(s), start date, end date, participants (solo / group), overall budget.
-- **Per-category budgets** within a trip: flights, accommodation, food, activities, transport, shopping, other.
-- **Linked documents**: booking confirmations, flight tickets, hotel vouchers, itineraries, passport scans, insurance. All attachable.
-- **Linked transactions**: any transaction can be tagged to a trip. Trip view shows planned + actual spend per category.
-- **Trip status**: planned → active → completed.
-- **Post-trip summary**: total spend, per-category actual vs. budget, biggest categories, cost per day, settlement status.
+- **Fields**: name, destination(s), start date, end date, base/trip currency, participants (solo / group), overall budget, cover color/icon/banner, notes.
+- **Trip status**: planning -> confirmed -> active -> completed -> cancelled.
+- **Financial summary**: budget, total planned/booked/paid/pending, remaining budget, paid percentage, per-currency totals, FX estimate vs. actual.
+- **Per-category budgets** within a trip: flights, accommodation, food, activities, local transport, vehicle rental, shopping, insurance, documents/visas, other.
+- **Collaborators**: workspace members can be invited onto a trip with role/access. Non-workspace people can exist as trip participants for split bills without receiving app access.
+- **Shared timeline**: all dated items appear in an itinerary grouped by day; undated costs stay in a costs/backlog section until scheduled.
+- **Drag and organize**: reorder itinerary items, move items between days, and move generic costs into the itinerary when dates become known.
+
+### Trip items
+
+Every trip item is both a planning object and a potential financial object.
+
+- **Common fields**: name, item type, status, amount, currency, estimated/actual flag, date or date range, location, provider/vendor, booking/reference number, notes, attachments, linked transaction(s), split settings.
+- **Status lifecycle**: planned -> booked -> paid -> cancelled. Paid can be manual or detected from linked transactions.
+- **Amount lifecycle**: estimated amount, booked amount, paid amount, refunded amount, user share, reimbursable/share amount.
+- **Native currency preserved**: a CHF flight inside a EUR trip stays CHF, with EUR conversion shown for budget rollups.
+- **Item-level FX**: Folio stores the rate source/date used for estimates and later compares it with the actual card/bank FX rate.
+- **Move to/from costs**: an item can start as a generic cost, become a dated itinerary item, or be moved back if timing is unknown.
+- **Multiple transactions per item**: deposits, partial payments, final balance, refunds, damage deposits, card holds, and reimbursements can all attach to the same trip item.
+
+### Typed item forms
+
+The item form changes based on the travel item type so the user can fully plan
+and monitor the trip without scattering details across notes.
+
+- **Flight**: airline, flight number, departure airport, arrival airport, departure/arrival time, terminal/gate where known, seat, baggage, booking ref, ticket number, check-in URL, boarding pass attachment.
+- **Hotel / lodging**: property name, address, check-in/out dates and times, room/guest details, provider, booking ref, cancellation deadline, deposit/prepaid/balance due, voucher attachment.
+- **Vehicle rental**: pickup/dropoff location and time, rental company, car class/model, driver, booking ref, deposit/hold amount, insurance/excess notes, fuel policy, rental agreement attachment.
+- **Train / bus / ferry / local transport**: operator, route/from/to, departure/arrival time, ticket/pass details, platform/seat where known.
+- **Activity / event / reservation**: venue, start/end time, ticket/reservation number, participant count, cancellation deadline, ticket/voucher attachment.
+- **Food / restaurant**: reservation time, restaurant/location, party size, deposit/minimum spend, split settings.
+- **Insurance / visa / documents**: policy/application/reference numbers, coverage dates, relevant people, required documents, expiry/reminder dates.
+- **Generic cost**: fallback for anything that does not need a specialized schema, still with amount, status, date, notes, attachments, and split support.
+
+### Attachments and documents
+
+- Attachments exist at both trip level and item level.
+- Trip-level files: passports, insurance, global itinerary PDF, emergency contacts, general travel documents.
+- Item-level files: flight tickets, boarding passes, hotel vouchers, rental contracts, receipts, booking confirmations, activity tickets.
+- Supported files: PDF and images at minimum; later, email import and OCR can extract booking details and costs.
+- Documents can be linked to a participant when relevant, e.g. one person's visa or ticket.
+- Attachment storage shows quota usage and supports bulk download/export with the trip.
+
+### Ledger integration
+
+- Any transaction can be linked to a trip and optionally to a specific trip item.
+- Folio can suggest matches from merchant, amount, currency, date, location, booking reference, and imported receipt metadata.
+- When a matching bank transaction arrives, the item becomes paid/reconciled automatically.
+- Card holds and deposits can be marked as non-expense until captured; refunds net against the original item.
+- Trip spending can be included in normal category stats, shown as a trip slice, or isolated in trip reports depending on the lens.
+- Planned trip costs feed into the salary-cycle plan as dated commitments before the trip and during the trip.
+- Remaining trip cash need is visible before departure: unpaid bookings, planned local spending, pending conversions, and expected reimbursements.
 
 ### Shared trip expenses (split-bills integrated)
 
-- Per-trip participant list (you + friends).
-- Any trip transaction can be split across participants: equal / by %, / by specific amounts.
-- Per-trip ledger: who paid what, who owes whom, running balances.
+- Per-trip participant list: workspace users, invited collaborators, and manual people.
+- Any trip item or transaction can be split across participants: equal, by parts/shares, by percentage, by fixed amounts, or by itemised lines.
+- A trip item can remain personal or become shared later.
+- Per-trip ledger: who paid what, who owes whom, running balances, pending reimbursements, settled amounts.
 - Settlement: mark a payment as settling the balance with person X; closes out the receivable.
+- Reimbursements link back to the original trip item so shared costs do not distort income/expense stats.
+- Multi-currency splits are supported: original charge currency, payer account currency, participant settlement currency, and base-currency reporting.
+- Final settlement view answers: "who should pay whom now to close the trip?"
+
+### Monitoring and retrospectives
+
+- During planning: show what is missing, unpaid, unbooked, over budget, or lacking documents.
+- During travel: show today's itinerary, paid/unpaid items, local currency budget remaining, emergency docs, and pending shared expenses.
+- After travel: total spend, planned vs. actual by category/item/person/currency, FX variance, refunds still pending, settlement status, cost per day, cost per participant.
+- Trip retrospectives feed future planning: average flight cost to a region, realistic food/local transport spend, recurring travel style, and seasonal FX/budget assumptions.
+- Completed trips stay as a searchable archive of itinerary, documents, receipts, actual transactions, and settlement history.
 
 ---
 

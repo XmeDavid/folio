@@ -19,8 +19,10 @@ import (
 	"github.com/xmedavid/folio/backend/internal/classification"
 	"github.com/xmedavid/folio/backend/internal/config"
 	"github.com/xmedavid/folio/backend/internal/identity"
+	"github.com/xmedavid/folio/backend/internal/investments"
 	"github.com/xmedavid/folio/backend/internal/jobs"
 	"github.com/xmedavid/folio/backend/internal/mailer"
+	"github.com/xmedavid/folio/backend/internal/marketdata"
 	"github.com/xmedavid/folio/backend/internal/transactions"
 )
 
@@ -78,6 +80,21 @@ func NewRouter(d Deps) http.Handler {
 	classificationSvc := classification.NewService(d.DB)
 	classificationH := classification.NewHandler(classificationSvc)
 
+	// Investments use a marketdata service (FX + price cache + providers).
+	// Providers are HTTP clients to public sources (Yahoo, Frankfurter); they
+	// are wired up unconditionally and the cache layer falls back to stale
+	// rows when an upstream call fails. To disable network calls in tests or
+	// for offline development, set MARKETDATA_OFFLINE=1.
+	var priceProvider marketdata.PriceProvider
+	var fxProvider marketdata.FXProvider
+	if os.Getenv("MARKETDATA_OFFLINE") == "" {
+		priceProvider = marketdata.NewYahooProvider()
+		fxProvider = marketdata.NewFrankfurterProvider()
+	}
+	mdSvc := marketdata.NewService(d.DB, priceProvider, fxProvider)
+	investmentsSvc := investments.NewService(d.DB, mdSvc)
+	investmentsH := investments.NewHandler(investmentsSvc)
+
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/version", versionHandler)
 
@@ -126,6 +143,7 @@ func NewRouter(d Deps) http.Handler {
 			r.Route("/merchants", classificationH.MountMerchants)
 			r.Route("/tags", classificationH.MountTags)
 			r.Route("/categorization-rules", classificationH.MountCategorizationRules)
+			r.Route("/investments", investmentsH.Mount)
 		})
 	})
 	return r
