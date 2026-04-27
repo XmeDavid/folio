@@ -176,7 +176,10 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteServiceError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]int{"refreshed": count})
+	// Force-refresh prices for every open position regardless of cache age
+	// so the user gets a definitively up-to-date view after clicking Refresh.
+	priced, _ := h.svc.PrefetchPrices(r.Context(), workspaceID, 0)
+	httpx.WriteJSON(w, http.StatusOK, map[string]int{"refreshed": count, "priced": priced})
 }
 
 // ---------------------------------------------------------------------------

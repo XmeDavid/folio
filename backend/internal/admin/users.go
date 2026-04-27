@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/identity"
 )
@@ -62,46 +63,53 @@ func (s *Service) ListUsers(ctx context.Context, filter UserListFilter) ([]ident
 		}
 	}
 	search := strings.TrimSpace(filter.Search)
-	rows, err := s.pool.Query(ctx, `
-		select id, email::text, display_name, email_verified_at, is_admin, last_workspace_id, created_at
-		from users
-		where ($1::text = '' or email::text ilike $2 or display_name ilike $2 or id::text ilike $2)
-		  and (not $3::bool or is_admin = true)
-		  and ($4::timestamptz is null or (created_at, id) < ($4, $5))
-		order by created_at desc, id desc
-		limit $6
-	`, search, "%"+search+"%", filter.IsAdminOnly, nullTime(cur.CreatedAt), nullUUID(cur.ID), filter.Limit+1)
+	rows, err := dbq.New(s.pool).AdminListUsers(ctx, dbq.AdminListUsersParams{
+		Search:          search,
+		SearchPattern:   "%" + search + "%",
+		IsAdminOnly:     filter.IsAdminOnly,
+		CursorCreatedAt: nullTimePtr(cur.CreatedAt),
+		CursorID:        nullUUIDPtr(cur.ID),
+		QueryLimit:      int32(filter.Limit + 1),
+	})
 	if err != nil {
 		return nil, Pagination{}, err
 	}
-	defer rows.Close()
 	users := make([]identity.User, 0, filter.Limit)
-	for rows.Next() {
-		var u identity.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.EmailVerifiedAt, &u.IsAdmin, &u.LastWorkspaceID, &u.CreatedAt); err != nil {
-			return nil, Pagination{}, err
-		}
-		users = append(users, u)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, Pagination{}, err
+	for _, r := range rows {
+		users = append(users, identity.User{
+			ID:              r.ID,
+			Email:           r.Email,
+			DisplayName:     r.DisplayName,
+			EmailVerifiedAt: r.EmailVerifiedAt,
+			IsAdmin:         r.IsAdmin,
+			LastWorkspaceID: r.LastWorkspaceID,
+			CreatedAt:       r.CreatedAt,
+		})
 	}
 	return pageUsers(users, filter.Limit)
 }
 
 func (s *Service) UserDetail(ctx context.Context, userID uuid.UUID, actorUserID uuid.UUID) (UserDetail, error) {
 	var d UserDetail
-	err := s.pool.QueryRow(ctx, `
-		select id, email::text, display_name, email_verified_at, is_admin, last_workspace_id, created_at, last_login_at
-		from users where id = $1
-	`, userID).Scan(&d.User.ID, &d.User.Email, &d.User.DisplayName, &d.User.EmailVerifiedAt, &d.User.IsAdmin, &d.User.LastWorkspaceID, &d.User.CreatedAt, &d.LastLoginAt)
+	q := dbq.New(s.pool)
+	row, err := q.AdminGetUserDetail(ctx, userID)
 	if errorsIsNoRows(err) {
 		return d, httpx.NewNotFoundError("user")
 	}
 	if err != nil {
 		return d, err
 	}
-	if err := s.loadUserDetailChildren(ctx, userID, &d); err != nil {
+	d.User = identity.User{
+		ID:              row.ID,
+		Email:           row.Email,
+		DisplayName:     row.DisplayName,
+		EmailVerifiedAt: row.EmailVerifiedAt,
+		IsAdmin:         row.IsAdmin,
+		LastWorkspaceID: row.LastWorkspaceID,
+		CreatedAt:       row.CreatedAt,
+	}
+	d.LastLoginAt = row.LastLoginAt
+	if err := s.loadUserDetailChildren(ctx, q, userID, &d); err != nil {
 		return d, err
 	}
 	if err := s.writeAdminAuditRow(ctx, "admin.viewed_user", actorUserID, "user", userID, nil, nil); err != nil {
@@ -110,64 +118,63 @@ func (s *Service) UserDetail(ctx context.Context, userID uuid.UUID, actorUserID 
 	return d, nil
 }
 
-func (s *Service) loadUserDetailChildren(ctx context.Context, userID uuid.UUID, d *UserDetail) error {
-	rows, err := s.pool.Query(ctx, `
-		select t.id, t.name, t.slug::text, tm.role::text, tm.created_at
-		from workspace_memberships tm join workspaces t on t.id = tm.workspace_id
-		where tm.user_id = $1 order by tm.created_at desc
-	`, userID)
+func (s *Service) loadUserDetailChildren(ctx context.Context, q *dbq.Queries, userID uuid.UUID, d *UserDetail) error {
+	mRows, err := q.AdminListUserMemberships(ctx, userID)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var m MembershipSummary
-		if err := rows.Scan(&m.WorkspaceID, &m.WorkspaceName, &m.WorkspaceSlug, &m.Role, &m.JoinedAt); err != nil {
-			return err
+	for _, r := range mRows {
+		d.Memberships = append(d.Memberships, MembershipSummary{
+			WorkspaceID:   r.WorkspaceID,
+			WorkspaceName: r.WorkspaceName,
+			WorkspaceSlug: r.WorkspaceSlug,
+			Role:          r.Role,
+			JoinedAt:      r.JoinedAt,
+		})
+	}
+
+	sRows, err := q.AdminListUserActiveSessions(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, r := range sRows {
+		sess := SessionSummary{
+			ID:         r.ID,
+			CreatedAt:  r.CreatedAt,
+			LastSeenAt: r.LastSeenAt,
+			UserAgent:  r.UserAgent,
 		}
-		d.Memberships = append(d.Memberships, m)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	srows, err := s.pool.Query(ctx, `
-		select id, created_at, last_seen_at, coalesce(user_agent, ''), host(ip)
-		from sessions where user_id = $1 and expires_at > now()
-		order by last_seen_at desc
-	`, userID)
-	if err != nil {
-		return err
-	}
-	defer srows.Close()
-	for srows.Next() {
-		var sess SessionSummary
-		if err := srows.Scan(&sess.ID, &sess.CreatedAt, &sess.LastSeenAt, &sess.UserAgent, &sess.IP); err != nil {
-			return err
+		if r.Ip != "" {
+			v := r.Ip
+			sess.IP = &v
 		}
 		d.ActiveSessions = append(d.ActiveSessions, sess)
 	}
-	if err := srows.Err(); err != nil {
-		return err
-	}
-	prows, err := s.pool.Query(ctx, `select id, coalesce(label, ''), created_at from webauthn_credentials where user_id = $1 order by created_at desc`, userID)
+
+	pRows, err := q.AdminListUserPasskeys(ctx, userID)
 	if err != nil {
 		return err
 	}
-	defer prows.Close()
-	for prows.Next() {
-		var p PasskeySummary
-		if err := prows.Scan(&p.ID, &p.Label, &p.CreatedAt); err != nil {
-			return err
-		}
-		d.MFA.Passkeys = append(d.MFA.Passkeys, p)
+	for _, r := range pRows {
+		d.MFA.Passkeys = append(d.MFA.Passkeys, PasskeySummary{
+			ID:        r.ID,
+			Label:     r.Label,
+			CreatedAt: r.CreatedAt,
+		})
 	}
-	if err := prows.Err(); err != nil {
+
+	hasTOTP, err := q.AdminUserHasTOTP(ctx, userID)
+	if err != nil {
 		return err
 	}
-	if err := s.pool.QueryRow(ctx, `select exists(select 1 from totp_credentials where user_id = $1 and verified_at is not null)`, userID).Scan(&d.MFA.TOTPEnabled); err != nil {
+	d.MFA.TOTPEnabled = hasTOTP
+
+	recoveryCount, err := q.AdminCountUnusedRecoveryCodes(ctx, userID)
+	if err != nil {
 		return err
 	}
-	return s.pool.QueryRow(ctx, `select count(*) from auth_recovery_codes where user_id = $1 and consumed_at is null`, userID).Scan(&d.MFA.RecoveryCodesRemaining)
+	d.MFA.RecoveryCodesRemaining = int(recoveryCount)
+	return nil
 }
 
 func pageUsers(rows []identity.User, limit int) ([]identity.User, Pagination, error) {

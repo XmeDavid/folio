@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 )
 
@@ -19,8 +20,8 @@ func (s *Service) GrantAdmin(ctx context.Context, userID, actorUserID uuid.UUID)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var already bool
-	err = tx.QueryRow(ctx, `select is_admin from users where id = $1 for update`, userID).Scan(&already)
+	q := dbq.New(tx)
+	already, err := q.AdminGetUserIsAdminForUpdate(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return httpx.NewNotFoundError("user")
 	}
@@ -30,7 +31,7 @@ func (s *Service) GrantAdmin(ctx context.Context, userID, actorUserID uuid.UUID)
 	if already {
 		return tx.Commit(ctx)
 	}
-	if _, err := tx.Exec(ctx, `update users set is_admin = true, updated_at = now() where id = $1`, userID); err != nil {
+	if err := q.AdminSetUserAdmin(ctx, dbq.AdminSetUserAdminParams{IsAdmin: true, ID: userID}); err != nil {
 		return err
 	}
 	if err := writeAdminAudit(ctx, tx, "admin.granted", actorUserID, "user", userID, nil, map[string]any{"is_admin": true}); err != nil {
@@ -46,8 +47,8 @@ func (s *Service) RevokeAdmin(ctx context.Context, userID, actorUserID uuid.UUID
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var isAdmin bool
-	err = tx.QueryRow(ctx, `select is_admin from users where id = $1 for update`, userID).Scan(&isAdmin)
+	q := dbq.New(tx)
+	isAdmin, err := q.AdminGetUserIsAdminForUpdate(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return httpx.NewNotFoundError("user")
 	}
@@ -57,23 +58,14 @@ func (s *Service) RevokeAdmin(ctx context.Context, userID, actorUserID uuid.UUID
 	if !isAdmin {
 		return tx.Commit(ctx)
 	}
-	rows, err := tx.Query(ctx, `select id from users where is_admin = true order by id for update`)
+	adminCount, err := q.AdminCountAdmins(ctx)
 	if err != nil {
 		return err
 	}
-	var adminCount int
-	for rows.Next() {
-		adminCount++
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
 	if adminCount <= 1 {
 		return ErrLastAdmin
 	}
-	if _, err := tx.Exec(ctx, `update users set is_admin = false, updated_at = now() where id = $1`, userID); err != nil {
+	if err := q.AdminSetUserAdmin(ctx, dbq.AdminSetUserAdminParams{IsAdmin: false, ID: userID}); err != nil {
 		return err
 	}
 	if err := writeAdminAudit(ctx, tx, "admin.revoked", actorUserID, "user", userID, map[string]any{"is_admin": true}, map[string]any{"is_admin": false}); err != nil {

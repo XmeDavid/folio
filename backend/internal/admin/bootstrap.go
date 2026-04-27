@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 )
 
 // EnsureBootstrapAdminTx grants the ADMIN_BOOTSTRAP_EMAIL user is_admin
@@ -18,8 +20,8 @@ func (s *Service) EnsureBootstrapAdminTx(ctx context.Context, tx pgx.Tx, userID 
 	if target == "" || strings.ToLower(strings.TrimSpace(email)) != target {
 		return nil
 	}
-	var already bool
-	err := tx.QueryRow(ctx, `select is_admin from users where id = $1`, userID).Scan(&already)
+	q := dbq.New(tx)
+	already, err := q.AdminGetUserIsAdminForUpdate(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -29,7 +31,7 @@ func (s *Service) EnsureBootstrapAdminTx(ctx context.Context, tx pgx.Tx, userID 
 	if already {
 		return nil
 	}
-	if _, err := tx.Exec(ctx, `update users set is_admin = true, updated_at = now() where id = $1`, userID); err != nil {
+	if err := q.AdminSetUserAdmin(ctx, dbq.AdminSetUserAdminParams{IsAdmin: true, ID: userID}); err != nil {
 		return err
 	}
 	return writeAdminAudit(ctx, tx, "admin.bootstrap_granted", uuid.Nil, "user", userID, nil, map[string]any{"is_admin": true})

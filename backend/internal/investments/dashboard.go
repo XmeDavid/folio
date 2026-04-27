@@ -43,6 +43,12 @@ func (s *Service) BuildDashboardSummary(ctx context.Context, workspaceID uuid.UU
 		report = "CHF"
 	}
 
+	// Best-effort: prefetch latest quotes for every open position before the
+	// list query reads from instrument_prices. Stale rows older than 1h are
+	// refreshed; fresh rows are left alone. Failures are swallowed so a Yahoo
+	// hiccup never blanks the dashboard.
+	_, _ = s.PrefetchPrices(ctx, workspaceID, time.Hour)
+
 	positions, err := s.ListPositions(ctx, workspaceID, PositionFilter{AccountID: f.AccountID, OpenOnly: false})
 	if err != nil {
 		return nil, err

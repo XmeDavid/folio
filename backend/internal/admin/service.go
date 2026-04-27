@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/jobs"
 	"github.com/xmedavid/folio/backend/internal/mailer"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
@@ -36,9 +37,9 @@ func (s *Service) WithMailer(m mailer.Mailer) *Service {
 }
 
 func writeAdminAudit(ctx context.Context, tx pgx.Tx, action string, actorUserID uuid.UUID, entityType string, entityID uuid.UUID, before, after any) error {
-	var actor any
+	var actor *uuid.UUID
 	if actorUserID != uuid.Nil {
-		actor = actorUserID
+		actor = &actorUserID
 	}
 	beforeJSON, err := marshalNullableJSON(before)
 	if err != nil {
@@ -48,11 +49,16 @@ func writeAdminAudit(ctx context.Context, tx pgx.Tx, action string, actorUserID 
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `
-		insert into audit_events (id, workspace_id, actor_user_id, entity_type, entity_id, action, before_jsonb, after_jsonb, occurred_at)
-		values ($1, null, $2, $3, $4, $5, $6, $7, now())
-	`, uuidx.New(), actor, entityType, entityID, action, beforeJSON, afterJSON)
-	return err
+	return dbq.New(tx).InsertAuditEvent(ctx, dbq.InsertAuditEventParams{
+		ID:          uuidx.New(),
+		WorkspaceID: nil,
+		ActorUserID: actor,
+		Action:      action,
+		EntityType:  entityType,
+		EntityID:    entityID,
+		BeforeJsonb: beforeJSON,
+		AfterJsonb:  afterJSON,
+	})
 }
 
 func (s *Service) writeAdminAuditRow(ctx context.Context, action string, actorUserID uuid.UUID, entityType string, entityID uuid.UUID, before, after any) error {

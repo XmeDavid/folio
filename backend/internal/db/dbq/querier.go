@@ -16,6 +16,20 @@ type Querier interface {
 	AcquireFirstRunLock(ctx context.Context, pgAdvisoryXactLock int64) error
 	AcquireUserMembershipLock(ctx context.Context, dollar_1 string) error
 	AcquireWorkspaceMembershipLock(ctx context.Context, dollar_1 string) error
+	AdminCountAdmins(ctx context.Context) (int64, error)
+	AdminCountUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int64, error)
+	AdminCountWorkspaceMembers(ctx context.Context, workspaceID uuid.UUID) (int64, error)
+	AdminGetUserDetail(ctx context.Context, id uuid.UUID) (AdminGetUserDetailRow, error)
+	AdminGetUserIsAdminForUpdate(ctx context.Context, id uuid.UUID) (bool, error)
+	AdminGetWorkspaceByID(ctx context.Context, id uuid.UUID) (AdminGetWorkspaceByIDRow, error)
+	AdminListAuditEvents(ctx context.Context, arg AdminListAuditEventsParams) ([]AdminListAuditEventsRow, error)
+	AdminListUserActiveSessions(ctx context.Context, userID uuid.UUID) ([]AdminListUserActiveSessionsRow, error)
+	AdminListUserMemberships(ctx context.Context, userID uuid.UUID) ([]AdminListUserMembershipsRow, error)
+	AdminListUserPasskeys(ctx context.Context, userID uuid.UUID) ([]AdminListUserPasskeysRow, error)
+	AdminListUsers(ctx context.Context, arg AdminListUsersParams) ([]AdminListUsersRow, error)
+	AdminListWorkspaces(ctx context.Context, arg AdminListWorkspacesParams) ([]AdminListWorkspacesRow, error)
+	AdminSetUserAdmin(ctx context.Context, arg AdminSetUserAdminParams) error
+	AdminUserHasTOTP(ctx context.Context, userID uuid.UUID) (bool, error)
 	ArchiveCategory(ctx context.Context, arg ArchiveCategoryParams) (int64, error)
 	ArchiveTag(ctx context.Context, arg ArchiveTagParams) (int64, error)
 	BumpMFAChallengeAttempts(ctx context.Context, arg BumpMFAChallengeAttemptsParams) (int32, error)
