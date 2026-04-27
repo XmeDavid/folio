@@ -135,13 +135,13 @@ func NewRouter(d Deps) http.Handler {
 			r.With(authSvc.RequireEmailVerified).Route("/invites", inviteH.MountWorkspaceInvites)
 
 			r.Route("/accounts", func(r chi.Router) {
-				// Smart-import dispatcher: investment formats (IBKR, Revolut Trading)
-				// are absorbed by the investments service (auto-finds or creates a
-				// brokerage account, dedupes events). Anything else falls through to
-				// the bank-import preview flow. The route name is preserved so the
-				// existing /accounts page upload widget keeps working.
-				r.Post("/import-preview", smartImportPreview(investmentsSvc, importSvc))
+				// Order matters: chi's Mux.Handle is last-write-wins, and
+				// MountAccountRoutes also registers POST /import-preview. The
+				// smart-import dispatcher MUST be registered *after* it so the
+				// dispatcher (which falls through to bankimport itself when no
+				// investment format is detected) wins the route.
 				importH.MountAccountRoutes(r)
+				r.Post("/import-preview", smartImportPreview(investmentsSvc, importSvc))
 				accountsH.Mount(r)
 			})
 			r.Route("/transactions", transactionsH.Mount)

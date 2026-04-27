@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
@@ -92,6 +93,18 @@ func scanTag(r interface{ Scan(dest ...any) error }, t *Tag) error {
 	)
 }
 
+func tagFromRow(r dbq.Tag) Tag {
+	return Tag{
+		ID:          r.ID,
+		WorkspaceID: r.WorkspaceID,
+		Name:        r.Name,
+		Color:       r.Color,
+		ArchivedAt:  r.ArchivedAt,
+		CreatedAt:   r.CreatedAt,
+		UpdatedAt:   r.UpdatedAt,
+	}
+}
+
 // CreateTag inserts a tag for workspaceID and returns it.
 func (s *Service) CreateTag(ctx context.Context, workspaceID uuid.UUID, raw TagCreateInput) (*Tag, error) {
 	in, err := raw.normalize()
@@ -99,16 +112,16 @@ func (s *Service) CreateTag(ctx context.Context, workspaceID uuid.UUID, raw TagC
 		return nil, err
 	}
 	id := uuidx.New()
-	row := s.pool.QueryRow(ctx, `
-		insert into tags (id, workspace_id, name, color)
-		values ($1, $2, $3, $4)
-		returning `+tagCols,
-		id, workspaceID, in.Name, in.Color,
-	)
-	var t Tag
-	if err := scanTag(row, &t); err != nil {
+	row, err := dbq.New(s.pool).InsertTag(ctx, dbq.InsertTagParams{
+		ID:          id,
+		WorkspaceID: workspaceID,
+		Name:        in.Name,
+		Color:       in.Color,
+	})
+	if err != nil {
 		return nil, mapWriteError("tag", err)
 	}
+	t := tagFromRow(row)
 	return &t, nil
 }
 
@@ -142,16 +155,17 @@ func (s *Service) ListTags(ctx context.Context, workspaceID uuid.UUID, includeAr
 
 // GetTag returns a single tag scoped to workspaceID.
 func (s *Service) GetTag(ctx context.Context, workspaceID, id uuid.UUID) (*Tag, error) {
-	row := s.pool.QueryRow(ctx,
-		`select `+tagCols+` from tags where workspace_id = $1 and id = $2`,
-		workspaceID, id)
-	var t Tag
-	if err := scanTag(row, &t); err != nil {
+	row, err := dbq.New(s.pool).GetTag(ctx, dbq.GetTagParams{
+		WorkspaceID: workspaceID,
+		ID:          id,
+	})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("tag")
 		}
 		return nil, err
 	}
+	t := tagFromRow(row)
 	return &t, nil
 }
 
@@ -210,15 +224,16 @@ func (s *Service) UpdateTag(ctx context.Context, workspaceID, id uuid.UUID, raw 
 
 // ArchiveTag sets archived_at = now() idempotently.
 func (s *Service) ArchiveTag(ctx context.Context, workspaceID, id uuid.UUID) error {
-	tag, err := s.pool.Exec(ctx, `
-		update tags
-		set archived_at = coalesce(archived_at, $3)
-		where workspace_id = $1 and id = $2
-	`, workspaceID, id, s.now().UTC())
+	now := s.now().UTC()
+	n, err := dbq.New(s.pool).ArchiveTag(ctx, dbq.ArchiveTagParams{
+		Now:         &now,
+		WorkspaceID: workspaceID,
+		ID:          id,
+	})
 	if err != nil {
 		return fmt.Errorf("archive tag: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if n == 0 {
 		return httpx.NewNotFoundError("tag")
 	}
 	return nil

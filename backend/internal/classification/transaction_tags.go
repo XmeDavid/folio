@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 )
 
@@ -25,12 +26,11 @@ func (s *Service) AddTransactionTag(ctx context.Context, workspaceID, transactio
 	}
 	// composite FKs guarantee cross-workspace safety; do nothing on conflict
 	// (idempotent apply).
-	_, err := s.pool.Exec(ctx, `
-		insert into transaction_tags (transaction_id, tag_id, workspace_id)
-		values ($1, $2, $3)
-		on conflict (transaction_id, tag_id) do nothing
-	`, transactionID, tagID, workspaceID)
-	if err != nil {
+	if err := dbq.New(s.pool).InsertTransactionTag(ctx, dbq.InsertTransactionTagParams{
+		TransactionID: transactionID,
+		TagID:         tagID,
+		WorkspaceID:   workspaceID,
+	}); err != nil {
 		return mapWriteError("transaction_tag", err)
 	}
 	return nil
@@ -45,21 +45,21 @@ func (s *Service) RemoveTransactionTag(ctx context.Context, workspaceID, transac
 	if err := s.assertTransactionExists(ctx, workspaceID, transactionID); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx, `
-		delete from transaction_tags
-		where workspace_id = $1 and transaction_id = $2 and tag_id = $3
-	`, workspaceID, transactionID, tagID)
-	if err != nil {
+	if err := dbq.New(s.pool).DeleteTransactionTag(ctx, dbq.DeleteTransactionTagParams{
+		WorkspaceID:   workspaceID,
+		TransactionID: transactionID,
+		TagID:         tagID,
+	}); err != nil {
 		return fmt.Errorf("delete transaction_tag: %w", err)
 	}
 	return nil
 }
 
 func (s *Service) assertTransactionExists(ctx context.Context, workspaceID, txID uuid.UUID) error {
-	var ok bool
-	err := s.pool.QueryRow(ctx,
-		`select true from transactions where workspace_id = $1 and id = $2`,
-		workspaceID, txID).Scan(&ok)
+	_, err := dbq.New(s.pool).TransactionExists(ctx, dbq.TransactionExistsParams{
+		WorkspaceID: workspaceID,
+		ID:          txID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NewNotFoundError("transaction")
@@ -70,10 +70,10 @@ func (s *Service) assertTransactionExists(ctx context.Context, workspaceID, txID
 }
 
 func (s *Service) assertTagExists(ctx context.Context, workspaceID, tagID uuid.UUID) error {
-	var ok bool
-	err := s.pool.QueryRow(ctx,
-		`select true from tags where workspace_id = $1 and id = $2`,
-		workspaceID, tagID).Scan(&ok)
+	_, err := dbq.New(s.pool).TagExists(ctx, dbq.TagExistsParams{
+		WorkspaceID: workspaceID,
+		ID:          tagID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NewNotFoundError("tag")

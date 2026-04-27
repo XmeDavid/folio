@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 )
 
@@ -177,10 +178,10 @@ func (s *Service) ApplyRulesToTransaction(ctx context.Context, workspaceID, tran
 		return nil, err
 	}
 
-	if _, err := tx.Exec(ctx, `
-		update categorization_rules set last_matched_at = now()
-		where workspace_id = $1 and id = $2
-	`, workspaceID, matched.ID); err != nil {
+	if err := dbq.New(tx).StampRuleLastMatchedAt(ctx, dbq.StampRuleLastMatchedAtParams{
+		WorkspaceID: workspaceID,
+		ID:          matched.ID,
+	}); err != nil {
 		return nil, fmt.Errorf("stamp last_matched_at: %w", err)
 	}
 
@@ -198,50 +199,57 @@ func (s *Service) ApplyRulesToTransaction(ctx context.Context, workspaceID, tran
 }
 
 func loadTransactionSnapshot(ctx context.Context, tx pgx.Tx, workspaceID, transactionID uuid.UUID) (*transactionSnapshot, error) {
-	var snap transactionSnapshot
-	var amountStr string
-	err := tx.QueryRow(ctx, `
-		select id, workspace_id, account_id, amount::text,
-		       counterparty_raw, description, merchant_id, category_id, count_as_expense
-		from transactions
-		where workspace_id = $1 and id = $2
-	`, workspaceID, transactionID).Scan(
-		&snap.ID, &snap.WorkspaceID, &snap.AccountID, &amountStr,
-		&snap.CounterpartyRaw, &snap.Description,
-		&snap.MerchantID, &snap.CategoryID, &snap.CountAsExpense,
-	)
+	row, err := dbq.New(tx).LoadTransactionSnapshot(ctx, dbq.LoadTransactionSnapshotParams{
+		WorkspaceID: workspaceID,
+		ID:          transactionID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("transaction")
 		}
 		return nil, fmt.Errorf("load transaction: %w", err)
 	}
-	d, err := decimal.NewFromString(amountStr)
+	d, err := decimal.NewFromString(row.Amount)
 	if err != nil {
-		return nil, fmt.Errorf("parse amount %q: %w", amountStr, err)
+		return nil, fmt.Errorf("parse amount %q: %w", row.Amount, err)
 	}
-	snap.Amount = d
-	return &snap, nil
+	return &transactionSnapshot{
+		ID:              row.ID,
+		WorkspaceID:     row.WorkspaceID,
+		AccountID:       row.AccountID,
+		Amount:          d,
+		CounterpartyRaw: row.CounterpartyRaw,
+		Description:     row.Description,
+		MerchantID:      row.MerchantID,
+		CategoryID:      row.CategoryID,
+		CountAsExpense:  row.CountAsExpense,
+	}, nil
 }
 
 func loadEnabledRules(ctx context.Context, tx pgx.Tx, workspaceID uuid.UUID) ([]Rule, error) {
-	rows, err := tx.Query(ctx,
-		`select `+rulesCols+` from categorization_rules
-		 where workspace_id = $1 and enabled = true
-		 order by priority asc, created_at asc`, workspaceID)
+	rows, err := dbq.New(tx).LoadEnabledRules(ctx, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("query rules: %w", err)
 	}
-	defer rows.Close()
-	out := make([]Rule, 0)
-	for rows.Next() {
-		var r Rule
-		if err := scanRule(rows, &r); err != nil {
-			return nil, err
+	out := make([]Rule, 0, len(rows))
+	for _, r := range rows {
+		var rule Rule
+		rule.ID = r.ID
+		rule.WorkspaceID = r.WorkspaceID
+		rule.Priority = int(r.Priority)
+		rule.Enabled = r.Enabled
+		rule.LastMatchedAt = r.LastMatchedAt
+		rule.CreatedAt = r.CreatedAt
+		rule.UpdatedAt = r.UpdatedAt
+		if err := unmarshalWhen(r.WhenJsonb, &rule.When); err != nil {
+			return nil, fmt.Errorf("decode when_jsonb: %w", err)
 		}
-		out = append(out, r)
+		if err := unmarshalThen(r.ThenJsonb, &rule.Then); err != nil {
+			return nil, fmt.Errorf("decode then_jsonb: %w", err)
+		}
+		out = append(out, rule)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // applyThenToTransaction writes the rule's then-clause to the transaction
@@ -278,12 +286,13 @@ func applyThenToTransaction(ctx context.Context, tx pgx.Tx, workspaceID uuid.UUI
 		}
 	}
 
+	q := dbq.New(tx)
 	for _, tagID := range then.AddTagIDs {
-		if _, err := tx.Exec(ctx, `
-			insert into transaction_tags (transaction_id, tag_id, workspace_id)
-			values ($1, $2, $3)
-			on conflict (transaction_id, tag_id) do nothing
-		`, snap.ID, tagID, workspaceID); err != nil {
+		if err := q.InsertTransactionTag(ctx, dbq.InsertTransactionTagParams{
+			TransactionID: snap.ID,
+			TagID:         tagID,
+			WorkspaceID:   workspaceID,
+		}); err != nil {
 			return mapInsertErrorForApply(err)
 		}
 	}

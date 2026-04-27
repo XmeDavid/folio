@@ -16,8 +16,11 @@ type Querier interface {
 	AcquireFirstRunLock(ctx context.Context, pgAdvisoryXactLock int64) error
 	AcquireUserMembershipLock(ctx context.Context, dollar_1 string) error
 	AcquireWorkspaceMembershipLock(ctx context.Context, dollar_1 string) error
+	ArchiveCategory(ctx context.Context, arg ArchiveCategoryParams) (int64, error)
+	ArchiveTag(ctx context.Context, arg ArchiveTagParams) (int64, error)
 	BumpMFAChallengeAttempts(ctx context.Context, arg BumpMFAChallengeAttemptsParams) (int32, error)
 	BumpTOTPLastUsedStep(ctx context.Context, arg BumpTOTPLastUsedStepParams) (int64, error)
+	CategoryExists(ctx context.Context, arg CategoryExistsParams) (bool, error)
 	CheckEmailExistsExcludingUser(ctx context.Context, arg CheckEmailExistsExcludingUserParams) (bool, error)
 	CheckIsWorkspaceOwner(ctx context.Context, arg CheckIsWorkspaceOwnerParams) (bool, error)
 	ClearAccountGroupMembership(ctx context.Context, arg ClearAccountGroupMembershipParams) error
@@ -39,6 +42,7 @@ type Querier interface {
 	DeleteSessionByIDReturningUserID(ctx context.Context, id string) (uuid.UUID, error)
 	DeleteSessionsByUser(ctx context.Context, userID uuid.UUID) error
 	DeleteTOTPCredential(ctx context.Context, userID uuid.UUID) (int64, error)
+	DeleteTransactionTag(ctx context.Context, arg DeleteTransactionTagParams) error
 	GetAccountCurrency(ctx context.Context, arg GetAccountCurrencyParams) (string, error)
 	GetAccountGroup(ctx context.Context, arg GetAccountGroupParams) (GetAccountGroupRow, error)
 	// Derived balance rule (spec §5.2):
@@ -50,6 +54,7 @@ type Querier interface {
 	// transactions are included correctly.
 	GetAccountWithBalance(ctx context.Context, arg GetAccountWithBalanceParams) (GetAccountWithBalanceRow, error)
 	GetAuthTokenForConsume(ctx context.Context, arg GetAuthTokenForConsumeParams) (GetAuthTokenForConsumeRow, error)
+	GetCategory(ctx context.Context, arg GetCategoryParams) (Category, error)
 	GetInviteForAccept(ctx context.Context, tokenHash []byte) (GetInviteForAcceptRow, error)
 	GetInviteForRevoke(ctx context.Context, arg GetInviteForRevokeParams) (GetInviteForRevokeRow, error)
 	GetInvitePreview(ctx context.Context, tokenHash []byte) (GetInvitePreviewRow, error)
@@ -60,6 +65,7 @@ type Querier interface {
 	GetTOTPSecretCipher(ctx context.Context, userID uuid.UUID) (string, error)
 	GetTOTPSecretCipherAny(ctx context.Context, userID uuid.UUID) (string, error)
 	GetTOTPVerifiedAt(ctx context.Context, userID uuid.UUID) (*time.Time, error)
+	GetTag(ctx context.Context, arg GetTagParams) (Tag, error)
 	GetUserByEmailWithPassword(ctx context.Context, email string) (GetUserByEmailWithPasswordRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
 	GetUserEmailAndDisplayName(ctx context.Context, id uuid.UUID) (GetUserEmailAndDisplayNameRow, error)
@@ -81,6 +87,7 @@ type Querier interface {
 	InsertAuditEvent(ctx context.Context, arg InsertAuditEventParams) error
 	InsertAuditEventWithRequest(ctx context.Context, arg InsertAuditEventWithRequestParams) error
 	InsertAuthToken(ctx context.Context, arg InsertAuthTokenParams) error
+	InsertCategory(ctx context.Context, arg InsertCategoryParams) (Category, error)
 	InsertImportAccount(ctx context.Context, arg InsertImportAccountParams) error
 	InsertImportBatch(ctx context.Context, arg InsertImportBatchParams) error
 	InsertImportTransaction(ctx context.Context, arg InsertImportTransactionParams) error
@@ -92,6 +99,8 @@ type Querier interface {
 	InsertRecoveryCode(ctx context.Context, arg InsertRecoveryCodeParams) error
 	InsertSession(ctx context.Context, arg InsertSessionParams) error
 	InsertSourceRef(ctx context.Context, arg InsertSourceRefParams) error
+	InsertTag(ctx context.Context, arg InsertTagParams) (Tag, error)
+	InsertTransactionTag(ctx context.Context, arg InsertTransactionTagParams) error
 	InsertUserReturning(ctx context.Context, arg InsertUserReturningParams) (InsertUserReturningRow, error)
 	InsertWebAuthnCredential(ctx context.Context, arg InsertWebAuthnCredentialParams) error
 	InsertWorkspace(ctx context.Context, arg InsertWorkspaceParams) (InsertWorkspaceRow, error)
@@ -110,6 +119,7 @@ type Querier interface {
 	ListUnconsumedRecoveryCodes(ctx context.Context, userID uuid.UUID) ([]ListUnconsumedRecoveryCodesRow, error)
 	ListWebAuthnCredentials(ctx context.Context, userID uuid.UUID) ([]ListWebAuthnCredentialsRow, error)
 	ListWorkspacesWithRoleByUser(ctx context.Context, userID uuid.UUID) ([]ListWorkspacesWithRoleByUserRow, error)
+	LoadEnabledRules(ctx context.Context, workspaceID uuid.UUID) ([]CategorizationRule, error)
 	// Load existing transactions in the date range for duplicate/conflict detection.
 	LoadExistingTransactions(ctx context.Context, arg LoadExistingTransactionsParams) ([]LoadExistingTransactionsRow, error)
 	// Load real (non-synthetic) rows near a synthetic for residual-explained check.
@@ -117,12 +127,16 @@ type Querier interface {
 	LoadRealRowsForSynthetic(ctx context.Context, arg LoadRealRowsForSyntheticParams) ([]LoadRealRowsForSyntheticRow, error)
 	// Scan synthetic balance-reconcile rows for potential retirement.
 	LoadSyntheticCandidates(ctx context.Context, arg LoadSyntheticCandidatesParams) ([]LoadSyntheticCandidatesRow, error)
+	LoadTransactionSnapshot(ctx context.Context, arg LoadTransactionSnapshotParams) (LoadTransactionSnapshotRow, error)
 	MarkInviteAccepted(ctx context.Context, id uuid.UUID) error
 	MarkInviteRevoked(ctx context.Context, id uuid.UUID) error
 	ReorderAccount(ctx context.Context, arg ReorderAccountParams) (int64, error)
 	ReorderAccountGroup(ctx context.Context, arg ReorderAccountGroupParams) (int64, error)
 	RestoreWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
 	SoftDeleteWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
+	StampRuleLastMatchedAt(ctx context.Context, arg StampRuleLastMatchedAtParams) error
+	TagExists(ctx context.Context, arg TagExistsParams) (bool, error)
+	TransactionExists(ctx context.Context, arg TransactionExistsParams) (bool, error)
 	// Opt-in reactivate: clear archived_at when the user explicitly
 	// asked to resurface this account. No-op for non-archived rows.
 	UnarchiveAccount(ctx context.Context, arg UnarchiveAccountParams) error

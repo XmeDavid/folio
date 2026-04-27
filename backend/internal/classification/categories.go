@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
@@ -127,6 +128,20 @@ func scanCategory(r categoryRow, c *Category) error {
 	)
 }
 
+func categoryFromRow(r dbq.Category) Category {
+	return Category{
+		ID:          r.ID,
+		WorkspaceID: r.WorkspaceID,
+		ParentID:    r.ParentID,
+		Name:        r.Name,
+		Color:       r.Color,
+		SortOrder:   int(r.SortOrder),
+		ArchivedAt:  r.ArchivedAt,
+		CreatedAt:   r.CreatedAt,
+		UpdatedAt:   r.UpdatedAt,
+	}
+}
+
 // CreateCategory inserts a category for workspaceID and returns it.
 func (s *Service) CreateCategory(ctx context.Context, workspaceID uuid.UUID, raw CategoryCreateInput) (*Category, error) {
 	in, err := raw.normalize()
@@ -143,16 +158,23 @@ func (s *Service) CreateCategory(ctx context.Context, workspaceID uuid.UUID, raw
 	}
 
 	id := uuidx.New()
-	row := s.pool.QueryRow(ctx, `
-		insert into categories (id, workspace_id, parent_id, name, color, sort_order)
-		values ($1, $2, $3, $4, $5, coalesce($6, 0))
-		returning `+categoryCols,
-		id, workspaceID, in.ParentID, in.Name, in.Color, in.SortOrder,
-	)
-	var c Category
-	if err := scanCategory(row, &c); err != nil {
+	var sortOrder *int32
+	if in.SortOrder != nil {
+		v := int32(*in.SortOrder)
+		sortOrder = &v
+	}
+	row, err := dbq.New(s.pool).InsertCategory(ctx, dbq.InsertCategoryParams{
+		ID:          id,
+		WorkspaceID: workspaceID,
+		ParentID:    in.ParentID,
+		Name:        in.Name,
+		Color:       in.Color,
+		SortOrder:   sortOrder,
+	})
+	if err != nil {
 		return nil, mapWriteError("category", err)
 	}
+	c := categoryFromRow(row)
 	return &c, nil
 }
 
@@ -160,10 +182,10 @@ func (s *Service) CreateCategory(ctx context.Context, workspaceID uuid.UUID, raw
 // categoryID is missing for workspaceID. Used by Create/Update to pre-validate
 // parentId and by the merchants path to pre-validate defaultCategoryId.
 func (s *Service) assertCategoryExists(ctx context.Context, workspaceID, categoryID uuid.UUID) error {
-	var exists bool
-	err := s.pool.QueryRow(ctx, `
-		select true from categories where workspace_id = $1 and id = $2
-	`, workspaceID, categoryID).Scan(&exists)
+	_, err := dbq.New(s.pool).CategoryExists(ctx, dbq.CategoryExistsParams{
+		WorkspaceID: workspaceID,
+		ID:          categoryID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NewValidationError("referenced category does not exist for this workspace")
@@ -203,16 +225,17 @@ func (s *Service) ListCategories(ctx context.Context, workspaceID uuid.UUID, inc
 
 // GetCategory returns a single category scoped to workspaceID.
 func (s *Service) GetCategory(ctx context.Context, workspaceID, id uuid.UUID) (*Category, error) {
-	row := s.pool.QueryRow(ctx,
-		`select `+categoryCols+` from categories where workspace_id = $1 and id = $2`,
-		workspaceID, id)
-	var c Category
-	if err := scanCategory(row, &c); err != nil {
+	row, err := dbq.New(s.pool).GetCategory(ctx, dbq.GetCategoryParams{
+		WorkspaceID: workspaceID,
+		ID:          id,
+	})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("category")
 		}
 		return nil, err
 	}
+	c := categoryFromRow(row)
 	return &c, nil
 }
 
@@ -293,15 +316,16 @@ func (s *Service) UpdateCategory(ctx context.Context, workspaceID, id uuid.UUID,
 // ArchiveCategory sets archived_at = now() for the category, idempotently.
 // Returns NotFoundError only when the row does not exist for workspaceID.
 func (s *Service) ArchiveCategory(ctx context.Context, workspaceID, id uuid.UUID) error {
-	tag, err := s.pool.Exec(ctx, `
-		update categories
-		set archived_at = coalesce(archived_at, $3)
-		where workspace_id = $1 and id = $2
-	`, workspaceID, id, s.now().UTC())
+	now := s.now().UTC()
+	n, err := dbq.New(s.pool).ArchiveCategory(ctx, dbq.ArchiveCategoryParams{
+		Now:         &now,
+		WorkspaceID: workspaceID,
+		ID:          id,
+	})
 	if err != nil {
 		return fmt.Errorf("archive category: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if n == 0 {
 		return httpx.NewNotFoundError("category")
 	}
 	return nil
