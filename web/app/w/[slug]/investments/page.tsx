@@ -5,7 +5,7 @@ import { use } from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileUp, LineChart, RefreshCcw, ArrowUpRight } from "lucide-react";
+import { LineChart, RefreshCcw, ArrowUpRight } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
 import { EmptyState, ErrorBanner, LoadingText } from "@/components/app/empty";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,6 @@ import {
   refreshInvestments,
   type Holding,
 } from "@/lib/api/investments";
-import { ImportInvestmentsCard } from "@/components/investments/import-dialog";
 import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 import { formatAmount } from "@/lib/format";
 
@@ -42,7 +41,6 @@ export default function InvestmentsDashboardPage({
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["investments"] }),
   });
-  const [importing, setImporting] = React.useState(false);
 
   if (!workspace) return null;
 
@@ -56,13 +54,6 @@ export default function InvestmentsDashboardPage({
         description="Total value, returns, and exposure across every brokerage account in this workspace."
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => setImporting((v) => !v)}
-            >
-              <FileUp className="h-4 w-4" />
-              {importing ? "Close import" : "Import"}
-            </Button>
             <Button
               variant="secondary"
               onClick={() => refreshMutation.mutate()}
@@ -80,13 +71,6 @@ export default function InvestmentsDashboardPage({
           </div>
         }
       />
-
-      {importing && workspaceId ? (
-        <ImportInvestmentsCard
-          workspaceId={workspaceId}
-          onClose={() => setImporting(false)}
-        />
-      ) : null}
 
       {dashboardQuery.isLoading ? (
         <LoadingText>Loading dashboard…</LoadingText>

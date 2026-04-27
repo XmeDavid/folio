@@ -14,9 +14,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/money"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
@@ -201,39 +203,67 @@ type ReorderInput struct {
 	Accounts []AccountOrderInput
 }
 
-func scanAccountGroup(row interface{ Scan(...any) error }, g *AccountGroup) error {
-	return row.Scan(
-		&g.ID, &g.WorkspaceID, &g.Name, &g.SortOrder, &g.AggregateBalances, &g.ArchivedAt,
-		&g.CreatedAt, &g.UpdatedAt,
-	)
+// decimalToNumeric converts a decimal.Decimal to pgtype.Numeric for sqlc params.
+func decimalToNumeric(d decimal.Decimal) pgtype.Numeric {
+	var n pgtype.Numeric
+	_ = n.Scan(d.String())
+	return n
+}
+
+// toTimePtr converts an interface{} (from sqlc's untyped CASE result) to
+// *time.Time, returning nil when the database value is NULL.
+func toTimePtr(v interface{}) *time.Time {
+	if v == nil {
+		return nil
+	}
+	if t, ok := v.(time.Time); ok {
+		return &t
+	}
+	return nil
+}
+
+func groupRowToModel(r dbq.GetAccountGroupRow) AccountGroup {
+	return AccountGroup{
+		ID:                r.ID,
+		WorkspaceID:       r.WorkspaceID,
+		Name:              r.Name,
+		SortOrder:         int(r.SortOrder),
+		AggregateBalances: r.AggregateBalances,
+		ArchivedAt:        r.ArchivedAt,
+		CreatedAt:         r.CreatedAt,
+		UpdatedAt:         r.UpdatedAt,
+	}
 }
 
 func (s *Service) ListGroups(ctx context.Context, workspaceID uuid.UUID, includeArchived bool) ([]AccountGroup, error) {
-	q := `
-		select id, workspace_id, name, sort_order, aggregate_balances, archived_at, created_at, updated_at
-		from account_groups
-		where workspace_id = $1
-	`
-	if !includeArchived {
-		q += ` and archived_at is null`
-	}
-	q += ` order by sort_order, created_at`
-
-	rows, err := s.pool.Query(ctx, q, workspaceID)
-	if err != nil {
-		return nil, fmt.Errorf("query account groups: %w", err)
-	}
-	defer rows.Close()
-
+	q := dbq.New(s.pool)
 	out := make([]AccountGroup, 0)
-	for rows.Next() {
-		var g AccountGroup
-		if err := scanAccountGroup(rows, &g); err != nil {
-			return nil, fmt.Errorf("scan account group: %w", err)
+	if includeArchived {
+		rows, err := q.ListAccountGroups(ctx, workspaceID)
+		if err != nil {
+			return nil, fmt.Errorf("query account groups: %w", err)
 		}
-		out = append(out, g)
+		for _, r := range rows {
+			out = append(out, AccountGroup{
+				ID: r.ID, WorkspaceID: r.WorkspaceID, Name: r.Name,
+				SortOrder: int(r.SortOrder), AggregateBalances: r.AggregateBalances,
+				ArchivedAt: r.ArchivedAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			})
+		}
+	} else {
+		rows, err := q.ListAccountGroupsActive(ctx, workspaceID)
+		if err != nil {
+			return nil, fmt.Errorf("query account groups: %w", err)
+		}
+		for _, r := range rows {
+			out = append(out, AccountGroup{
+				ID: r.ID, WorkspaceID: r.WorkspaceID, Name: r.Name,
+				SortOrder: int(r.SortOrder), AggregateBalances: r.AggregateBalances,
+				ArchivedAt: r.ArchivedAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			})
+		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Service) CreateGroup(ctx context.Context, workspaceID uuid.UUID, raw CreateGroupInput) (*AccountGroup, error) {
@@ -242,25 +272,24 @@ func (s *Service) CreateGroup(ctx context.Context, workspaceID uuid.UUID, raw Cr
 		return nil, httpx.NewValidationError("name is required")
 	}
 
-	groupID := uuidx.New()
-	var g AccountGroup
-	err := s.pool.QueryRow(ctx, `
-		insert into account_groups (id, workspace_id, name, aggregate_balances, sort_order)
-		values (
-			$1, $2, $3, $4,
-			coalesce((select max(sort_order) + 1000 from account_groups where workspace_id = $2), 1000)
-		)
-		returning id, workspace_id, name, sort_order, aggregate_balances, archived_at, created_at, updated_at
-	`, groupID, workspaceID, name, raw.AggregateBalances).Scan(
-		&g.ID, &g.WorkspaceID, &g.Name, &g.SortOrder, &g.AggregateBalances, &g.ArchivedAt, &g.CreatedAt, &g.UpdatedAt,
-	)
+	row, err := dbq.New(s.pool).InsertAccountGroup(ctx, dbq.InsertAccountGroupParams{
+		ID:                uuidx.New(),
+		WorkspaceID:       workspaceID,
+		Name:              name,
+		AggregateBalances: raw.AggregateBalances,
+	})
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, httpx.NewValidationError("account group name already exists")
 		}
 		return nil, fmt.Errorf("insert account group: %w", err)
 	}
-	return &g, nil
+	g := &AccountGroup{
+		ID: row.ID, WorkspaceID: row.WorkspaceID, Name: row.Name,
+		SortOrder: int(row.SortOrder), AggregateBalances: row.AggregateBalances,
+		ArchivedAt: row.ArchivedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}
+	return g, nil
 }
 
 func (s *Service) UpdateGroup(ctx context.Context, workspaceID, groupID uuid.UUID, in PatchGroupInput) (*AccountGroup, error) {
@@ -316,18 +345,17 @@ func (s *Service) UpdateGroup(ctx context.Context, workspaceID, groupID uuid.UUI
 }
 
 func (s *Service) GetGroup(ctx context.Context, workspaceID, groupID uuid.UUID) (*AccountGroup, error) {
-	var g AccountGroup
-	err := scanAccountGroup(s.pool.QueryRow(ctx, `
-		select id, workspace_id, name, sort_order, aggregate_balances, archived_at, created_at, updated_at
-		from account_groups
-		where workspace_id = $1 and id = $2
-	`, workspaceID, groupID), &g)
+	row, err := dbq.New(s.pool).GetAccountGroup(ctx, dbq.GetAccountGroupParams{
+		WorkspaceID: workspaceID,
+		ID:          groupID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("account group")
 		}
 		return nil, err
 	}
+	g := groupRowToModel(row)
 	return &g, nil
 }
 
@@ -338,18 +366,21 @@ func (s *Service) DeleteGroup(ctx context.Context, workspaceID, groupID uuid.UUI
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx, `
-		update accounts
-		set account_group_id = null
-		where workspace_id = $1 and account_group_id = $2
-	`, workspaceID, groupID); err != nil {
+	q := dbq.New(tx)
+	if err := q.ClearAccountGroupMembership(ctx, dbq.ClearAccountGroupMembershipParams{
+		WorkspaceID: workspaceID,
+		GroupID:     groupID,
+	}); err != nil {
 		return fmt.Errorf("clear account group membership: %w", err)
 	}
-	tag, err := tx.Exec(ctx, `delete from account_groups where workspace_id = $1 and id = $2`, workspaceID, groupID)
+	n, err := q.DeleteAccountGroup(ctx, dbq.DeleteAccountGroupParams{
+		WorkspaceID: workspaceID,
+		ID:          groupID,
+	})
 	if err != nil {
 		return fmt.Errorf("delete account group: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if n == 0 {
 		return httpx.NewNotFoundError("account group")
 	}
 	return tx.Commit(ctx)
@@ -362,30 +393,32 @@ func (s *Service) Reorder(ctx context.Context, workspaceID uuid.UUID, in Reorder
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	q := dbq.New(tx)
 	for _, group := range in.Groups {
-		tag, err := tx.Exec(ctx, `
-			update account_groups
-			set sort_order = $3
-			where workspace_id = $1 and id = $2
-		`, workspaceID, group.ID, group.SortOrder)
+		n, err := q.ReorderAccountGroup(ctx, dbq.ReorderAccountGroupParams{
+			WorkspaceID: workspaceID,
+			ID:          group.ID,
+			SortOrder:   int32(group.SortOrder),
+		})
 		if err != nil {
 			return fmt.Errorf("reorder account group: %w", err)
 		}
-		if tag.RowsAffected() == 0 {
+		if n == 0 {
 			return httpx.NewNotFoundError("account group")
 		}
 	}
 
 	for _, account := range in.Accounts {
-		tag, err := tx.Exec(ctx, `
-			update accounts
-			set account_group_id = $3, account_sort_order = $4
-			where workspace_id = $1 and id = $2
-		`, workspaceID, account.ID, account.AccountGroupID, account.SortOrder)
+		n, err := q.ReorderAccount(ctx, dbq.ReorderAccountParams{
+			WorkspaceID:      workspaceID,
+			ID:               account.ID,
+			AccountGroupID:   account.AccountGroupID,
+			AccountSortOrder: int32(account.SortOrder),
+		})
 		if err != nil {
 			return fmt.Errorf("reorder account: %w", err)
 		}
-		if tag.RowsAffected() == 0 {
+		if n == 0 {
 			return httpx.NewNotFoundError("account")
 		}
 	}
@@ -425,52 +458,34 @@ func (s *Service) Create(ctx context.Context, workspaceID uuid.UUID, raw CreateI
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var acc Account
-	var balance string
-	err = tx.QueryRow(ctx, `
-		insert into accounts (
-			id, workspace_id, name, nickname, kind, currency, institution,
-			account_group_id, account_sort_order,
-			open_date, opening_balance, opening_balance_date,
-			include_in_networth, include_in_savings_rate
-		) values (
-			$1, $2, $3, $4, $5::account_kind, $6, $7,
-			$8,
-			coalesce((
-				select max(account_sort_order) + 1000
-				from accounts
-				where workspace_id = $2
-				  and account_group_id is not distinct from $8::uuid
-			), 1000),
-			$9, $10::numeric, $11,
-			$12, $13
-		)
-		returning id, workspace_id, name, nickname, kind::text, currency, institution,
-		          account_group_id, account_sort_order,
-		          open_date, close_date, opening_balance::text, opening_balance_date,
-		          include_in_networth, include_in_savings_rate, archived_at,
-		          created_at, updated_at
-	`, accountID, workspaceID, in.Name, in.Nickname, in.Kind, in.Currency, in.Institution,
-		in.AccountGroupID, in.OpenDate, openingBalanceStr, *in.OpeningBalanceDate,
-		*in.IncludeInNetworth, *in.IncludeInSavingsRate).
-		Scan(&acc.ID, &acc.WorkspaceID, &acc.Name, &acc.Nickname, &acc.Kind, &acc.Currency, &acc.Institution,
-			&acc.AccountGroupID, &acc.AccountSortOrder,
-			&acc.OpenDate, &acc.CloseDate, &balance, &acc.OpeningBalanceDate,
-			&acc.IncludeInNetworth, &acc.IncludeInSavingsRate, &acc.ArchivedAt,
-			&acc.CreatedAt, &acc.UpdatedAt)
+	q := dbq.New(tx)
+	row, err := q.InsertAccount(ctx, dbq.InsertAccountParams{
+		ID:                   accountID,
+		WorkspaceID:          workspaceID,
+		Name:                 in.Name,
+		Nickname:             in.Nickname,
+		Kind:                 dbq.AccountKind(in.Kind),
+		Currency:             in.Currency,
+		Institution:          in.Institution,
+		AccountGroupID:       in.AccountGroupID,
+		OpenDate:             in.OpenDate,
+		OpeningBalance:       decimalToNumeric(in.OpeningBalance),
+		OpeningBalanceDate:   *in.OpeningBalanceDate,
+		IncludeInNetworth:    *in.IncludeInNetworth,
+		IncludeInSavingsRate: *in.IncludeInSavingsRate,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("insert account: %w", err)
 	}
-	acc.OpeningBalance = balance
 
-	_, err = tx.Exec(ctx, `
-		insert into account_balance_snapshots (
-			id, workspace_id, account_id, as_of, balance, currency, source
-		) values (
-			$1, $2, $3, $4, $5::numeric, $6, 'opening'
-		)
-	`, snapshotID, workspaceID, accountID, openingTS, openingBalanceStr, in.Currency)
-	if err != nil {
+	if err := q.InsertOpeningSnapshot(ctx, dbq.InsertOpeningSnapshotParams{
+		ID:          snapshotID,
+		WorkspaceID: workspaceID,
+		AccountID:   accountID,
+		AsOf:        openingTS,
+		Balance:     decimalToNumeric(in.OpeningBalance),
+		Currency:    in.Currency,
+	}); err != nil {
 		return nil, fmt.Errorf("insert opening snapshot: %w", err)
 	}
 
@@ -478,120 +493,110 @@ func (s *Service) Create(ctx context.Context, workspaceID uuid.UUID, raw CreateI
 		return nil, fmt.Errorf("commit: %w", err)
 	}
 
-	acc.Balance = openingBalanceStr
-	ts := openingTS
-	acc.BalanceAsOf = &ts
-	return &acc, nil
+	acc := &Account{
+		ID:                   row.ID,
+		WorkspaceID:          row.WorkspaceID,
+		Name:                 row.Name,
+		Nickname:             row.Nickname,
+		Kind:                 row.Kind,
+		Currency:             row.Currency,
+		Institution:          row.Institution,
+		AccountGroupID:       row.AccountGroupID,
+		AccountSortOrder:     int(row.AccountSortOrder),
+		OpenDate:             row.OpenDate,
+		CloseDate:            row.CloseDate,
+		OpeningBalance:       row.OpeningBalance,
+		OpeningBalanceDate:   row.OpeningBalanceDate,
+		IncludeInNetworth:    row.IncludeInNetworth,
+		IncludeInSavingsRate: row.IncludeInSavingsRate,
+		ArchivedAt:           row.ArchivedAt,
+		CreatedAt:            row.CreatedAt,
+		UpdatedAt:            row.UpdatedAt,
+		Balance:              openingBalanceStr,
+		BalanceAsOf:          &openingTS,
+	}
+	return acc, nil
 }
 
-// Derived balance rule (spec §5.2, implemented here):
-//
-//	balance = coalesce(latest_snapshot.balance, opening_balance)
-//	        + sum(transactions.amount for this account
-//	              where status in ('posted','reconciled')
-//	                and booked_at >= (latest_snapshot.as_of at time zone 'UTC')::date)
-//
-// Drafts and voided transactions are excluded. The snapshot's as_of
-// (timestamptz) is projected into UTC and cast to date so we can compare it
-// against transactions.booked_at (a date). Every account receives an
-// "opening" snapshot at midnight UTC of its opening_balance_date on create,
-// so post-opening-day transactions are included correctly. When richer
-// snapshot kinds (end-of-day recomputes, bank syncs) arrive this rule will
-// need revisiting — an end-of-day snapshot would require `>` not `>=`.
-const derivedBalanceSelect = `
-	a.id, a.workspace_id, a.name, a.nickname, a.kind::text, a.currency, a.institution,
-	a.account_group_id, a.account_sort_order,
-	a.open_date, a.close_date, a.opening_balance::text, a.opening_balance_date,
-	a.include_in_networth, a.include_in_savings_rate, a.archived_at,
-	a.created_at, a.updated_at,
-	case
-	  when t.max_booked_at is null then s.as_of
-	  when s.as_of is null then t.max_booked_at::timestamp at time zone 'UTC'
-	  when t.max_booked_at::timestamp at time zone 'UTC' > s.as_of then t.max_booked_at::timestamp at time zone 'UTC'
-	  else s.as_of
-	end as balance_as_of,
-	(coalesce(s.balance, a.opening_balance) + coalesce(t.post_sum, 0))::text as balance
-`
-
-const derivedBalanceFrom = `
-	from accounts a
-	left join lateral (
-	  select balance, as_of
-	  from account_balance_snapshots
-	  where account_id = a.id
-	  order by as_of desc
-	  limit 1
-	) s on true
-	left join lateral (
-	  select coalesce(sum(amount), 0) as post_sum, max(booked_at) as max_booked_at
-	  from transactions
-	  where account_id = a.id
-	    and status in ('posted', 'reconciled')
-	    and booked_at >= (coalesce(s.as_of, a.opening_balance_date::timestamptz)
-	                        at time zone 'UTC')::date
-	) t on true
-`
-
-func scanAccount(row interface{ Scan(...any) error }, a *Account) error {
-	var asOf *time.Time
-	var balance string
-	if err := row.Scan(
-		&a.ID, &a.WorkspaceID, &a.Name, &a.Nickname, &a.Kind, &a.Currency, &a.Institution,
-		&a.AccountGroupID, &a.AccountSortOrder,
-		&a.OpenDate, &a.CloseDate, &a.OpeningBalance, &a.OpeningBalanceDate,
-		&a.IncludeInNetworth, &a.IncludeInSavingsRate, &a.ArchivedAt,
-		&a.CreatedAt, &a.UpdatedAt, &asOf, &balance,
-	); err != nil {
-		return err
+// balanceRowToAccount converts a sqlc derived-balance row to an Account model.
+// The BalanceAsOf field is interface{} because the CASE expression can return
+// NULL; toTimePtr handles the type assertion.
+func balanceRowToAccount(
+	id, workspaceID uuid.UUID, name string, nickname *string, kind, currency string,
+	institution *string, accountGroupID *uuid.UUID, accountSortOrder int32,
+	openDate time.Time, closeDate *time.Time, openingBalance string, openingBalanceDate time.Time,
+	includeInNetworth, includeInSavingsRate bool, archivedAt *time.Time,
+	createdAt, updatedAt time.Time, balanceAsOf interface{}, balance string,
+) Account {
+	return Account{
+		ID: id, WorkspaceID: workspaceID, Name: name, Nickname: nickname,
+		Kind: kind, Currency: currency, Institution: institution,
+		AccountGroupID: accountGroupID, AccountSortOrder: int(accountSortOrder),
+		OpenDate: openDate, CloseDate: closeDate,
+		OpeningBalance: openingBalance, OpeningBalanceDate: openingBalanceDate,
+		IncludeInNetworth: includeInNetworth, IncludeInSavingsRate: includeInSavingsRate,
+		ArchivedAt: archivedAt, CreatedAt: createdAt, UpdatedAt: updatedAt,
+		BalanceAsOf: toTimePtr(balanceAsOf), Balance: balance,
 	}
-	a.Balance = balance
-	a.BalanceAsOf = asOf
-	return nil
 }
 
 // List returns accounts for workspaceID. Archived accounts are hidden unless
-// includeArchived is true. Balance is derived (see derivedBalanceSelect).
+// includeArchived is true. Balance is derived (spec §5.2).
 func (s *Service) List(ctx context.Context, workspaceID uuid.UUID, includeArchived bool) ([]Account, error) {
-	q := `select ` + derivedBalanceSelect + derivedBalanceFrom + ` where a.workspace_id = $1`
-	if !includeArchived {
-		q += ` and a.archived_at is null`
-	}
-	q += ` order by a.account_group_id nulls first, a.account_sort_order, a.created_at`
-
-	rows, err := s.pool.Query(ctx, q, workspaceID)
-	if err != nil {
-		return nil, fmt.Errorf("query accounts: %w", err)
-	}
-	defer rows.Close()
-
+	q := dbq.New(s.pool)
 	out := make([]Account, 0)
-	for rows.Next() {
-		var a Account
-		if err := scanAccount(rows, &a); err != nil {
-			return nil, fmt.Errorf("scan account: %w", err)
+	if includeArchived {
+		rows, err := q.ListAccountsWithBalance(ctx, workspaceID)
+		if err != nil {
+			return nil, fmt.Errorf("query accounts: %w", err)
 		}
-		out = append(out, a)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+		for _, r := range rows {
+			out = append(out, balanceRowToAccount(
+				r.ID, r.WorkspaceID, r.Name, r.Nickname, r.Kind, r.Currency,
+				r.Institution, r.AccountGroupID, r.AccountSortOrder,
+				r.OpenDate, r.CloseDate, r.OpeningBalance, r.OpeningBalanceDate,
+				r.IncludeInNetworth, r.IncludeInSavingsRate, r.ArchivedAt,
+				r.CreatedAt, r.UpdatedAt, r.BalanceAsOf, r.Balance,
+			))
+		}
+	} else {
+		rows, err := q.ListAccountsWithBalanceActive(ctx, workspaceID)
+		if err != nil {
+			return nil, fmt.Errorf("query accounts: %w", err)
+		}
+		for _, r := range rows {
+			out = append(out, balanceRowToAccount(
+				r.ID, r.WorkspaceID, r.Name, r.Nickname, r.Kind, r.Currency,
+				r.Institution, r.AccountGroupID, r.AccountSortOrder,
+				r.OpenDate, r.CloseDate, r.OpeningBalance, r.OpeningBalanceDate,
+				r.IncludeInNetworth, r.IncludeInSavingsRate, r.ArchivedAt,
+				r.CreatedAt, r.UpdatedAt, r.BalanceAsOf, r.Balance,
+			))
+		}
 	}
 	return out, nil
 }
 
 // Get returns a single account by id, scoped to workspaceID. Balance is derived
-// (see derivedBalanceSelect).
+// (spec §5.2).
 func (s *Service) Get(ctx context.Context, workspaceID, accountID uuid.UUID) (*Account, error) {
-	var a Account
-	row := s.pool.QueryRow(ctx,
-		`select `+derivedBalanceSelect+derivedBalanceFrom+
-			` where a.workspace_id = $1 and a.id = $2`,
-		workspaceID, accountID)
-	if err := scanAccount(row, &a); err != nil {
+	r, err := dbq.New(s.pool).GetAccountWithBalance(ctx, dbq.GetAccountWithBalanceParams{
+		WorkspaceID: workspaceID,
+		ID:          accountID,
+	})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("account")
 		}
 		return nil, err
 	}
+	a := balanceRowToAccount(
+		r.ID, r.WorkspaceID, r.Name, r.Nickname, r.Kind, r.Currency,
+		r.Institution, r.AccountGroupID, r.AccountSortOrder,
+		r.OpenDate, r.CloseDate, r.OpeningBalance, r.OpeningBalanceDate,
+		r.IncludeInNetworth, r.IncludeInSavingsRate, r.ArchivedAt,
+		r.CreatedAt, r.UpdatedAt, r.BalanceAsOf, r.Balance,
+	)
 	return &a, nil
 }
 
@@ -726,22 +731,22 @@ func (s *Service) Delete(ctx context.Context, workspaceID, accountID uuid.UUID) 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx, `
-		delete from source_refs
-		where workspace_id = $1
-		  and entity_type = 'transaction'
-		  and entity_id in (
-		    select id from transactions where workspace_id = $1 and account_id = $2
-		  )
-	`, workspaceID, accountID); err != nil {
+	q := dbq.New(tx)
+	if err := q.DeleteAccountSourceRefs(ctx, dbq.DeleteAccountSourceRefsParams{
+		WorkspaceID: workspaceID,
+		AccountID:   accountID,
+	}); err != nil {
 		return fmt.Errorf("delete account source_refs: %w", err)
 	}
 
-	tag, err := tx.Exec(ctx, `delete from accounts where workspace_id = $1 and id = $2`, workspaceID, accountID)
+	n, err := q.DeleteAccount(ctx, dbq.DeleteAccountParams{
+		WorkspaceID: workspaceID,
+		ID:          accountID,
+	})
 	if err != nil {
 		return fmt.Errorf("delete account: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if n == 0 {
 		return httpx.NewNotFoundError("account")
 	}
 	if err := tx.Commit(ctx); err != nil {

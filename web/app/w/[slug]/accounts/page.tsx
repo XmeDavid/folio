@@ -45,6 +45,7 @@ import {
   type ImportCurrencyGroup,
   type ImportPlanGroup,
   type ImportPreview,
+  type SmartInvestmentImportResult,
 } from "@/lib/api/client";
 import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
@@ -180,6 +181,9 @@ function SmartAccountImport({
 }) {
   const [preview, setPreview] = React.useState<ImportPreview | null>(null);
   const [plans, setPlans] = React.useState<Record<string, ImportPlanGroup>>({});
+  const [investmentResult, setInvestmentResult] = React.useState<
+    SmartInvestmentImportResult | null
+  >(null);
   const groups = preview?.currencyGroups?.length
     ? preview.currencyGroups
     : preview
@@ -204,7 +208,15 @@ function SmartAccountImport({
 
   const previewMutation = useMutation({
     mutationFn: (file: File) => previewAccountImport(workspaceId, file),
-    onSuccess: (p) => {
+    onSuccess: (resp) => {
+      if (resp.kind === "investment") {
+        setInvestmentResult(resp.investment);
+        setPreview(null);
+        setPlans({});
+        return;
+      }
+      setInvestmentResult(null);
+      const p = resp.preview;
       setPreview(p);
       const next: Record<string, ImportPlanGroup> = {};
       const previewGroups = p.currencyGroups?.length
@@ -286,7 +298,7 @@ function SmartAccountImport({
           Export file
           <Input
             type="file"
-            accept=".csv,text/csv"
+            accept=".csv,.json,.xml,text/csv,application/json,application/xml"
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) previewMutation.mutate(file);
@@ -297,6 +309,64 @@ function SmartAccountImport({
 
       {previewMutation.isPending ? (
         <p className="text-fg-muted text-[13px]">Reading export...</p>
+      ) : null}
+
+      {investmentResult ? (
+        <div className="border-border bg-surface rounded-[12px] border px-4 py-3">
+          <p className="text-[13px] font-medium text-fg">
+            Investment activity imported into{" "}
+            <span className="text-emerald-500">{investmentResult.accountName}</span>
+            {investmentResult.created ? " (new account)" : ""}
+          </p>
+          <p className="text-fg-muted mt-1 text-[12px]">
+            Source: {investmentResult.source.replace("_", " ")} · base{" "}
+            {investmentResult.baseCurrency}
+          </p>
+          <ul className="mt-2 grid gap-1 text-[12px] text-fg-muted sm:grid-cols-4">
+            <li>
+              Trades created:{" "}
+              <strong className="text-fg">
+                {investmentResult.summary.tradesCreated}
+              </strong>
+            </li>
+            <li>
+              Dividends:{" "}
+              <strong className="text-fg">
+                {investmentResult.summary.dividendsCreated}
+              </strong>
+            </li>
+            <li>
+              Instruments:{" "}
+              <strong className="text-fg">
+                {investmentResult.summary.instrumentsTouched}
+              </strong>
+            </li>
+            <li>
+              Skipped (dedupe):{" "}
+              <strong className="text-fg">
+                {investmentResult.summary.skipped}
+              </strong>
+            </li>
+          </ul>
+          {investmentResult.summary.warnings &&
+          investmentResult.summary.warnings.length > 0 ? (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-[12px] text-fg-muted">
+                {investmentResult.summary.warnings.length} warning(s)
+              </summary>
+              <ul className="mt-1 list-disc pl-5 text-[12px] text-fg-muted">
+                {investmentResult.summary.warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+          <div className="mt-3 flex justify-end">
+            <Button variant="secondary" onClick={onDone}>
+              Done
+            </Button>
+          </div>
+        </div>
       ) : null}
 
       {preview ? (

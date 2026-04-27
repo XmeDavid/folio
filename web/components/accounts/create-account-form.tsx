@@ -124,7 +124,14 @@ export function CreateAccountForm({
 
   const previewMutation = useMutation({
     mutationFn: (file: File) => previewAccountImport(workspaceId, file),
-    onSuccess: (p) => {
+    onSuccess: (resp) => {
+      if (resp.kind === "investment") {
+        // Smart import already ingested into the workspace; close the form
+        // so the user lands back on the (now-populated) accounts list.
+        onCreated?.({ id: resp.investment.accountId } as Account);
+        return;
+      }
+      const p = resp.preview;
       setPreview(p);
       form.setValue("currency", p.suggestedCurrency ?? defaultCurrency, {
         shouldValidate: true,

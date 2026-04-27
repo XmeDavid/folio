@@ -1,8 +1,10 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -18,6 +20,7 @@ import (
 	"github.com/xmedavid/folio/backend/internal/bankimport"
 	"github.com/xmedavid/folio/backend/internal/classification"
 	"github.com/xmedavid/folio/backend/internal/config"
+	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/identity"
 	"github.com/xmedavid/folio/backend/internal/investments"
 	"github.com/xmedavid/folio/backend/internal/jobs"
@@ -132,6 +135,12 @@ func NewRouter(d Deps) http.Handler {
 			r.With(authSvc.RequireEmailVerified).Route("/invites", inviteH.MountWorkspaceInvites)
 
 			r.Route("/accounts", func(r chi.Router) {
+				// Smart-import dispatcher: investment formats (IBKR, Revolut Trading)
+				// are absorbed by the investments service (auto-finds or creates a
+				// brokerage account, dedupes events). Anything else falls through to
+				// the bank-import preview flow. The route name is preserved so the
+				// existing /accounts page upload widget keeps working.
+				r.Post("/import-preview", smartImportPreview(investmentsSvc, importSvc))
 				importH.MountAccountRoutes(r)
 				accountsH.Mount(r)
 			})
@@ -147,6 +156,59 @@ func NewRouter(d Deps) http.Handler {
 		})
 	})
 	return r
+}
+
+// smartImportPreview reads the upload, asks the investments service whether
+// it recognises an investment format and ingests on the spot when it does,
+// otherwise replays the request body into the bank-import previewForNewAccount
+// path. Returns the same JSON envelope shape so the existing UI can decide
+// what to render via the `kind` field.
+func smartImportPreview(invSvc *investments.Service, bank *bankimport.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := auth.MustWorkspace(r).ID
+		// Cap upload size at 8 MiB to match bankimport.
+		const maxBytes = 8 << 20
+		if err := r.ParseMultipartForm(maxBytes); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_multipart", "request must include a file field")
+			return
+		}
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "file is required")
+			return
+		}
+		defer file.Close()
+		body, err := io.ReadAll(file)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "failed to read upload")
+			return
+		}
+
+		// Try investment detection first.
+		smart, err := invSvc.SmartImport(r.Context(), workspaceID, body, header.Filename)
+		if err != nil {
+			httpx.WriteServiceError(w, err)
+			return
+		}
+		if smart != nil && smart.Detected {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"kind":       "investment",
+				"investment": smart,
+			})
+			return
+		}
+
+		// Fall through to bank-import preview.
+		preview, err := bank.Preview(r.Context(), workspaceID, header.Filename, bytes.NewReader(body), nil)
+		if err != nil {
+			httpx.WriteServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":    "bank",
+			"preview": preview,
+		})
+	}
 }
 
 func health(_ Deps) http.HandlerFunc {

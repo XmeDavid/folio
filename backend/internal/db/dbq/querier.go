@@ -20,6 +20,7 @@ type Querier interface {
 	BumpTOTPLastUsedStep(ctx context.Context, arg BumpTOTPLastUsedStepParams) (int64, error)
 	CheckEmailExistsExcludingUser(ctx context.Context, arg CheckEmailExistsExcludingUserParams) (bool, error)
 	CheckIsWorkspaceOwner(ctx context.Context, arg CheckIsWorkspaceOwnerParams) (bool, error)
+	ClearAccountGroupMembership(ctx context.Context, arg ClearAccountGroupMembershipParams) error
 	ConfirmTOTPCredential(ctx context.Context, arg ConfirmTOTPCredentialParams) error
 	ConsumeAuthToken(ctx context.Context, id uuid.UUID) error
 	ConsumeMFAChallenge(ctx context.Context, arg ConsumeMFAChallengeParams) (int64, error)
@@ -28,6 +29,9 @@ type Querier interface {
 	CountUnconsumedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int64, error)
 	CountUserMemberships(ctx context.Context, userID uuid.UUID) (int64, error)
 	CountWorkspaceOwners(ctx context.Context, workspaceID uuid.UUID) (int64, error)
+	DeleteAccount(ctx context.Context, arg DeleteAccountParams) (int64, error)
+	DeleteAccountGroup(ctx context.Context, arg DeleteAccountGroupParams) (int64, error)
+	DeleteAccountSourceRefs(ctx context.Context, arg DeleteAccountSourceRefsParams) error
 	DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error
 	DeleteOtherSessionsByUser(ctx context.Context, arg DeleteOtherSessionsByUserParams) error
 	DeleteRecoveryCodesByUser(ctx context.Context, userID uuid.UUID) error
@@ -35,6 +39,16 @@ type Querier interface {
 	DeleteSessionByIDReturningUserID(ctx context.Context, id string) (uuid.UUID, error)
 	DeleteSessionsByUser(ctx context.Context, userID uuid.UUID) error
 	DeleteTOTPCredential(ctx context.Context, userID uuid.UUID) (int64, error)
+	GetAccountCurrency(ctx context.Context, arg GetAccountCurrencyParams) (string, error)
+	GetAccountGroup(ctx context.Context, arg GetAccountGroupParams) (GetAccountGroupRow, error)
+	// Derived balance rule (spec §5.2):
+	//   balance = coalesce(latest_snapshot.balance, opening_balance)
+	//           + sum(transactions.amount where status in ('posted','reconciled')
+	//                 and booked_at >= snapshot.as_of projected to UTC date)
+	//
+	// Every account has an "opening" snapshot at create time, so post-opening-day
+	// transactions are included correctly.
+	GetAccountWithBalance(ctx context.Context, arg GetAccountWithBalanceParams) (GetAccountWithBalanceRow, error)
 	GetAuthTokenForConsume(ctx context.Context, arg GetAuthTokenForConsumeParams) (GetAuthTokenForConsumeRow, error)
 	GetInviteForAccept(ctx context.Context, tokenHash []byte) (GetInviteForAcceptRow, error)
 	GetInviteForRevoke(ctx context.Context, arg GetInviteForRevokeParams) (GetInviteForRevokeRow, error)
@@ -61,30 +75,57 @@ type Querier interface {
 	GetWorkspaceWithMembership(ctx context.Context, arg GetWorkspaceWithMembershipParams) (GetWorkspaceWithMembershipRow, error)
 	GetWorkspaceWithOwnership(ctx context.Context, arg GetWorkspaceWithOwnershipParams) (GetWorkspaceWithOwnershipRow, error)
 	HasMFAEnrolled(ctx context.Context, userID uuid.UUID) (*bool, error)
+	InsertAccount(ctx context.Context, arg InsertAccountParams) (InsertAccountRow, error)
+	InsertAccountGroup(ctx context.Context, arg InsertAccountGroupParams) (InsertAccountGroupRow, error)
 	InsertAuditDirect(ctx context.Context, arg InsertAuditDirectParams) error
 	InsertAuditEvent(ctx context.Context, arg InsertAuditEventParams) error
 	InsertAuditEventWithRequest(ctx context.Context, arg InsertAuditEventWithRequestParams) error
 	InsertAuthToken(ctx context.Context, arg InsertAuthTokenParams) error
+	InsertImportAccount(ctx context.Context, arg InsertImportAccountParams) error
+	InsertImportBatch(ctx context.Context, arg InsertImportBatchParams) error
+	InsertImportTransaction(ctx context.Context, arg InsertImportTransactionParams) error
 	InsertInvitedMembership(ctx context.Context, arg InsertInvitedMembershipParams) error
 	InsertLoginFailedAudit(ctx context.Context, arg InsertLoginFailedAuditParams) error
 	InsertMFAChallenge(ctx context.Context, arg InsertMFAChallengeParams) error
 	InsertMembership(ctx context.Context, arg InsertMembershipParams) (InsertMembershipRow, error)
+	InsertOpeningSnapshot(ctx context.Context, arg InsertOpeningSnapshotParams) error
 	InsertRecoveryCode(ctx context.Context, arg InsertRecoveryCodeParams) error
 	InsertSession(ctx context.Context, arg InsertSessionParams) error
+	InsertSourceRef(ctx context.Context, arg InsertSourceRefParams) error
 	InsertUserReturning(ctx context.Context, arg InsertUserReturningParams) (InsertUserReturningRow, error)
 	InsertWebAuthnCredential(ctx context.Context, arg InsertWebAuthnCredentialParams) error
 	InsertWorkspace(ctx context.Context, arg InsertWorkspaceParams) (InsertWorkspaceRow, error)
 	InsertWorkspaceInvite(ctx context.Context, arg InsertWorkspaceInviteParams) (InsertWorkspaceInviteRow, error)
+	ListAccountGroups(ctx context.Context, workspaceID uuid.UUID) ([]ListAccountGroupsRow, error)
+	ListAccountGroupsActive(ctx context.Context, workspaceID uuid.UUID) ([]ListAccountGroupsActiveRow, error)
+	ListAccountsWithBalance(ctx context.Context, workspaceID uuid.UUID) ([]ListAccountsWithBalanceRow, error)
+	ListAccountsWithBalanceActive(ctx context.Context, workspaceID uuid.UUID) ([]ListAccountsWithBalanceActiveRow, error)
 	ListAdminUsers(ctx context.Context) ([]ListAdminUsersRow, error)
+	// Archived accounts are kept in the candidate set so re-importing the
+	// same file matches the account the user already imported into instead
+	// of silently creating a duplicate.
+	ListImportAccountMatches(ctx context.Context, workspaceID uuid.UUID) ([]ListImportAccountMatchesRow, error)
 	ListMembersWithUser(ctx context.Context, workspaceID uuid.UUID) ([]ListMembersWithUserRow, error)
 	ListPendingInvites(ctx context.Context, workspaceID uuid.UUID) ([]ListPendingInvitesRow, error)
 	ListUnconsumedRecoveryCodes(ctx context.Context, userID uuid.UUID) ([]ListUnconsumedRecoveryCodesRow, error)
 	ListWebAuthnCredentials(ctx context.Context, userID uuid.UUID) ([]ListWebAuthnCredentialsRow, error)
 	ListWorkspacesWithRoleByUser(ctx context.Context, userID uuid.UUID) ([]ListWorkspacesWithRoleByUserRow, error)
+	// Load existing transactions in the date range for duplicate/conflict detection.
+	LoadExistingTransactions(ctx context.Context, arg LoadExistingTransactionsParams) ([]LoadExistingTransactionsRow, error)
+	// Load real (non-synthetic) rows near a synthetic for residual-explained check.
+	// Only considers rows from a different import batch than the synthetic itself.
+	LoadRealRowsForSynthetic(ctx context.Context, arg LoadRealRowsForSyntheticParams) ([]LoadRealRowsForSyntheticRow, error)
+	// Scan synthetic balance-reconcile rows for potential retirement.
+	LoadSyntheticCandidates(ctx context.Context, arg LoadSyntheticCandidatesParams) ([]LoadSyntheticCandidatesRow, error)
 	MarkInviteAccepted(ctx context.Context, id uuid.UUID) error
 	MarkInviteRevoked(ctx context.Context, id uuid.UUID) error
+	ReorderAccount(ctx context.Context, arg ReorderAccountParams) (int64, error)
+	ReorderAccountGroup(ctx context.Context, arg ReorderAccountGroupParams) (int64, error)
 	RestoreWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
 	SoftDeleteWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
+	// Opt-in reactivate: clear archived_at when the user explicitly
+	// asked to resurface this account. No-op for non-archived rows.
+	UnarchiveAccount(ctx context.Context, arg UnarchiveAccountParams) error
 	UpdateMFAChallengeWebAuthnState(ctx context.Context, arg UpdateMFAChallengeWebAuthnStateParams) error
 	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) error
 	UpdateSessionLastSeen(ctx context.Context, arg UpdateSessionLastSeenParams) error
@@ -98,6 +139,7 @@ type Querier interface {
 	UpsertTOTPCredential(ctx context.Context, arg UpsertTOTPCredentialParams) (int64, error)
 	UserExists(ctx context.Context) (bool, error)
 	VerifyUserEmail(ctx context.Context, arg VerifyUserEmailParams) (int64, error)
+	VoidTransaction(ctx context.Context, arg VoidTransactionParams) error
 }
 
 var _ Querier = (*Queries)(nil)

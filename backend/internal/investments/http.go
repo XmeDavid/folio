@@ -46,7 +46,10 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/dividends", h.createDividend)
 	r.Delete("/dividends/{dividendId}", h.deleteDividend)
 
-	r.Post("/imports/{format}/{accountId}", h.importUpload)
+	// Investment-format imports route through the unified smart-import
+	// endpoint at POST /accounts/import-preview. There is no dedicated
+	// per-format endpoint anymore.
+	_ = h.importUpload
 }
 
 // ---------------------------------------------------------------------------

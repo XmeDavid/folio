@@ -524,17 +524,52 @@ export type ImportApplyResult = {
   conflicts?: ImportConflictPreview[];
 };
 
+// SmartInvestmentImportResult mirrors backend internal/investments
+// SmartImportResult. Returned inline by the smart-import dispatcher when the
+// uploaded file was an investment activity statement (IBKR / Revolut Trading).
+export type SmartInvestmentImportResult = {
+  detected: true;
+  source: "ibkr" | "revolut_trading";
+  accountId: string;
+  accountName: string;
+  baseCurrency: string;
+  created: boolean;
+  summary: {
+    tradesCreated: number;
+    dividendsCreated: number;
+    instrumentsTouched: number;
+    skipped: number;
+    warnings?: string[];
+  };
+};
+
+// SmartImportResponse is the discriminated union the smart-import dispatcher
+// returns. UI branches on `kind` to either render the investment summary
+// (already ingested, no apply step) or fall through to the bank-import
+// preview/apply UX.
+export type SmartImportResponse =
+  | { kind: "investment"; investment: SmartInvestmentImportResult }
+  | { kind: "bank"; preview: ImportPreview };
+
 export async function previewAccountImport(
   workspaceId: string,
   file: File,
   accountId?: string
-): Promise<ImportPreview> {
+): Promise<SmartImportResponse> {
   const form = new FormData();
   form.append("file", file);
-  const path = accountId
-    ? `/api/v1/t/${workspaceId}/accounts/${accountId}/imports/preview`
-    : `/api/v1/t/${workspaceId}/accounts/import-preview`;
-  return uploadRequest<ImportPreview>(path, form);
+  if (accountId) {
+    // Targeted variant — returns the bank Preview directly (no smart dispatch).
+    const preview = await uploadRequest<ImportPreview>(
+      `/api/v1/t/${workspaceId}/accounts/${accountId}/imports/preview`,
+      form
+    );
+    return { kind: "bank", preview };
+  }
+  return uploadRequest<SmartImportResponse>(
+    `/api/v1/t/${workspaceId}/accounts/import-preview`,
+    form
+  );
 }
 
 export async function applyAccountImport(
