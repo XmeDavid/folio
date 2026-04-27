@@ -89,6 +89,14 @@ func Parse(content string) (ParsedFile, error) {
 		return parsePostFinance(normalized)
 	case isVIACPDFText(normalized):
 		return parseVIACPDFText(normalized)
+	case looksLikeIBKR(firstLine, normalized):
+		// IBKR Activity Statements & Flex JSON belong on the Investments →
+		// Import flow, not the cash-account import flow. Surface that
+		// distinction explicitly so the user doesn't keep hammering the
+		// wrong endpoint.
+		return ParsedFile{}, httpx.NewValidationError(
+			"this looks like an Interactive Brokers activity statement — " +
+				"upload it via Investments → Import (format: ibkr), not Accounts → Import")
 	default:
 		// Surface the first line back to the user so debugging an
 		// unrecognised export doesn't require server logs.
@@ -98,6 +106,20 @@ func Parse(content string) (ParsedFile, error) {
 		}
 		return ParsedFile{}, httpx.NewValidationError(fmt.Sprintf("unsupported bank export format (first line: %q)", preview))
 	}
+}
+
+// looksLikeIBKR sniffs the first line + body for IBKR-shaped exports. The
+// canonical Activity CSV starts with "Statement,Header,Field Name,Field Value";
+// the JSON wrapper carries an "transactions" array with a "trade_amount_debited"
+// field. Either marker is enough.
+func looksLikeIBKR(firstLine, body string) bool {
+	if strings.HasPrefix(firstLine, "Statement,Header,Field Name") {
+		return true
+	}
+	if strings.Contains(body, "\"trade_amount_debited\"") {
+		return true
+	}
+	return false
 }
 
 func extractPDFText(content []byte) (string, error) {
