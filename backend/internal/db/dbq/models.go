@@ -3207,6 +3207,7 @@ type InvestmentPosition struct {
 	WorkspaceID    uuid.UUID      `json:"workspace_id"`
 	Quantity       pgtype.Numeric `json:"quantity"`
 	AverageCost    pgtype.Numeric `json:"average_cost"`
+	RealisedPnl    pgtype.Numeric `json:"realised_pnl"`
 	Currency       string         `json:"currency"`
 	LastPrice      pgtype.Numeric `json:"last_price"`
 	LastPriceAt    *time.Time     `json:"last_price_at"`

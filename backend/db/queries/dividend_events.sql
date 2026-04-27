@@ -41,3 +41,17 @@ SELECT EXISTS(
     AND pay_date = @pay_date
     AND total_amount = @total_amount
 );
+
+-- name: ListInvestmentDividends :many
+SELECT
+  d.id, d.workspace_id, d.account_id, d.instrument_id, i.symbol,
+  d.ex_date, d.pay_date, d.amount_per_unit::text AS amount_per_unit, d.currency,
+  d.total_amount::text AS total_amount, d.tax_withheld::text AS tax_withheld,
+  d.linked_cash_transaction_id, d.created_at
+FROM dividend_events d
+JOIN instruments i ON i.id = d.instrument_id
+WHERE d.workspace_id = @workspace_id
+  AND (sqlc.narg('account_id')::uuid IS NULL OR d.account_id = sqlc.narg('account_id')::uuid)
+  AND (sqlc.narg('instrument_id')::uuid IS NULL OR d.instrument_id = sqlc.narg('instrument_id')::uuid)
+ORDER BY d.pay_date DESC, d.id DESC
+LIMIT 1000;

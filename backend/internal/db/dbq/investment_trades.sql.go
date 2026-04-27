@@ -239,6 +239,83 @@ func (q *Queries) InsertInvestmentTradeExec(ctx context.Context, arg InsertInves
 	return err
 }
 
+const listInvestmentTrades = `-- name: ListInvestmentTrades :many
+SELECT
+  t.id, t.workspace_id, t.account_id, t.instrument_id, i.symbol,
+  t.side::text AS side, t.quantity::text AS quantity, t.price::text AS price, t.currency,
+  t.fee_amount::text AS fee_amount, t.fee_currency, t.trade_date, t.settle_date,
+  t.linked_cash_transaction_id, t.created_at, t.updated_at
+FROM investment_trades t
+JOIN instruments i ON i.id = t.instrument_id
+WHERE t.workspace_id = $1
+  AND ($2::uuid IS NULL OR t.account_id = $2::uuid)
+  AND ($3::uuid IS NULL OR t.instrument_id = $3::uuid)
+ORDER BY t.trade_date DESC, t.id DESC
+LIMIT 1000
+`
+
+type ListInvestmentTradesParams struct {
+	WorkspaceID  uuid.UUID  `json:"workspace_id"`
+	AccountID    *uuid.UUID `json:"account_id"`
+	InstrumentID *uuid.UUID `json:"instrument_id"`
+}
+
+type ListInvestmentTradesRow struct {
+	ID                      uuid.UUID  `json:"id"`
+	WorkspaceID             uuid.UUID  `json:"workspace_id"`
+	AccountID               uuid.UUID  `json:"account_id"`
+	InstrumentID            uuid.UUID  `json:"instrument_id"`
+	Symbol                  string     `json:"symbol"`
+	Side                    string     `json:"side"`
+	Quantity                string     `json:"quantity"`
+	Price                   string     `json:"price"`
+	Currency                string     `json:"currency"`
+	FeeAmount               string     `json:"fee_amount"`
+	FeeCurrency             string     `json:"fee_currency"`
+	TradeDate               time.Time  `json:"trade_date"`
+	SettleDate              *time.Time `json:"settle_date"`
+	LinkedCashTransactionID *uuid.UUID `json:"linked_cash_transaction_id"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+}
+
+func (q *Queries) ListInvestmentTrades(ctx context.Context, arg ListInvestmentTradesParams) ([]ListInvestmentTradesRow, error) {
+	rows, err := q.db.Query(ctx, listInvestmentTrades, arg.WorkspaceID, arg.AccountID, arg.InstrumentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInvestmentTradesRow{}
+	for rows.Next() {
+		var i ListInvestmentTradesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AccountID,
+			&i.InstrumentID,
+			&i.Symbol,
+			&i.Side,
+			&i.Quantity,
+			&i.Price,
+			&i.Currency,
+			&i.FeeAmount,
+			&i.FeeCurrency,
+			&i.TradeDate,
+			&i.SettleDate,
+			&i.LinkedCashTransactionID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const loadTradeEvents = `-- name: LoadTradeEvents :many
 SELECT id, side::text AS side, trade_date, quantity::text AS quantity, price::text AS price, fee_amount::text AS fee_amount, currency
 FROM investment_trades

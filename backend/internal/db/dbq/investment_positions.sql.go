@@ -138,6 +138,139 @@ func (q *Queries) InsertLotConsumption(ctx context.Context, arg InsertLotConsump
 	return err
 }
 
+const listInvestmentPositions = `-- name: ListInvestmentPositions :many
+SELECT
+  p.account_id, p.instrument_id, p.workspace_id,
+  i.symbol, i.name, i.asset_class::text AS asset_class, i.currency AS instrument_currency,
+  a.currency AS account_currency,
+  p.quantity::text AS quantity, p.average_cost::text AS average_cost,
+  (p.quantity * p.average_cost)::text AS cost_basis_total,
+  p.realised_pnl::text AS realised_pnl,
+  coalesce(div.total, 0)::text AS dividends_received,
+  coalesce(fees.total, 0)::text AS fees_paid,
+  last_trade.last_date AS last_trade_date,
+  coalesce(lp.price::text, '') AS last_price,
+  coalesce(lp.as_of, '0001-01-01 00:00:00+00'::timestamptz) AS last_price_at
+FROM investment_positions p
+JOIN instruments i ON i.id = p.instrument_id
+JOIN accounts a ON a.id = p.account_id
+LEFT JOIN LATERAL (
+  SELECT coalesce(sum(total_amount), 0) AS total
+  FROM dividend_events d
+  WHERE d.workspace_id = p.workspace_id
+    AND d.account_id = p.account_id
+    AND d.instrument_id = p.instrument_id
+) div ON true
+LEFT JOIN LATERAL (
+  SELECT coalesce(sum(fee_amount), 0) AS total
+  FROM investment_trades t
+  WHERE t.workspace_id = p.workspace_id
+    AND t.account_id = p.account_id
+    AND t.instrument_id = p.instrument_id
+) fees ON true
+LEFT JOIN LATERAL (
+  SELECT max(trade_date) AS last_date
+  FROM investment_trades t
+  WHERE t.workspace_id = p.workspace_id
+    AND t.account_id = p.account_id
+    AND t.instrument_id = p.instrument_id
+) last_trade ON true
+LEFT JOIN LATERAL (
+  SELECT price, as_of
+  FROM instrument_prices
+  WHERE instrument_id = p.instrument_id
+  ORDER BY as_of DESC
+  LIMIT 1
+) lp ON true
+WHERE p.workspace_id = $1
+  AND ($2::uuid IS NULL OR p.account_id = $2::uuid)
+  AND ($3::uuid IS NULL OR p.instrument_id = $3::uuid)
+  AND (NOT $4::bool OR p.quantity > 0)
+  AND (NOT $5::bool OR p.quantity = 0)
+  AND (
+    $6::text = ''
+    OR lower(i.symbol) LIKE $7::text
+    OR lower(i.name) LIKE $7::text
+  )
+ORDER BY (p.quantity * coalesce(lp.price, p.average_cost)) DESC, i.symbol
+`
+
+type ListInvestmentPositionsParams struct {
+	WorkspaceID   uuid.UUID  `json:"workspace_id"`
+	AccountID     *uuid.UUID `json:"account_id"`
+	InstrumentID  *uuid.UUID `json:"instrument_id"`
+	OpenOnly      bool       `json:"open_only"`
+	ClosedOnly    bool       `json:"closed_only"`
+	Search        string     `json:"search"`
+	SearchPattern string     `json:"search_pattern"`
+}
+
+type ListInvestmentPositionsRow struct {
+	AccountID          uuid.UUID   `json:"account_id"`
+	InstrumentID       uuid.UUID   `json:"instrument_id"`
+	WorkspaceID        uuid.UUID   `json:"workspace_id"`
+	Symbol             string      `json:"symbol"`
+	Name               string      `json:"name"`
+	AssetClass         string      `json:"asset_class"`
+	InstrumentCurrency string      `json:"instrument_currency"`
+	AccountCurrency    string      `json:"account_currency"`
+	Quantity           string      `json:"quantity"`
+	AverageCost        string      `json:"average_cost"`
+	CostBasisTotal     string      `json:"cost_basis_total"`
+	RealisedPnl        string      `json:"realised_pnl"`
+	DividendsReceived  string      `json:"dividends_received"`
+	FeesPaid           string      `json:"fees_paid"`
+	LastTradeDate      interface{} `json:"last_trade_date"`
+	LastPrice          interface{} `json:"last_price"`
+	LastPriceAt        time.Time   `json:"last_price_at"`
+}
+
+func (q *Queries) ListInvestmentPositions(ctx context.Context, arg ListInvestmentPositionsParams) ([]ListInvestmentPositionsRow, error) {
+	rows, err := q.db.Query(ctx, listInvestmentPositions,
+		arg.WorkspaceID,
+		arg.AccountID,
+		arg.InstrumentID,
+		arg.OpenOnly,
+		arg.ClosedOnly,
+		arg.Search,
+		arg.SearchPattern,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInvestmentPositionsRow{}
+	for rows.Next() {
+		var i ListInvestmentPositionsRow
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.InstrumentID,
+			&i.WorkspaceID,
+			&i.Symbol,
+			&i.Name,
+			&i.AssetClass,
+			&i.InstrumentCurrency,
+			&i.AccountCurrency,
+			&i.Quantity,
+			&i.AverageCost,
+			&i.CostBasisTotal,
+			&i.RealisedPnl,
+			&i.DividendsReceived,
+			&i.FeesPaid,
+			&i.LastTradeDate,
+			&i.LastPrice,
+			&i.LastPriceAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOpenPositionInstruments = `-- name: ListOpenPositionInstruments :many
 SELECT DISTINCT i.id, i.symbol
 FROM investment_positions p
@@ -211,14 +344,50 @@ func (q *Queries) ListOpenPositionInstrumentsWithPrice(ctx context.Context, work
 	return items, nil
 }
 
+const listTouchedInvestmentPairs = `-- name: ListTouchedInvestmentPairs :many
+SELECT DISTINCT account_id, instrument_id
+FROM investment_trades
+WHERE investment_trades.workspace_id = $1
+UNION
+SELECT DISTINCT account_id, instrument_id
+FROM dividend_events
+WHERE dividend_events.workspace_id = $1
+`
+
+type ListTouchedInvestmentPairsRow struct {
+	AccountID    uuid.UUID `json:"account_id"`
+	InstrumentID uuid.UUID `json:"instrument_id"`
+}
+
+func (q *Queries) ListTouchedInvestmentPairs(ctx context.Context, workspaceID uuid.UUID) ([]ListTouchedInvestmentPairsRow, error) {
+	rows, err := q.db.Query(ctx, listTouchedInvestmentPairs, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTouchedInvestmentPairsRow{}
+	for rows.Next() {
+		var i ListTouchedInvestmentPairsRow
+		if err := rows.Scan(&i.AccountID, &i.InstrumentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertInvestmentPosition = `-- name: UpsertInvestmentPosition :exec
 INSERT INTO investment_positions AS ip (
   account_id, instrument_id, workspace_id,
-  quantity, average_cost, currency, refreshed_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+  quantity, average_cost, realised_pnl, currency, refreshed_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (account_id, instrument_id) DO UPDATE SET
   quantity = excluded.quantity,
   average_cost = excluded.average_cost,
+  realised_pnl = excluded.realised_pnl,
   currency = excluded.currency,
   refreshed_at = excluded.refreshed_at
 `
@@ -229,6 +398,7 @@ type UpsertInvestmentPositionParams struct {
 	WorkspaceID  uuid.UUID      `json:"workspace_id"`
 	Quantity     pgtype.Numeric `json:"quantity"`
 	AverageCost  pgtype.Numeric `json:"average_cost"`
+	RealisedPnl  pgtype.Numeric `json:"realised_pnl"`
 	Currency     string         `json:"currency"`
 	RefreshedAt  time.Time      `json:"refreshed_at"`
 }
@@ -240,6 +410,7 @@ func (q *Queries) UpsertInvestmentPosition(ctx context.Context, arg UpsertInvest
 		arg.WorkspaceID,
 		arg.Quantity,
 		arg.AverageCost,
+		arg.RealisedPnl,
 		arg.Currency,
 		arg.RefreshedAt,
 	)

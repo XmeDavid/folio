@@ -51,11 +51,24 @@ export default function InstrumentDetailPage({
   const decodedSymbol = decodeURIComponent(symbol);
   const workspace = useCurrentWorkspace(slug);
   const workspaceId = workspace?.id ?? null;
+  const [reportCurrencyOverride, setReportCurrencyOverride] =
+    React.useState("");
+  const reportCurrency =
+    reportCurrencyOverride || workspace?.baseCurrency || "CHF";
   const queryClient = useQueryClient();
 
   const detailQuery = useQuery({
-    queryKey: ["investments", "instrument", workspaceId, decodedSymbol],
-    queryFn: () => fetchInstrumentDetail(workspaceId!, decodedSymbol),
+    queryKey: [
+      "investments",
+      "instrument",
+      workspaceId,
+      decodedSymbol,
+      reportCurrency,
+    ],
+    queryFn: () =>
+      fetchInstrumentDetail(workspaceId!, decodedSymbol, {
+        currency: reportCurrency,
+      }),
     enabled: !!workspaceId,
   });
 
@@ -120,7 +133,11 @@ export default function InstrumentDetailPage({
       ) : !detail ? null : (
         <>
           <InstrumentSummary detail={detail} />
-          <HoldingsOverTime detail={detail} />
+          <HoldingsOverTime
+            detail={detail}
+            reportCurrency={reportCurrency}
+            onReportCurrencyChange={setReportCurrencyOverride}
+          />
           <div className="grid gap-4 lg:grid-cols-2">
             <TradesCard
               trades={detail.trades}
@@ -417,14 +434,22 @@ function CorporateActionsCard({
 
 function InstrumentSummary({ detail }: { detail: InstrumentDetail }) {
   const inst = detail.instrument;
-  const totalQty = detail.positions.reduce(
+  const openPositions = detail.positions.filter(
+    (p) => Number(p.quantity || 0) > 0
+  );
+  const totalQty = openPositions.reduce(
     (s, p) => s + Number(p.quantity || 0),
     0
   );
-  const totalCost = detail.positions.reduce(
+  const totalCost = openPositions.reduce(
     (s, p) => s + Number(p.costBasisTotal || 0),
     0
   );
+  const totalMarketValue = openPositions.reduce(
+    (s, p) => s + (p.marketValue != null ? Number(p.marketValue) : 0),
+    0
+  );
+  const haveAnyMarketValue = openPositions.some((p) => p.marketValue != null);
   const realised = detail.positions.reduce(
     (s, p) => s + Number(p.realisedPnL || 0),
     0
@@ -433,6 +458,11 @@ function InstrumentSummary({ detail }: { detail: InstrumentDetail }) {
     (s, p) => s + Number(p.dividendsReceived || 0),
     0
   );
+  const unrealised = haveAnyMarketValue ? totalMarketValue - totalCost : null;
+  const unrealisedPct =
+    unrealised != null && totalCost !== 0
+      ? (unrealised / totalCost) * 100
+      : null;
   return (
     <Card>
       <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -464,6 +494,46 @@ function InstrumentSummary({ detail }: { detail: InstrumentDetail }) {
           label="Open quantity"
           value={totalQty.toString()}
           sub={`Cost ${formatAmount(totalCost.toString(), inst.currency)}`}
+        />
+        <Stat
+          label="Market value"
+          value={
+            haveAnyMarketValue
+              ? formatAmount(totalMarketValue.toString(), inst.currency)
+              : "—"
+          }
+          sub={
+            haveAnyMarketValue
+              ? `${totalQty} × ${
+                  detail.lastQuote
+                    ? formatAmount(
+                        detail.lastQuote.price,
+                        detail.lastQuote.currency
+                      )
+                    : "—"
+                }`
+              : "no live quote"
+          }
+        />
+        <Stat
+          label="Unrealised P/L"
+          value={
+            unrealised != null
+              ? formatAmount(unrealised.toString(), inst.currency)
+              : "—"
+          }
+          sub={
+            unrealisedPct != null ? `${unrealisedPct.toFixed(2)}% on cost` : ""
+          }
+          accent={
+            unrealised == null
+              ? "neutral"
+              : unrealised < 0
+                ? "neg"
+                : unrealised > 0
+                  ? "pos"
+                  : "neutral"
+          }
         />
         <Stat
           label="Realised P/L"
@@ -518,7 +588,15 @@ function Stat({
   );
 }
 
-function HoldingsOverTime({ detail }: { detail: InstrumentDetail }) {
+function HoldingsOverTime({
+  detail,
+  reportCurrency,
+  onReportCurrencyChange,
+}: {
+  detail: InstrumentDetail;
+  reportCurrency: string;
+  onReportCurrencyChange: (value: string) => void;
+}) {
   // Build series: for every trade boundary we already have qty; for price-only
   // points we use price * qty when both are available.
   const points = detail.history
@@ -527,6 +605,7 @@ function HoldingsOverTime({ detail }: { detail: InstrumentDetail }) {
       qty: Number(p.quantity || 0),
       value: p.value ? Number(p.value) : null,
       price: p.price ? Number(p.price) : null,
+      currency: p.currency,
     }))
     .filter((p) => Number.isFinite(p.date))
     .sort((a, b) => a.date - b.date);
@@ -535,8 +614,28 @@ function HoldingsOverTime({ detail }: { detail: InstrumentDetail }) {
   }
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle>Holding over time</CardTitle>
+        <select
+          className="rounded-[8px] border border-border bg-surface px-2 py-1 text-[12px]"
+          value={reportCurrency}
+          onChange={(e) => onReportCurrencyChange(e.target.value)}
+        >
+          {Array.from(
+            new Set([
+              detail.reportCurrency,
+              detail.instrument.currency,
+              "CHF",
+              "USD",
+              "EUR",
+              "GBP",
+            ])
+          ).map((ccy) => (
+            <option key={ccy} value={ccy}>
+              {ccy}
+            </option>
+          ))}
+        </select>
       </CardHeader>
       <CardContent className="h-[260px] p-2">
         <ResponsiveContainer width="100%" height="100%">
@@ -568,6 +667,7 @@ function HoldingsOverTime({ detail }: { detail: InstrumentDetail }) {
               dot={false}
               connectNulls
               name="Market value"
+              unit={` ${detail.reportCurrency}`}
             />
             <Line
               type="stepAfter"

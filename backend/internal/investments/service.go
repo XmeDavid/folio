@@ -132,10 +132,22 @@ func (s *Service) UpsertInstrument(ctx context.Context, raw InstrumentInput) (*I
 		Exchange:   in.Exchange,
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			if in.ISIN != nil && *in.ISIN != "" {
+				if inst, refetchErr := s.findInstrumentByISIN(ctx, q, *in.ISIN); refetchErr != nil {
+					return nil, refetchErr
+				} else if inst != nil {
+					return inst, nil
+				}
+			}
+			if inst, refetchErr := s.findInstrumentBySymbol(ctx, q, in.Symbol, in.Exchange); refetchErr != nil {
+				return nil, refetchErr
+			} else if inst != nil {
+				return inst, nil
+			}
+		}
 		return nil, fmt.Errorf("upsert instrument: %w", err)
 	}
-	// ON CONFLICT DO NOTHING returns no rows when a conflict occurs; sqlc
-	// surfaces that as pgx.ErrNoRows.
 	inst := instrumentFromRow(row)
 	return &inst, nil
 }
@@ -345,7 +357,7 @@ func (s *Service) CreateTrade(ctx context.Context, workspaceID uuid.UUID, raw Tr
 		Currency: row.Currency, FeeAmount: row.FeeAmount, FeeCurrency: row.FeeCurrency,
 		TradeDate: row.TradeDate, SettleDate: row.SettleDate,
 		LinkedCashTransactionID: row.LinkedCashTransactionID,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		CreatedAt:               row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 	if err := s.RefreshPosition(ctx, workspaceID, in.AccountID, in.InstrumentID); err != nil {
 		// Replay failure is recoverable on next read; surface as 500.
@@ -382,38 +394,27 @@ func (s *Service) DeleteTrade(ctx context.Context, workspaceID, tradeID uuid.UUI
 // ListTrades returns trades for the workspace, optionally filtered by account
 // and/or instrument. Ordered by trade_date desc.
 func (s *Service) ListTrades(ctx context.Context, workspaceID uuid.UUID, accountID, instrumentID *uuid.UUID) ([]Trade, error) {
-	// Dynamic SQL: conditional WHERE clauses based on optional filters.
-	args := []any{workspaceID}
-	clauses := []string{"t.workspace_id = $1"}
-	next := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
-	if accountID != nil {
-		clauses = append(clauses, "t.account_id = "+next(*accountID))
-	}
-	if instrumentID != nil {
-		clauses = append(clauses, "t.instrument_id = "+next(*instrumentID))
-	}
-	q := `
-		select ` + tradeCols + `
-		from investment_trades t
-		join instruments i on i.id = t.instrument_id
-		where ` + strings.Join(clauses, " and ") + `
-		order by t.trade_date desc, t.id desc
-		limit 1000
-	`
-	rows, err := s.pool.Query(ctx, q, args...)
+	rows, err := dbq.New(s.pool).ListInvestmentTrades(ctx, dbq.ListInvestmentTradesParams{
+		WorkspaceID:  workspaceID,
+		AccountID:    accountID,
+		InstrumentID: instrumentID,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Trade, 0)
-	for rows.Next() {
-		t, err := scanTradeRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *t)
+	out := make([]Trade, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Trade{
+			ID: r.ID, WorkspaceID: r.WorkspaceID, AccountID: r.AccountID,
+			InstrumentID: r.InstrumentID, Symbol: r.Symbol,
+			Side: r.Side, Quantity: r.Quantity, Price: r.Price,
+			Currency: r.Currency, FeeAmount: r.FeeAmount, FeeCurrency: r.FeeCurrency,
+			TradeDate: r.TradeDate, SettleDate: r.SettleDate,
+			LinkedCashTransactionID: r.LinkedCashTransactionID,
+			CreatedAt:               r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -528,38 +529,25 @@ func (s *Service) DeleteDividend(ctx context.Context, workspaceID, dividendID uu
 // ListDividends returns dividend events for the workspace, optionally
 // filtered by account and/or instrument. Ordered by pay_date desc.
 func (s *Service) ListDividends(ctx context.Context, workspaceID uuid.UUID, accountID, instrumentID *uuid.UUID) ([]DividendEvent, error) {
-	// Dynamic SQL: conditional WHERE clauses based on optional filters.
-	args := []any{workspaceID}
-	clauses := []string{"d.workspace_id = $1"}
-	next := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
-	if accountID != nil {
-		clauses = append(clauses, "d.account_id = "+next(*accountID))
-	}
-	if instrumentID != nil {
-		clauses = append(clauses, "d.instrument_id = "+next(*instrumentID))
-	}
-	q := `
-		select ` + dividendCols + `
-		from dividend_events d
-		join instruments i on i.id = d.instrument_id
-		where ` + strings.Join(clauses, " and ") + `
-		order by d.pay_date desc, d.id desc
-		limit 1000
-	`
-	rows, err := s.pool.Query(ctx, q, args...)
+	rows, err := dbq.New(s.pool).ListInvestmentDividends(ctx, dbq.ListInvestmentDividendsParams{
+		WorkspaceID:  workspaceID,
+		AccountID:    accountID,
+		InstrumentID: instrumentID,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]DividendEvent, 0)
-	for rows.Next() {
-		d, err := scanDividendRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *d)
+	out := make([]DividendEvent, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, DividendEvent{
+			ID: r.ID, WorkspaceID: r.WorkspaceID, AccountID: r.AccountID,
+			InstrumentID: r.InstrumentID, Symbol: r.Symbol,
+			ExDate: r.ExDate, PayDate: r.PayDate, AmountPerUnit: r.AmountPerUnit,
+			Currency: r.Currency, TotalAmount: r.TotalAmount, TaxWithheld: r.TaxWithheld,
+			LinkedCashTransactionID: r.LinkedCashTransactionID, CreatedAt: r.CreatedAt,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ensureInvestmentAccount inserts a passthrough investment_accounts row if

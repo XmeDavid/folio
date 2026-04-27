@@ -1,7 +1,6 @@
 package investments
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -377,7 +376,7 @@ func (h *Handler) getInstrumentDetail(w http.ResponseWriter, r *http.Request) {
 		}
 		instID = inst.ID
 	}
-	res, err := h.svc.GetInstrumentDetail(r.Context(), workspaceID, instID)
+	res, err := h.svc.GetInstrumentDetail(r.Context(), workspaceID, instID, r.URL.Query().Get("currency"))
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return
@@ -586,7 +585,7 @@ func (h *Handler) createDividend(w http.ResponseWriter, r *http.Request) {
 		}
 		in.InstrumentID = id
 	} else {
-		inst, err := h.svc.GetInstrumentBySymbol(context.Background(), req.Symbol)
+		inst, err := h.svc.GetInstrumentBySymbol(r.Context(), req.Symbol)
 		if err != nil {
 			httpx.WriteServiceError(w, err)
 			return

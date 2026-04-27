@@ -167,11 +167,15 @@ type Querier interface {
 	// same file matches the account the user already imported into instead
 	// of silently creating a duplicate.
 	ListImportAccountMatches(ctx context.Context, workspaceID uuid.UUID) ([]ListImportAccountMatchesRow, error)
+	ListInvestmentDividends(ctx context.Context, arg ListInvestmentDividendsParams) ([]ListInvestmentDividendsRow, error)
+	ListInvestmentPositions(ctx context.Context, arg ListInvestmentPositionsParams) ([]ListInvestmentPositionsRow, error)
+	ListInvestmentTrades(ctx context.Context, arg ListInvestmentTradesParams) ([]ListInvestmentTradesRow, error)
 	ListMembersWithUser(ctx context.Context, workspaceID uuid.UUID) ([]ListMembersWithUserRow, error)
 	ListOpenPositionInstruments(ctx context.Context, workspaceID uuid.UUID) ([]ListOpenPositionInstrumentsRow, error)
 	ListOpenPositionInstrumentsWithPrice(ctx context.Context, workspaceID uuid.UUID) ([]ListOpenPositionInstrumentsWithPriceRow, error)
 	ListPendingInvites(ctx context.Context, workspaceID uuid.UUID) ([]ListPendingInvitesRow, error)
 	ListPositionAccountsForInstrument(ctx context.Context, arg ListPositionAccountsForInstrumentParams) ([]uuid.UUID, error)
+	ListTouchedInvestmentPairs(ctx context.Context, workspaceID uuid.UUID) ([]ListTouchedInvestmentPairsRow, error)
 	ListUnconsumedRecoveryCodes(ctx context.Context, userID uuid.UUID) ([]ListUnconsumedRecoveryCodesRow, error)
 	ListWebAuthnCredentials(ctx context.Context, userID uuid.UUID) ([]ListWebAuthnCredentialsRow, error)
 	ListWorkspacesWithRoleByUser(ctx context.Context, userID uuid.UUID) ([]ListWorkspacesWithRoleByUserRow, error)

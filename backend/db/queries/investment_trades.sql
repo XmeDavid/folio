@@ -57,3 +57,17 @@ SELECT EXISTS(
     AND quantity = @quantity
     AND price = @price
 );
+
+-- name: ListInvestmentTrades :many
+SELECT
+  t.id, t.workspace_id, t.account_id, t.instrument_id, i.symbol,
+  t.side::text AS side, t.quantity::text AS quantity, t.price::text AS price, t.currency,
+  t.fee_amount::text AS fee_amount, t.fee_currency, t.trade_date, t.settle_date,
+  t.linked_cash_transaction_id, t.created_at, t.updated_at
+FROM investment_trades t
+JOIN instruments i ON i.id = t.instrument_id
+WHERE t.workspace_id = @workspace_id
+  AND (sqlc.narg('account_id')::uuid IS NULL OR t.account_id = sqlc.narg('account_id')::uuid)
+  AND (sqlc.narg('instrument_id')::uuid IS NULL OR t.instrument_id = sqlc.narg('instrument_id')::uuid)
+ORDER BY t.trade_date DESC, t.id DESC
+LIMIT 1000;

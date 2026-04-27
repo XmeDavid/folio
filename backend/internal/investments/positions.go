@@ -153,15 +153,6 @@ func (s *Service) RefreshPosition(ctx context.Context, workspaceID, accountID, i
 
 	res := ReplayPosition(events)
 
-	if res.Quantity.LessThanOrEqual(decimal.Zero) && len(events) == 0 {
-		// Nothing to cache.
-		return q.DeleteInvestmentPosition(ctx, dbq.DeleteInvestmentPositionParams{
-			WorkspaceID:  workspaceID,
-			AccountID:    accountID,
-			InstrumentID: instrumentID,
-		})
-	}
-
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin refresh: %w", err)
@@ -170,21 +161,6 @@ func (s *Service) RefreshPosition(ctx context.Context, workspaceID, accountID, i
 
 	qtx := dbq.New(tx)
 
-	if err := qtx.UpsertInvestmentPosition(ctx, dbq.UpsertInvestmentPositionParams{
-		AccountID:    accountID,
-		InstrumentID: instrumentID,
-		WorkspaceID:  workspaceID,
-		Quantity:     decimalToNumeric(res.Quantity),
-		AverageCost:  decimalToNumeric(res.AverageCost),
-		Currency:     instCurrency,
-		RefreshedAt:  s.now().UTC(),
-	}); err != nil {
-		return fmt.Errorf("upsert investment_position: %w", err)
-	}
-
-	// Lots/consumptions cache rebuild. Consumptions depend on lots, so clear in
-	// child->parent order and reinsert deterministic rows for both open and
-	// closed lots.
 	posParams := dbq.DeleteLotConsumptionsForPositionParams{
 		WorkspaceID:  workspaceID,
 		AccountID:    accountID,
@@ -201,6 +177,33 @@ func (s *Service) RefreshPosition(ctx context.Context, workspaceID, accountID, i
 		return fmt.Errorf("clear lots: %w", err)
 	}
 
+	if res.Quantity.LessThanOrEqual(decimal.Zero) && len(events) == 0 {
+		if err := qtx.DeleteInvestmentPosition(ctx, dbq.DeleteInvestmentPositionParams{
+			WorkspaceID:  workspaceID,
+			AccountID:    accountID,
+			InstrumentID: instrumentID,
+		}); err != nil {
+			return fmt.Errorf("delete investment_position: %w", err)
+		}
+		return tx.Commit(ctx)
+	}
+
+	if err := qtx.UpsertInvestmentPosition(ctx, dbq.UpsertInvestmentPositionParams{
+		AccountID:    accountID,
+		InstrumentID: instrumentID,
+		WorkspaceID:  workspaceID,
+		Quantity:     decimalToNumeric(res.Quantity),
+		AverageCost:  decimalToNumeric(res.AverageCost),
+		RealisedPnl:  decimalToNumeric(res.RealisedPnL),
+		Currency:     instCurrency,
+		RefreshedAt:  s.now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("upsert investment_position: %w", err)
+	}
+
+	// Lots/consumptions cache rebuild. Consumptions depend on lots, so clear in
+	// child->parent order and reinsert deterministic rows for both open and
+	// closed lots.
 	lotIDsByTrade := make(map[uuid.UUID]uuid.UUID, len(res.Lots))
 	for _, lot := range res.Lots {
 		lotID := uuidx.New()
@@ -269,27 +272,12 @@ func nilIfZero(s, fallback string) string {
 // has ever traded and refreshes the cache. Used by the manual refresh
 // endpoint and after bulk imports.
 func (s *Service) RefreshAllPositions(ctx context.Context, workspaceID uuid.UUID) (int, error) {
-	// Dynamic SQL: UNION across two tables.
-	rows, err := s.pool.Query(ctx, `
-		select distinct account_id, instrument_id from investment_trades where workspace_id = $1
-		union
-		select distinct account_id, instrument_id from dividend_events where workspace_id = $1
-	`, workspaceID)
+	pairs, err := dbq.New(s.pool).ListTouchedInvestmentPairs(ctx, workspaceID)
 	if err != nil {
 		return 0, err
 	}
-	pairs := make([][2]uuid.UUID, 0, 32)
-	for rows.Next() {
-		var a, i uuid.UUID
-		if err := rows.Scan(&a, &i); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		pairs = append(pairs, [2]uuid.UUID{a, i})
-	}
-	rows.Close()
 	for _, p := range pairs {
-		if err := s.RefreshPosition(ctx, workspaceID, p[0], p[1]); err != nil {
+		if err := s.RefreshPosition(ctx, workspaceID, p.AccountID, p.InstrumentID); err != nil {
 			return 0, err
 		}
 	}
@@ -318,116 +306,52 @@ func (s *Service) refreshLatestPrices(ctx context.Context, workspaceID uuid.UUID
 // ListPositions returns positions for the workspace augmented with instrument
 // metadata. Filter f scopes the result.
 func (s *Service) ListPositions(ctx context.Context, workspaceID uuid.UUID, f PositionFilter) ([]Position, error) {
-	// Dynamic SQL: conditional WHERE with search, open/closed, account, instrument filters.
-	args := []any{workspaceID}
-	clauses := []string{"p.workspace_id = $1"}
-	next := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
-
-	if f.AccountID != nil {
-		clauses = append(clauses, "p.account_id = "+next(*f.AccountID))
+	search := strings.TrimSpace(f.Search)
+	searchPattern := ""
+	if search != "" {
+		searchPattern = "%" + strings.ToLower(search) + "%"
 	}
-	if f.InstrumentID != nil {
-		clauses = append(clauses, "p.instrument_id = "+next(*f.InstrumentID))
-	}
-	if f.OpenOnly {
-		clauses = append(clauses, "p.quantity > 0")
-	}
-	if f.ClosedOnly {
-		clauses = append(clauses, "p.quantity = 0")
-	}
-	if s := strings.TrimSpace(f.Search); s != "" {
-		needle := "%" + strings.ToLower(s) + "%"
-		clauses = append(clauses, "(lower(i.symbol) like "+next(needle)+" or lower(i.name) like "+next(needle)+")")
-	}
-
-	q := `
-		select
-			p.account_id, p.instrument_id, p.workspace_id,
-			i.symbol, i.name, i.asset_class::text, i.currency,
-			a.currency, a.id,
-			p.quantity::text, p.average_cost::text,
-			(p.quantity * p.average_cost)::text,
-			coalesce(realised.gain, 0)::text,
-			coalesce(div.total, 0)::text,
-			coalesce(fees.total, 0)::text,
-			last_trade.last_date,
-			lp.price::text,
-			lp.as_of
-		from investment_positions p
-		join instruments i on i.id = p.instrument_id
-		join accounts a on a.id = p.account_id
-		left join lateral (
-			select coalesce(sum(realised_gain), 0) as gain
-			from investment_lot_consumptions c
-			where c.workspace_id = p.workspace_id
-			  and c.lot_id in (
-				select l.id from investment_lots l
-				where l.workspace_id = p.workspace_id
-				  and l.account_id = p.account_id
-				  and l.instrument_id = p.instrument_id
-			  )
-		) realised on true
-		left join lateral (
-			select coalesce(sum(total_amount), 0) as total
-			from dividend_events d
-			where d.workspace_id = p.workspace_id
-			  and d.account_id = p.account_id
-			  and d.instrument_id = p.instrument_id
-		) div on true
-		left join lateral (
-			select coalesce(sum(fee_amount), 0) as total
-			from investment_trades t
-			where t.workspace_id = p.workspace_id
-			  and t.account_id = p.account_id
-			  and t.instrument_id = p.instrument_id
-		) fees on true
-		left join lateral (
-			select max(trade_date) as last_date
-			from investment_trades t
-			where t.workspace_id = p.workspace_id
-			  and t.account_id = p.account_id
-			  and t.instrument_id = p.instrument_id
-		) last_trade on true
-		left join lateral (
-			select price, as_of from instrument_prices
-			where instrument_id = p.instrument_id
-			order by as_of desc
-			limit 1
-		) lp on true
-		where ` + strings.Join(clauses, " and ") + `
-		order by (p.quantity * coalesce(lp.price, p.average_cost)) desc, i.symbol
-	`
-	rows, err := s.pool.Query(ctx, q, args...)
+	rows, err := dbq.New(s.pool).ListInvestmentPositions(ctx, dbq.ListInvestmentPositionsParams{
+		WorkspaceID:   workspaceID,
+		AccountID:     f.AccountID,
+		InstrumentID:  f.InstrumentID,
+		OpenOnly:      f.OpenOnly,
+		ClosedOnly:    f.ClosedOnly,
+		Search:        search,
+		SearchPattern: searchPattern,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list positions: %w", err)
 	}
-	defer rows.Close()
 
-	out := make([]Position, 0)
-	for rows.Next() {
-		var (
-			pos             Position
-			lastDate        *time.Time
-			lastPrice       *string
-			lastPriceAt     *time.Time
-			accountIDForPos uuid.UUID
-		)
-		if err := rows.Scan(
-			&pos.AccountID, &pos.InstrumentID, &pos.WorkspaceID,
-			&pos.Symbol, &pos.Name, &pos.AssetClass, &pos.InstrumentCcy,
-			&pos.AccountCurrency, &accountIDForPos,
-			&pos.Quantity, &pos.AverageCost, &pos.CostBasisTotal,
-			&pos.RealisedPnL, &pos.DividendsReceived, &pos.FeesPaid,
-			&lastDate, &lastPrice, &lastPriceAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan position: %w", err)
+	out := make([]Position, 0, len(rows))
+	for _, r := range rows {
+		pos := Position{
+			AccountID:         r.AccountID,
+			InstrumentID:      r.InstrumentID,
+			WorkspaceID:       r.WorkspaceID,
+			Symbol:            r.Symbol,
+			Name:              r.Name,
+			AssetClass:        r.AssetClass,
+			InstrumentCcy:     r.InstrumentCurrency,
+			AccountCurrency:   r.AccountCurrency,
+			Quantity:          r.Quantity,
+			AverageCost:       r.AverageCost,
+			CostBasisTotal:    r.CostBasisTotal,
+			RealisedPnL:       r.RealisedPnl,
+			DividendsReceived: r.DividendsReceived,
+			FeesPaid:          r.FeesPaid,
 		}
-		pos.LastTradeDate = lastDate
-		pos.LastPrice = lastPrice
-		pos.LastPriceAt = lastPriceAt
-		// Compute market value & unrealised P/L when we have a price.
-		if lastPrice != nil {
-			lp, _ := decimal.NewFromString(*lastPrice)
+		pos.LastTradeDate = timeFromSQLC(r.LastTradeDate)
+		if lastPrice := stringFromSQLC(r.LastPrice); lastPrice != "" {
+			pos.LastPrice = &lastPrice
+		}
+		if !r.LastPriceAt.IsZero() && r.LastPriceAt.Year() > 1 {
+			lastPriceAt := r.LastPriceAt
+			pos.LastPriceAt = &lastPriceAt
+		}
+		if pos.LastPrice != nil {
+			lp, _ := decimal.NewFromString(*pos.LastPrice)
 			qty, _ := decimal.NewFromString(pos.Quantity)
 			mv := lp.Mul(qty)
 			cost, _ := decimal.NewFromString(pos.CostBasisTotal)
@@ -438,15 +362,24 @@ func (s *Service) ListPositions(ctx context.Context, workspaceID uuid.UUID, f Po
 		}
 		out = append(out, pos)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // GetInstrumentDetail bundles instrument metadata with the workspace's
 // trades/dividends/positions for that instrument and a pricing time series.
-func (s *Service) GetInstrumentDetail(ctx context.Context, workspaceID, instrumentID uuid.UUID) (*InstrumentDetail, error) {
+func (s *Service) GetInstrumentDetail(ctx context.Context, workspaceID, instrumentID uuid.UUID, reportCurrency string) (*InstrumentDetail, error) {
 	inst, err := s.GetInstrument(ctx, instrumentID)
 	if err != nil {
 		return nil, err
+	}
+	reportCurrency = strings.ToUpper(strings.TrimSpace(reportCurrency))
+	if reportCurrency == "" {
+		if base, err := dbq.New(s.pool).GetWorkspaceBaseCurrency(ctx, workspaceID); err == nil {
+			reportCurrency = base
+		}
+	}
+	if reportCurrency == "" {
+		reportCurrency = inst.Currency
 	}
 	positions, err := s.ListPositions(ctx, workspaceID, PositionFilter{InstrumentID: &instrumentID})
 	if err != nil {
@@ -461,7 +394,11 @@ func (s *Service) GetInstrumentDetail(ctx context.Context, workspaceID, instrume
 		return nil, err
 	}
 
-	history, err := s.instrumentValueHistory(ctx, *inst, instrumentID, trades)
+	corpActions, err := s.ListCorporateActions(ctx, workspaceID, instrumentID)
+	if err != nil {
+		return nil, err
+	}
+	history, err := s.instrumentValueHistory(ctx, *inst, instrumentID, trades, corpActions, reportCurrency)
 	if err != nil {
 		return nil, err
 	}
@@ -482,16 +419,17 @@ func (s *Service) GetInstrumentDetail(ctx context.Context, workspaceID, instrume
 		}
 	}
 	return &InstrumentDetail{
-		Instrument: *inst,
-		Positions:  positions,
-		Trades:     trades,
-		Dividends:  dividends,
-		History:    history,
-		LastQuote:  lastQuote,
+		Instrument:     *inst,
+		ReportCurrency: reportCurrency,
+		Positions:      positions,
+		Trades:         trades,
+		Dividends:      dividends,
+		History:        history,
+		LastQuote:      lastQuote,
 	}, nil
 }
 
-func (s *Service) instrumentValueHistory(ctx context.Context, inst Instrument, instrumentID uuid.UUID, trades []Trade) ([]HistoryDataPoint, error) {
+func (s *Service) instrumentValueHistory(ctx context.Context, inst Instrument, instrumentID uuid.UUID, trades []Trade, corpActions []CorporateAction, reportCurrency string) ([]HistoryDataPoint, error) {
 	if len(trades) == 0 {
 		return []HistoryDataPoint{}, nil
 	}
@@ -499,6 +437,29 @@ func (s *Service) instrumentValueHistory(ctx context.Context, inst Instrument, i
 	ascTrades := append([]Trade(nil), trades...)
 	sort.SliceStable(ascTrades, func(i, j int) bool {
 		return ascTrades[i].TradeDate.Before(ascTrades[j].TradeDate)
+	})
+
+	// Sort splits ascending by effective date so we can walk them in lock-step
+	// with the daily timeline. Other corporate-action kinds (cash distributions,
+	// delistings, symbol changes) don't affect the share-count timeline so we
+	// ignore them here.
+	type splitEvent struct {
+		Date   time.Time
+		Factor decimal.Decimal
+	}
+	splits := make([]splitEvent, 0, len(corpActions))
+	for _, ca := range corpActions {
+		if ca.Kind != "split" && ca.Kind != "reverse_split" {
+			continue
+		}
+		factor := payloadFactor(ca.Payload)
+		if factor.IsZero() {
+			continue
+		}
+		splits = append(splits, splitEvent{Date: dayUTC(ca.EffectiveDate), Factor: factor})
+	}
+	sort.SliceStable(splits, func(i, j int) bool {
+		return splits[i].Date.Before(splits[j].Date)
 	})
 
 	from := dayUTC(ascTrades[0].TradeDate)
@@ -527,8 +488,16 @@ func (s *Service) instrumentValueHistory(ctx context.Context, inst Instrument, i
 		}
 	}
 
-	out := make([]HistoryDataPoint, 0, int(to.Sub(from).Hours()/24)+1)
+	// Phase 1: walk the timeline forward, applying trades and splits at their
+	// effective dates so qty is in time-of-event units.
+	type rawPoint struct {
+		Date  time.Time
+		Qty   decimal.Decimal
+		Price *decimal.Decimal
+	}
+	rawSeries := make([]rawPoint, 0, int(to.Sub(from).Hours()/24)+1)
 	tradeIdx := 0
+	splitIdx := 0
 	qty := decimal.Zero
 	var lastPrice *decimal.Decimal
 	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
@@ -542,20 +511,108 @@ func (s *Service) instrumentValueHistory(ctx context.Context, inst Instrument, i
 			}
 			tradeIdx++
 		}
+		for splitIdx < len(splits) && !splits[splitIdx].Date.After(d) {
+			qty = qty.Mul(splits[splitIdx].Factor)
+			splitIdx++
+		}
 		if p, ok := priceMap[d]; ok {
 			cp := p
 			lastPrice = &cp
 		}
-		point := HistoryDataPoint{Date: d, Quantity: qty.String()}
+		rp := rawPoint{Date: d, Qty: qty}
 		if lastPrice != nil {
-			price := lastPrice.String()
-			value := lastPrice.Mul(qty).String()
-			point.Price = &price
-			point.Value = &value
+			cp := *lastPrice
+			rp.Price = &cp
 		}
-		out = append(out, point)
+		rawSeries = append(rawSeries, rp)
+	}
+
+	// Phase 2: express historical qty in *today's* split-adjusted units. Walk
+	// the timeline backward, accumulating a futureFactor of every split whose
+	// effective date is strictly after the current point. Multiplying the raw
+	// qty by futureFactor gives the qty in today's units, so the chart line is
+	// continuous across split boundaries instead of stair-stepping.
+	out := make([]HistoryDataPoint, len(rawSeries))
+	futureFactor := decimal.NewFromInt(1)
+	splitBackIdx := len(splits) - 1
+	for i := len(rawSeries) - 1; i >= 0; i-- {
+		rp := rawSeries[i]
+		for splitBackIdx >= 0 && splits[splitBackIdx].Date.After(rp.Date) {
+			futureFactor = futureFactor.Mul(splits[splitBackIdx].Factor)
+			splitBackIdx--
+		}
+		adjQty := rp.Qty.Mul(futureFactor)
+		point := HistoryDataPoint{
+			Date:           rp.Date,
+			Quantity:       adjQty.String(),
+			Currency:       reportCurrency,
+			NativeCurrency: inst.Currency,
+		}
+		if rp.Price != nil {
+			price := rp.Price.String()
+			nativeValue := rp.Price.Mul(adjQty)
+			value := nativeValue
+			if !strings.EqualFold(inst.Currency, reportCurrency) {
+				if fx, err := s.fxOrIdentity(ctx, inst.Currency, reportCurrency, rp.Date); err == nil {
+					value = nativeValue.Mul(fx)
+				}
+			}
+			nativeValueStr := nativeValue.String()
+			valueStr := value.String()
+			point.Price = &price
+			point.Value = &valueStr
+			point.ValueNative = &nativeValueStr
+		}
+		out[i] = point
 	}
 	return out, nil
+}
+
+func timeFromSQLC(v any) *time.Time {
+	switch t := v.(type) {
+	case time.Time:
+		return &t
+	case *time.Time:
+		return t
+	default:
+		return nil
+	}
+}
+
+func stringFromSQLC(v any) string {
+	switch s := v.(type) {
+	case string:
+		return s
+	case []byte:
+		return string(s)
+	default:
+		return ""
+	}
+}
+
+// payloadFactor extracts the "factor" value from a corporate-action payload
+// (which may be a JSON object decoded into map[string]any with string or
+// numeric values). Returns Zero when missing or unparseable.
+func payloadFactor(payload any) decimal.Decimal {
+	m, ok := payload.(map[string]any)
+	if !ok {
+		return decimal.Zero
+	}
+	v, ok := m["factor"]
+	if !ok {
+		return decimal.Zero
+	}
+	switch t := v.(type) {
+	case string:
+		d, err := decimal.NewFromString(t)
+		if err != nil {
+			return decimal.Zero
+		}
+		return d
+	case float64:
+		return decimal.NewFromFloat(t)
+	}
+	return decimal.Zero
 }
 
 func dayUTC(t time.Time) time.Time {
@@ -583,6 +640,6 @@ func (s *Service) GetTrade(ctx context.Context, workspaceID, tradeID uuid.UUID) 
 		Currency: row.Currency, FeeAmount: row.FeeAmount, FeeCurrency: row.FeeCurrency,
 		TradeDate: row.TradeDate, SettleDate: row.SettleDate,
 		LinkedCashTransactionID: row.LinkedCashTransactionID,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		CreatedAt:               row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}, nil
 }

@@ -186,6 +186,9 @@ export type HistoryDataPoint = {
   quantity: string;
   price?: string | null;
   value?: string | null;
+  valueNative?: string | null;
+  currency: string;
+  nativeCurrency: string;
 };
 
 export type QuoteSnapshot = {
@@ -198,6 +201,7 @@ export type QuoteSnapshot = {
 
 export type InstrumentDetail = {
   instrument: Instrument;
+  reportCurrency: string;
   positions: Position[];
   trades: Trade[];
   dividends: DividendEvent[];
@@ -237,10 +241,14 @@ export async function fetchPositions(
 
 export async function fetchInstrumentDetail(
   workspaceId: string,
-  instrumentIdOrSymbol: string
+  instrumentIdOrSymbol: string,
+  opts: { currency?: string } = {}
 ): Promise<InstrumentDetail> {
+  const suffix = opts.currency
+    ? `?currency=${encodeURIComponent(opts.currency)}`
+    : "";
   return request<InstrumentDetail>(
-    `${root(workspaceId)}/instruments/${encodeURIComponent(instrumentIdOrSymbol)}`
+    `${root(workspaceId)}/instruments/${encodeURIComponent(instrumentIdOrSymbol)}${suffix}`
   );
 }
 
@@ -426,14 +434,14 @@ export type ImportSummary = {
 
 export async function uploadInvestmentImport(
   workspaceId: string,
-  format: ImportFormat,
-  accountId: string,
+  _format: ImportFormat,
+  _accountId: string,
   file: File
 ): Promise<ImportSummary> {
   const form = new FormData();
   form.append("file", file);
   const res = await fetch(
-    `${baseUrl}${root(workspaceId)}/imports/${format}/${accountId}`,
+    `${baseUrl}/api/v1/t/${workspaceId}/accounts/import-preview`,
     {
       method: "POST",
       credentials: "include",
@@ -450,7 +458,14 @@ export async function uploadInvestmentImport(
     }
     throw new ApiError(res.status, parsed);
   }
-  return (await res.json()) as ImportSummary;
+  const body = (await res.json()) as {
+    kind?: string;
+    investment?: { summary?: ImportSummary };
+  };
+  if (body.kind !== "investment" || !body.investment?.summary) {
+    throw new ApiError(400, { error: "file was not recognised as an investment import" });
+  }
+  return body.investment.summary;
 }
 
 export { ApiError };

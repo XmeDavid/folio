@@ -176,20 +176,24 @@ type PositionFilter struct {
 
 // InstrumentDetail bundles everything the per-instrument page needs.
 type InstrumentDetail struct {
-	Instrument Instrument         `json:"instrument"`
-	Positions  []Position         `json:"positions"`
-	Trades     []Trade            `json:"trades"`
-	Dividends  []DividendEvent    `json:"dividends"`
-	History    []HistoryDataPoint `json:"history"`
-	LastQuote  *QuoteSnapshot     `json:"lastQuote,omitempty"`
+	Instrument     Instrument         `json:"instrument"`
+	ReportCurrency string             `json:"reportCurrency"`
+	Positions      []Position         `json:"positions"`
+	Trades         []Trade            `json:"trades"`
+	Dividends      []DividendEvent    `json:"dividends"`
+	History        []HistoryDataPoint `json:"history"`
+	LastQuote      *QuoteSnapshot     `json:"lastQuote,omitempty"`
 }
 
 // HistoryDataPoint is a single point on the holdings-over-time chart.
 type HistoryDataPoint struct {
-	Date     time.Time `json:"date"`
-	Quantity string    `json:"quantity"`
-	Price    *string   `json:"price,omitempty"`
-	Value    *string   `json:"value,omitempty"`
+	Date           time.Time `json:"date"`
+	Quantity       string    `json:"quantity"`
+	Price          *string   `json:"price,omitempty"`
+	Value          *string   `json:"value,omitempty"`
+	ValueNative    *string   `json:"valueNative,omitempty"`
+	Currency       string    `json:"currency"`
+	NativeCurrency string    `json:"nativeCurrency"`
 }
 
 // QuoteSnapshot is the latest price observation for an instrument.

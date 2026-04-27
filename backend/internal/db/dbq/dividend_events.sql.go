@@ -192,6 +192,77 @@ func (q *Queries) InsertDividendEventExec(ctx context.Context, arg InsertDividen
 	return err
 }
 
+const listInvestmentDividends = `-- name: ListInvestmentDividends :many
+SELECT
+  d.id, d.workspace_id, d.account_id, d.instrument_id, i.symbol,
+  d.ex_date, d.pay_date, d.amount_per_unit::text AS amount_per_unit, d.currency,
+  d.total_amount::text AS total_amount, d.tax_withheld::text AS tax_withheld,
+  d.linked_cash_transaction_id, d.created_at
+FROM dividend_events d
+JOIN instruments i ON i.id = d.instrument_id
+WHERE d.workspace_id = $1
+  AND ($2::uuid IS NULL OR d.account_id = $2::uuid)
+  AND ($3::uuid IS NULL OR d.instrument_id = $3::uuid)
+ORDER BY d.pay_date DESC, d.id DESC
+LIMIT 1000
+`
+
+type ListInvestmentDividendsParams struct {
+	WorkspaceID  uuid.UUID  `json:"workspace_id"`
+	AccountID    *uuid.UUID `json:"account_id"`
+	InstrumentID *uuid.UUID `json:"instrument_id"`
+}
+
+type ListInvestmentDividendsRow struct {
+	ID                      uuid.UUID  `json:"id"`
+	WorkspaceID             uuid.UUID  `json:"workspace_id"`
+	AccountID               uuid.UUID  `json:"account_id"`
+	InstrumentID            uuid.UUID  `json:"instrument_id"`
+	Symbol                  string     `json:"symbol"`
+	ExDate                  time.Time  `json:"ex_date"`
+	PayDate                 time.Time  `json:"pay_date"`
+	AmountPerUnit           string     `json:"amount_per_unit"`
+	Currency                string     `json:"currency"`
+	TotalAmount             string     `json:"total_amount"`
+	TaxWithheld             string     `json:"tax_withheld"`
+	LinkedCashTransactionID *uuid.UUID `json:"linked_cash_transaction_id"`
+	CreatedAt               time.Time  `json:"created_at"`
+}
+
+func (q *Queries) ListInvestmentDividends(ctx context.Context, arg ListInvestmentDividendsParams) ([]ListInvestmentDividendsRow, error) {
+	rows, err := q.db.Query(ctx, listInvestmentDividends, arg.WorkspaceID, arg.AccountID, arg.InstrumentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInvestmentDividendsRow{}
+	for rows.Next() {
+		var i ListInvestmentDividendsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AccountID,
+			&i.InstrumentID,
+			&i.Symbol,
+			&i.ExDate,
+			&i.PayDate,
+			&i.AmountPerUnit,
+			&i.Currency,
+			&i.TotalAmount,
+			&i.TaxWithheld,
+			&i.LinkedCashTransactionID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const loadDividendEvents = `-- name: LoadDividendEvents :many
 SELECT pay_date, total_amount::text, currency
 FROM dividend_events

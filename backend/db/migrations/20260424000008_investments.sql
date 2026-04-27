@@ -300,6 +300,7 @@ create table investment_positions (
   workspace_id          uuid not null references workspaces(id) on delete cascade,
   quantity           numeric(28,8) not null,
   average_cost       numeric(28,8) not null,
+  realised_pnl       numeric(28,8) not null default 0,
   currency           money_currency not null,
   last_price         numeric(28,8),
   last_price_at      timestamptz,
