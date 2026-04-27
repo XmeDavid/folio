@@ -345,6 +345,72 @@ export async function deleteDividend(
 }
 
 // ---------------------------------------------------------------------------
+// Corporate actions (manual entry: splits, delistings, etc.)
+// ---------------------------------------------------------------------------
+
+export type CorporateActionKind =
+  | "split"
+  | "reverse_split"
+  | "merger"
+  | "spinoff"
+  | "delisting"
+  | "symbol_change"
+  | "cash_distribution"
+  | "stock_distribution";
+
+export type CorporateAction = {
+  id: string;
+  workspaceId?: string | null;
+  accountId?: string | null;
+  instrumentId: string;
+  symbol: string;
+  kind: CorporateActionKind;
+  effectiveDate: string;
+  payload: Record<string, unknown>;
+  appliedAt?: string | null;
+  createdAt: string;
+};
+
+export type CorporateActionCreateInput = {
+  accountId?: string | null;
+  instrumentId?: string;
+  symbol?: string;
+  kind: CorporateActionKind;
+  effectiveDate: string;
+  factor?: string;
+  amount?: string;
+  newSymbol?: string;
+};
+
+export async function fetchCorporateActions(
+  workspaceId: string,
+  instrumentId: string
+): Promise<CorporateAction[]> {
+  return request<CorporateAction[]>(
+    `${root(workspaceId)}/corporate-actions?instrumentId=${encodeURIComponent(instrumentId)}`
+  );
+}
+
+export async function createCorporateAction(
+  workspaceId: string,
+  body: CorporateActionCreateInput
+): Promise<CorporateAction> {
+  return request<CorporateAction>(`${root(workspaceId)}/corporate-actions`, {
+    method: "POST",
+    json: body,
+  });
+}
+
+export async function deleteCorporateAction(
+  workspaceId: string,
+  actionId: string
+): Promise<void> {
+  return request<void>(`${root(workspaceId)}/corporate-actions/${actionId}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Imports
 // ---------------------------------------------------------------------------
 

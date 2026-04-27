@@ -56,6 +56,7 @@ type Querier interface {
 	DeleteSessionByIDReturningUserID(ctx context.Context, id string) (uuid.UUID, error)
 	DeleteSessionsByUser(ctx context.Context, userID uuid.UUID) error
 	DeleteTOTPCredential(ctx context.Context, userID uuid.UUID) (int64, error)
+	DeleteTransaction(ctx context.Context, arg DeleteTransactionParams) (int64, error)
 	DeleteTransactionTag(ctx context.Context, arg DeleteTransactionTagParams) error
 	GetAccountCurrency(ctx context.Context, arg GetAccountCurrencyParams) (string, error)
 	GetAccountGroup(ctx context.Context, arg GetAccountGroupParams) (GetAccountGroupRow, error)
@@ -80,6 +81,7 @@ type Querier interface {
 	GetTOTPSecretCipherAny(ctx context.Context, userID uuid.UUID) (string, error)
 	GetTOTPVerifiedAt(ctx context.Context, userID uuid.UUID) (*time.Time, error)
 	GetTag(ctx context.Context, arg GetTagParams) (Tag, error)
+	GetTransaction(ctx context.Context, arg GetTransactionParams) (GetTransactionRow, error)
 	GetUserByEmailWithPassword(ctx context.Context, email string) (GetUserByEmailWithPasswordRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
 	GetUserEmailAndDisplayName(ctx context.Context, id uuid.UUID) (GetUserEmailAndDisplayNameRow, error)
@@ -114,6 +116,9 @@ type Querier interface {
 	InsertSession(ctx context.Context, arg InsertSessionParams) error
 	InsertSourceRef(ctx context.Context, arg InsertSourceRefParams) error
 	InsertTag(ctx context.Context, arg InsertTagParams) (Tag, error)
+	InsertTestUser(ctx context.Context, arg InsertTestUserParams) error
+	InsertTestWorkspace(ctx context.Context, arg InsertTestWorkspaceParams) error
+	InsertTransaction(ctx context.Context, arg InsertTransactionParams) (InsertTransactionRow, error)
 	InsertTransactionTag(ctx context.Context, arg InsertTransactionTagParams) error
 	InsertUserReturning(ctx context.Context, arg InsertUserReturningParams) (InsertUserReturningRow, error)
 	InsertWebAuthnCredential(ctx context.Context, arg InsertWebAuthnCredentialParams) error
@@ -149,6 +154,7 @@ type Querier interface {
 	RestoreWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
 	SoftDeleteWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
 	StampRuleLastMatchedAt(ctx context.Context, arg StampRuleLastMatchedAtParams) error
+	SweepDeletedWorkspaces(ctx context.Context, gracePeriodSeconds float64) ([]string, error)
 	TagExists(ctx context.Context, arg TagExistsParams) (bool, error)
 	TransactionExists(ctx context.Context, arg TransactionExistsParams) (bool, error)
 	// Opt-in reactivate: clear archived_at when the user explicitly
@@ -158,6 +164,7 @@ type Querier interface {
 	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) error
 	UpdateSessionLastSeen(ctx context.Context, arg UpdateSessionLastSeenParams) error
 	UpdateSessionReauthAt(ctx context.Context, arg UpdateSessionReauthAtParams) error
+	UpdateSessionReauthByID(ctx context.Context, arg UpdateSessionReauthByIDParams) error
 	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) error
 	UpdateUserLastLoginAt(ctx context.Context, arg UpdateUserLastLoginAtParams) error
 	UpdateUserLastWorkspace(ctx context.Context, arg UpdateUserLastWorkspaceParams) error

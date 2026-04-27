@@ -19,13 +19,30 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/money"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
+
+// decimalToNumeric converts a decimal.Decimal to pgtype.Numeric for sqlc params.
+func decimalToNumeric(d decimal.Decimal) pgtype.Numeric {
+	var n pgtype.Numeric
+	_ = n.Scan(d.String())
+	return n
+}
+
+// nilableString converts an empty string to nil for nullable text columns.
+func nilableString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
 
 // DefaultListLimit and MaxListLimit bound the GET /transactions page size.
 const (
@@ -341,12 +358,14 @@ func (s *Service) Create(ctx context.Context, workspaceID uuid.UUID, raw CreateI
 		return nil, err
 	}
 
+	q := dbq.New(s.pool)
+
 	// Pre-check account + currency so we can return a clean 400/404 rather
 	// than leaking the composite-FK or trigger exception text.
-	var accountCurrency string
-	err = s.pool.QueryRow(ctx, `
-		select currency from accounts where workspace_id = $1 and id = $2
-	`, workspaceID, in.AccountID).Scan(&accountCurrency)
+	accountCurrency, err := q.GetAccountCurrency(ctx, dbq.GetAccountCurrencyParams{
+		WorkspaceID: workspaceID,
+		ID:          in.AccountID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("account")
@@ -359,41 +378,42 @@ func (s *Service) Create(ctx context.Context, workspaceID uuid.UUID, raw CreateI
 	}
 
 	id := uuidx.New()
-	t, err := s.scanTransaction(ctx, s.pool, `
-		insert into transactions (
-			id, workspace_id, account_id, status, booked_at, value_at, posted_at,
-			amount, currency, merchant_id, category_id,
-			counterparty_raw, description, notes, count_as_expense
-		) values (
-			$1, $2, $3, $4::transaction_status, $5, $6, $7,
-			$8::numeric, $9, $10, $11,
-			$12, $13, $14, $15
-		)
-		returning `+transactionCols, id, workspaceID, in.AccountID, in.Status,
-		in.BookedAt, in.ValueAt, in.PostedAt,
-		in.Amount.String(), in.Currency, in.MerchantID, in.CategoryID,
-		in.CounterpartyRaw, in.Description, in.Notes, in.CountAsExpense,
-	)
+	row, err := q.InsertTransaction(ctx, dbq.InsertTransactionParams{
+		ID:              id,
+		WorkspaceID:     workspaceID,
+		AccountID:       in.AccountID,
+		Status:          dbq.TransactionStatus(in.Status),
+		BookedAt:        in.BookedAt,
+		ValueAt:         in.ValueAt,
+		PostedAt:        in.PostedAt,
+		Amount:          decimalToNumeric(in.Amount),
+		Currency:        in.Currency,
+		MerchantID:      in.MerchantID,
+		CategoryID:      in.CategoryID,
+		CounterpartyRaw: in.CounterpartyRaw,
+		Description:     in.Description,
+		Notes:           in.Notes,
+		CountAsExpense:  in.CountAsExpense,
+	})
 	if err != nil {
 		return nil, mapInsertError(err)
 	}
-	return t, nil
+	return insertRowToTransaction(row), nil
 }
 
 // Get returns a single transaction by id, scoped to workspaceID.
 func (s *Service) Get(ctx context.Context, workspaceID, id uuid.UUID) (*Transaction, error) {
-	t, err := s.scanTransaction(ctx, s.pool, `
-		select `+transactionCols+`
-		from transactions
-		where workspace_id = $1 and id = $2
-	`, workspaceID, id)
+	row, err := dbq.New(s.pool).GetTransaction(ctx, dbq.GetTransactionParams{
+		WorkspaceID: workspaceID,
+		ID:          id,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("transaction")
 		}
 		return nil, err
 	}
-	return t, nil
+	return getRowToTransaction(row), nil
 }
 
 // ListFilter bounds the GET /transactions listing.
@@ -515,10 +535,10 @@ func (s *Service) Update(ctx context.Context, workspaceID, id uuid.UUID, raw Pat
 	}
 
 	if p.currencySet {
-		var accountCurrency string
-		err := s.pool.QueryRow(ctx, `
-			select currency from accounts where workspace_id = $1 and id = $2
-		`, workspaceID, existing.AccountID).Scan(&accountCurrency)
+		accountCurrency, err := dbq.New(s.pool).GetAccountCurrency(ctx, dbq.GetAccountCurrencyParams{
+			WorkspaceID: workspaceID,
+			ID:          existing.AccountID,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("load account: %w", err)
 		}
@@ -627,11 +647,14 @@ func (s *Service) Update(ctx context.Context, workspaceID, id uuid.UUID, raw Pat
 // Delete hard-deletes a transaction. Returns NotFoundError when no row
 // matches (workspaceID, id).
 func (s *Service) Delete(ctx context.Context, workspaceID, id uuid.UUID) error {
-	tag, err := s.pool.Exec(ctx, `delete from transactions where workspace_id = $1 and id = $2`, workspaceID, id)
+	n, err := dbq.New(s.pool).DeleteTransaction(ctx, dbq.DeleteTransactionParams{
+		WorkspaceID: workspaceID,
+		ID:          id,
+	})
 	if err != nil {
 		return fmt.Errorf("delete transaction: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if n == 0 {
 		return httpx.NewNotFoundError("transaction")
 	}
 	return nil
@@ -690,4 +713,54 @@ func mapInsertError(err error) error {
 		}
 	}
 	return fmt.Errorf("transaction write: %w", err)
+}
+
+// getRowToTransaction converts a sqlc GetTransactionRow to the API Transaction.
+func getRowToTransaction(r dbq.GetTransactionRow) *Transaction {
+	return &Transaction{
+		ID:               r.ID,
+		WorkspaceID:      r.WorkspaceID,
+		AccountID:        r.AccountID,
+		Status:           r.Status,
+		BookedAt:         r.BookedAt,
+		ValueAt:          r.ValueAt,
+		PostedAt:         r.PostedAt,
+		Amount:           r.Amount,
+		Currency:         r.Currency,
+		OriginalAmount:   nilableString(r.OriginalAmount),
+		OriginalCurrency: nilableString(r.OriginalCurrency),
+		MerchantID:       r.MerchantID,
+		CategoryID:       r.CategoryID,
+		CounterpartyRaw:  r.CounterpartyRaw,
+		Description:      r.Description,
+		Notes:            r.Notes,
+		CountAsExpense:   r.CountAsExpense,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
+	}
+}
+
+// insertRowToTransaction converts a sqlc InsertTransactionRow to the API Transaction.
+func insertRowToTransaction(r dbq.InsertTransactionRow) *Transaction {
+	return &Transaction{
+		ID:               r.ID,
+		WorkspaceID:      r.WorkspaceID,
+		AccountID:        r.AccountID,
+		Status:           r.Status,
+		BookedAt:         r.BookedAt,
+		ValueAt:          r.ValueAt,
+		PostedAt:         r.PostedAt,
+		Amount:           r.Amount,
+		Currency:         r.Currency,
+		OriginalAmount:   nilableString(r.OriginalAmount),
+		OriginalCurrency: nilableString(r.OriginalCurrency),
+		MerchantID:       r.MerchantID,
+		CategoryID:       r.CategoryID,
+		CounterpartyRaw:  r.CounterpartyRaw,
+		Description:      r.Description,
+		Notes:            r.Notes,
+		CountAsExpense:   r.CountAsExpense,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
+	}
 }

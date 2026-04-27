@@ -109,6 +109,25 @@ func TestReplay_DividendsAccrueButDontTouchQuantity(t *testing.T) {
 	approxEq(t, "realised", res.RealisedPnL, d("0"))
 }
 
+// TestReplay_ReverseSplit_1for50 mirrors the real MSAI scenario: 100 shares
+// bought at $1.75 each, then a 1-for-50 reverse split. The user's holding
+// becomes 2 shares, total cost basis is preserved (≈ $175), and per-share
+// cost basis jumps 50× to ~$87.50.
+func TestReplay_ReverseSplit_1for50(t *testing.T) {
+	res := ReplayPosition([]ReplayEvent{
+		{Date: date("2025-10-31"), Kind: EventBuy, TradeID: uuid.New(),
+			Quantity: d("100"), Price: d("1.75"), Currency: "USD"},
+		{Date: date("2026-04-15"), Kind: EventReverseSplit,
+			SplitFactor: d("0.02"), Currency: "USD"},
+	})
+	approxEq(t, "qty", res.Quantity, d("2"))
+	approxEq(t, "costBasis", res.CostBasisTotal, d("175"))
+	approxEq(t, "avgCost", res.AverageCost, d("87.5"))
+	if len(res.OpenLots) != 1 {
+		t.Fatalf("want 1 open lot after split, got %d", len(res.OpenLots))
+	}
+}
+
 func TestReplay_ForwardSplit(t *testing.T) {
 	// 4-for-1 split should multiply quantity, divide cost basis per unit.
 	res := ReplayPosition([]ReplayEvent{

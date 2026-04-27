@@ -46,10 +46,137 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/dividends", h.createDividend)
 	r.Delete("/dividends/{dividendId}", h.deleteDividend)
 
+	r.Post("/corporate-actions", h.createCorporateAction)
+	r.Get("/corporate-actions", h.listCorporateActions)
+	r.Delete("/corporate-actions/{actionId}", h.deleteCorporateAction)
+
 	// Investment-format imports route through the unified smart-import
 	// endpoint at POST /accounts/import-preview. There is no dedicated
 	// per-format endpoint anymore.
 	_ = h.importUpload
+}
+
+// ---------------------------------------------------------------------------
+// Corporate actions (manual entry — splits, delistings, etc.)
+// ---------------------------------------------------------------------------
+
+type corporateActionReq struct {
+	AccountID     *string `json:"accountId"`
+	InstrumentID  string  `json:"instrumentId"`
+	Symbol        string  `json:"symbol"`
+	Kind          string  `json:"kind"`
+	EffectiveDate string  `json:"effectiveDate"`
+	Factor        *string `json:"factor"`
+	Amount        *string `json:"amount"`
+	NewSymbol     *string `json:"newSymbol"`
+}
+
+func (h *Handler) createCorporateAction(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.MustWorkspace(r).ID
+	var req corporateActionReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return
+	}
+	in := CorporateActionInput{Kind: req.Kind}
+	if req.AccountID != nil && *req.AccountID != "" {
+		id, err := uuid.Parse(*req.AccountID)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "accountId must be a UUID")
+			return
+		}
+		in.AccountID = &id
+	}
+	if req.InstrumentID != "" {
+		id, err := uuid.Parse(req.InstrumentID)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "instrumentId must be a UUID")
+			return
+		}
+		in.InstrumentID = id
+	} else if strings.TrimSpace(req.Symbol) != "" {
+		inst, err := h.svc.GetInstrumentBySymbol(r.Context(), req.Symbol)
+		if err != nil {
+			httpx.WriteServiceError(w, err)
+			return
+		}
+		in.InstrumentID = inst.ID
+	} else {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "instrumentId or symbol is required")
+		return
+	}
+	if req.EffectiveDate == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "effectiveDate is required")
+		return
+	}
+	d, err := time.Parse("2006-01-02", req.EffectiveDate)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "effectiveDate must be YYYY-MM-DD")
+		return
+	}
+	in.EffectiveDate = d
+	if req.Factor != nil && *req.Factor != "" {
+		f, err := decimal.NewFromString(strings.TrimSpace(*req.Factor))
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "factor must be a decimal string")
+			return
+		}
+		in.Factor = f
+	}
+	if req.Amount != nil && *req.Amount != "" {
+		a, err := decimal.NewFromString(strings.TrimSpace(*req.Amount))
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "amount must be a decimal string")
+			return
+		}
+		in.Amount = a
+	}
+	if req.NewSymbol != nil {
+		in.NewSymbol = *req.NewSymbol
+	}
+	res, err := h.svc.CreateCorporateAction(r.Context(), workspaceID, in)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, res)
+}
+
+func (h *Handler) listCorporateActions(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.MustWorkspace(r).ID
+	raw := r.URL.Query().Get("instrumentId")
+	if raw == "" {
+		// Without an instrument scope, return an empty list — the table is
+		// global and could be huge; clients drive lookups from the
+		// instrument-detail page.
+		httpx.WriteJSON(w, http.StatusOK, []CorporateAction{})
+		return
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "instrumentId must be a UUID")
+		return
+	}
+	res, err := h.svc.ListCorporateActions(r.Context(), workspaceID, id)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) deleteCorporateAction(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.MustWorkspace(r).ID
+	id, err := uuid.Parse(chi.URLParam(r, "actionId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "actionId must be a UUID")
+		return
+	}
+	if err := h.svc.DeleteCorporateAction(r.Context(), workspaceID, id); err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---------------------------------------------------------------------------

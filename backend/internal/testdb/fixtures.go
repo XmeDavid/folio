@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/identity"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
@@ -36,10 +37,11 @@ func CreateTestWorkspace(t *testing.T, pool *pgxpool.Pool, name string) (id uuid
 		trimmed = strings.TrimRight(trimmed[:max], "-")
 	}
 	slug = trimmed + suffix
-	_, err := pool.Exec(context.Background(), `
-		insert into workspaces (id, name, slug, base_currency, cycle_anchor_day, locale, timezone)
-		values ($1, $2, $3, 'CHF', 1, 'en', 'UTC')
-	`, id, name, slug)
+	err := dbq.New(pool).InsertTestWorkspace(context.Background(), dbq.InsertTestWorkspaceParams{
+		ID:   id,
+		Name: name,
+		Slug: slug,
+	})
 	if err != nil {
 		t.Fatalf("CreateTestWorkspace: %v", err)
 	}
@@ -53,14 +55,17 @@ func CreateTestWorkspace(t *testing.T, pool *pgxpool.Pool, name string) (id uuid
 func CreateTestUser(t *testing.T, pool *pgxpool.Pool, email string, verified bool) uuid.UUID {
 	t.Helper()
 	id := uuidx.New()
-	var verifiedAt any
+	var verifiedAt *time.Time
 	if verified {
-		verifiedAt = time.Now()
+		now := time.Now()
+		verifiedAt = &now
 	}
-	_, err := pool.Exec(context.Background(), `
-		insert into users (id, email, display_name, password_hash, email_verified_at)
-		values ($1, $2, $3, '$argon2id$stub', $4)
-	`, id, email, email, verifiedAt)
+	err := dbq.New(pool).InsertTestUser(context.Background(), dbq.InsertTestUserParams{
+		ID:              id,
+		Email:           email,
+		DisplayName:     email,
+		EmailVerifiedAt: verifiedAt,
+	})
 	if err != nil {
 		t.Fatalf("CreateTestUser: %v", err)
 	}
@@ -70,9 +75,11 @@ func CreateTestUser(t *testing.T, pool *pgxpool.Pool, email string, verified boo
 // CreateTestMembership inserts a workspace_memberships row with the given role.
 func CreateTestMembership(t *testing.T, pool *pgxpool.Pool, workspaceID, userID uuid.UUID, role string) {
 	t.Helper()
-	_, err := pool.Exec(context.Background(), `
-		insert into workspace_memberships (workspace_id, user_id, role) values ($1, $2, $3::workspace_role)
-	`, workspaceID, userID, role)
+	err := dbq.New(pool).InsertInvitedMembership(context.Background(), dbq.InsertInvitedMembershipParams{
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+		Column3:     dbq.WorkspaceRole(role),
+	})
 	if err != nil {
 		t.Fatalf("CreateTestMembership: %v", err)
 	}
@@ -82,9 +89,10 @@ func CreateTestMembership(t *testing.T, pool *pgxpool.Pool, workspaceID, userID 
 // Plan 2 defines it eagerly so downstream plans don't need to touch this file.
 func SetSessionReauth(t *testing.T, pool *pgxpool.Pool, sessionID string, ts time.Time) {
 	t.Helper()
-	_, err := pool.Exec(context.Background(),
-		`update sessions set reauth_at = $1 where id = $2`,
-		ts, sessionID)
+	err := dbq.New(pool).UpdateSessionReauthByID(context.Background(), dbq.UpdateSessionReauthByIDParams{
+		ID:       sessionID,
+		ReauthAt: &ts,
+	})
 	if err != nil {
 		t.Fatalf("SetSessionReauth: %v", err)
 	}

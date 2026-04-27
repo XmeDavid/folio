@@ -23,13 +23,21 @@ import { ErrorBanner, LoadingText } from "@/components/app/empty";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
+  createCorporateAction,
+  deleteCorporateAction,
   deleteDividend,
   deleteTrade,
+  fetchCorporateActions,
   fetchInstrumentDetail,
+  type CorporateAction,
+  type CorporateActionKind,
   type DividendEvent,
   type InstrumentDetail,
   type Trade,
 } from "@/lib/api/investments";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
 
@@ -59,6 +67,24 @@ export default function InstrumentDetailPage({
   const deleteDividendMutation = useMutation({
     mutationFn: (dividendId: string) =>
       deleteDividend(workspaceId!, dividendId),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["investments"] }),
+  });
+
+  const corporateActionsQuery = useQuery({
+    queryKey: [
+      "investments",
+      "corporate-actions",
+      workspaceId,
+      detailQuery.data?.instrument.id,
+    ],
+    queryFn: () =>
+      fetchCorporateActions(workspaceId!, detailQuery.data!.instrument.id),
+    enabled: !!workspaceId && !!detailQuery.data?.instrument.id,
+  });
+  const deleteActionMutation = useMutation({
+    mutationFn: (actionId: string) =>
+      deleteCorporateAction(workspaceId!, actionId),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["investments"] }),
   });
@@ -110,9 +136,217 @@ export default function InstrumentDetailPage({
               }
             />
           </div>
+          <CorporateActionsCard
+            workspaceId={workspaceId!}
+            instrumentId={detail.instrument.id}
+            actions={corporateActionsQuery.data ?? []}
+            onDelete={(id) =>
+              window.confirm(
+                "Delete this corporate action? Affected positions will be replayed."
+              ) && deleteActionMutation.mutate(id)
+            }
+          />
         </>
       )}
     </div>
+  );
+}
+
+function CorporateActionsCard({
+  workspaceId,
+  instrumentId,
+  actions,
+  onDelete,
+}: {
+  workspaceId: string;
+  instrumentId: string;
+  actions: CorporateAction[];
+  onDelete: (id: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [kind, setKind] = React.useState<CorporateActionKind>("reverse_split");
+  const [effectiveDate, setEffectiveDate] = React.useState("");
+  const [factor, setFactor] = React.useState("");
+  const [amount, setAmount] = React.useState("");
+  const [newSymbol, setNewSymbol] = React.useState("");
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      createCorporateAction(workspaceId, {
+        instrumentId,
+        kind,
+        effectiveDate,
+        factor: factor || undefined,
+        amount: amount || undefined,
+        newSymbol: newSymbol || undefined,
+      }),
+    onSuccess: () => {
+      setEffectiveDate("");
+      setFactor("");
+      setAmount("");
+      setNewSymbol("");
+      queryClient.invalidateQueries({ queryKey: ["investments"] });
+    },
+  });
+
+  const needsFactor = kind === "split" || kind === "reverse_split";
+  const needsAmount = kind === "cash_distribution" || kind === "delisting";
+  const needsSymbol = kind === "symbol_change";
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Corporate actions</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="rounded-[12px] border border-border bg-surface p-3 text-[13px]">
+          <p className="font-medium text-fg">Add a corporate action</p>
+          <p className="mt-1 text-[12px] text-fg-muted">
+            Reverse split factor convention: a 1-for-50 reverse split has factor{" "}
+            <code className="font-mono">0.02</code>; a 4-for-1 forward split has{" "}
+            <code className="font-mono">4</code>. Total cost basis is preserved.
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="ca-kind">Kind</Label>
+              <select
+                id="ca-kind"
+                className="rounded-[8px] border border-border bg-page px-3 py-1.5 text-[13px]"
+                value={kind}
+                onChange={(e) =>
+                  setKind(e.target.value as CorporateActionKind)
+                }
+              >
+                <option value="reverse_split">Reverse split</option>
+                <option value="split">Forward split</option>
+                <option value="cash_distribution">Cash distribution</option>
+                <option value="delisting">Delisting / closure</option>
+                <option value="symbol_change">Symbol change</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="ca-date">Effective date</Label>
+              <Input
+                id="ca-date"
+                type="date"
+                value={effectiveDate}
+                onChange={(e) => setEffectiveDate(e.target.value)}
+              />
+            </div>
+            {needsFactor ? (
+              <div className="flex flex-col gap-1 sm:col-span-2">
+                <Label htmlFor="ca-factor">Factor</Label>
+                <Input
+                  id="ca-factor"
+                  inputMode="decimal"
+                  placeholder={
+                    kind === "reverse_split" ? "0.02" : "4"
+                  }
+                  value={factor}
+                  onChange={(e) => setFactor(e.target.value)}
+                />
+              </div>
+            ) : null}
+            {needsAmount ? (
+              <div className="flex flex-col gap-1 sm:col-span-2">
+                <Label htmlFor="ca-amount">
+                  {kind === "delisting"
+                    ? "Cash received (total)"
+                    : "Amount per share"}
+                </Label>
+                <Input
+                  id="ca-amount"
+                  inputMode="decimal"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                />
+              </div>
+            ) : null}
+            {needsSymbol ? (
+              <div className="flex flex-col gap-1 sm:col-span-2">
+                <Label htmlFor="ca-newsym">New symbol</Label>
+                <Input
+                  id="ca-newsym"
+                  value={newSymbol}
+                  onChange={(e) => setNewSymbol(e.target.value)}
+                />
+              </div>
+            ) : null}
+          </div>
+          {createMutation.isError ? (
+            <p className="mt-2 text-[12px] text-rose-500">
+              {(createMutation.error as Error).message}
+            </p>
+          ) : null}
+          <div className="mt-3 flex justify-end">
+            <Button
+              onClick={() => createMutation.mutate()}
+              disabled={
+                createMutation.isPending ||
+                !effectiveDate ||
+                (needsFactor && !factor) ||
+                (needsAmount && !amount) ||
+                (needsSymbol && !newSymbol)
+              }
+            >
+              {createMutation.isPending ? "Saving…" : "Add action"}
+            </Button>
+          </div>
+        </div>
+
+        {actions.length === 0 ? (
+          <p className="text-[13px] text-fg-muted">
+            No corporate actions on file for this instrument.
+          </p>
+        ) : (
+          <table className="w-full text-[13px]">
+            <thead className="text-[11px] text-fg-muted uppercase tracking-wide">
+              <tr className="border-b border-border">
+                <th className="px-2 py-2 text-left font-medium">Date</th>
+                <th className="px-2 py-2 text-left font-medium">Kind</th>
+                <th className="px-2 py-2 text-left font-medium">Detail</th>
+                <th className="px-2 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {actions.map((a) => (
+                <tr key={a.id} className="border-b border-border last:border-b-0">
+                  <td className="px-2 py-2">{a.effectiveDate.slice(0, 10)}</td>
+                  <td className="px-2 py-2 capitalize">
+                    {a.kind.replace("_", " ")}
+                  </td>
+                  <td className="px-2 py-2 text-fg-muted">
+                    {(a.kind === "split" || a.kind === "reverse_split") &&
+                    a.payload.factor
+                      ? `factor ${String(a.payload.factor)}`
+                      : a.kind === "cash_distribution" && a.payload.amount
+                        ? `amount ${String(a.payload.amount)}`
+                        : a.kind === "delisting" && a.payload.cash_total
+                          ? `cash ${String(a.payload.cash_total)}`
+                          : a.kind === "symbol_change" && a.payload.new_symbol
+                            ? `→ ${String(a.payload.new_symbol)}`
+                            : ""}
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    {a.workspaceId ? (
+                      <button
+                        onClick={() => onDelete(a.id)}
+                        className="text-fg-muted hover:text-rose-500"
+                        aria-label="Delete corporate action"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-fg-faint">global</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
