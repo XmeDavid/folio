@@ -79,7 +79,11 @@ func (s *Service) SmartImport(ctx context.Context, workspaceID uuid.UUID, conten
 // detectAndParse routes content to the right parser. Returns ("", nil, "",
 // nil) when the content is not recognised as investment data.
 func detectAndParse(content []byte) (source string, events []importevent.Event, baseCurrency string, err error) {
-	trimmed := strings.TrimLeft(string(content), " \t\r\n")
+	// IBKR exports always start with a UTF-8 BOM. Drop it explicitly via
+	// TrimPrefix and then strip leading whitespace so HasPrefix below sees
+	// the real first character.
+	s := strings.TrimPrefix(string(content), "\ufeff")
+	trimmed := strings.TrimLeft(s, " \t\r\n")
 	switch {
 	case strings.HasPrefix(trimmed, "Statement,Header,Field Name") ||
 		strings.Contains(trimmed, "\"trade_amount_debited\""):

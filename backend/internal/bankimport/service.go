@@ -12,18 +12,27 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
-type importTx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-	QueryRow(context.Context, string, ...any) pgx.Row
+// decimalToNumeric converts a decimal.Decimal to pgtype.Numeric for sqlc params.
+func decimalToNumeric(d decimal.Decimal) pgtype.Numeric {
+	var n pgtype.Numeric
+	_ = n.Scan(d.String())
+	return n
+}
+
+// stringToNumeric converts a decimal string to pgtype.Numeric for sqlc params.
+func stringToNumeric(s string) pgtype.Numeric {
+	var n pgtype.Numeric
+	_ = n.Scan(s)
+	return n
 }
 
 type Service struct {
@@ -93,50 +102,22 @@ func (s *Service) Apply(ctx context.Context, workspaceID, accountID, userID uuid
 		"conflicts":  len(classified.conflicts),
 		"importable": len(classified.importable),
 	})
-	_, err = tx.Exec(ctx, `
-		insert into import_batches (
-			id, workspace_id, source_kind, file_name, file_hash, status,
-			summary, created_by_user_id, started_at, finished_at
-		) values (
-			$1, $2, 'file_upload', $3, $4, 'applied',
-			$5::jsonb, $6, $7, $7
-		)
-	`, batchID, workspaceID, payload.FileName, payload.FileHash, string(summary), userID, s.now())
-	if err != nil {
+	q := dbq.New(tx)
+	if err := q.InsertImportBatch(ctx, dbq.InsertImportBatchParams{
+		ID:              batchID,
+		WorkspaceID:     workspaceID,
+		FileName:        &payload.FileName,
+		FileHash:        &payload.FileHash,
+		Summary:         summary,
+		CreatedByUserID: &userID,
+		StartedAt:       s.now(),
+	}); err != nil {
 		return nil, fmt.Errorf("insert import batch: %w", err)
 	}
 
-	inserted := make([]uuid.UUID, 0, len(classified.importable))
-	for _, incoming := range classified.importable {
-		id := uuidx.New()
-		rawJSON, _ := json.Marshal(incoming.Raw)
-		_, err = tx.Exec(ctx, `
-			insert into transactions (
-				id, workspace_id, account_id, status, booked_at, value_at, posted_at,
-				amount, currency, counterparty_raw, description, raw
-			) values (
-				$1, $2, $3, 'posted', $4, $5, $6,
-				$7::numeric, $8, $9, $10, $11::jsonb
-			)
-		`, id, workspaceID, accountID, incoming.BookedAt, incoming.ValueAt, incoming.PostedAt,
-			incoming.Amount.String(), incoming.Currency, incoming.CounterpartyRaw, incoming.Description, string(rawJSON))
-		if err != nil {
-			return nil, fmt.Errorf("insert transaction: %w", err)
-		}
-		_, err = tx.Exec(ctx, `
-			insert into source_refs (
-				id, workspace_id, entity_type, entity_id, provider,
-				import_batch_id, external_id, raw_payload, observed_at
-			) values (
-				$1, $2, 'transaction', $3, $4,
-				$5, $6, $7::jsonb, $8
-			)
-		`, uuidx.New(), workspaceID, id, incomingProvider(parsed.Profile), batchID,
-			incoming.ExternalID, string(rawJSON), s.now())
-		if err != nil {
-			return nil, fmt.Errorf("insert source ref: %w", err)
-		}
-		inserted = append(inserted, id)
+	inserted, err := s.insertImportableTx(ctx, q, workspaceID, accountID, batchID, incomingProvider(parsed.Profile), classified.importable)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -260,16 +241,16 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 		"fileName": payload.FileName,
 		"groups":   len(planned),
 	})
-	_, err = tx.Exec(ctx, `
-		insert into import_batches (
-			id, workspace_id, source_kind, file_name, file_hash, status,
-			summary, created_by_user_id, started_at, finished_at
-		) values (
-			$1, $2, 'file_upload', $3, $4, 'applied',
-			$5::jsonb, $6, $7, $7
-		)
-	`, batchID, workspaceID, payload.FileName, payload.FileHash, string(summary), userID, now)
-	if err != nil {
+	q := dbq.New(tx)
+	if err := q.InsertImportBatch(ctx, dbq.InsertImportBatchParams{
+		ID:              batchID,
+		WorkspaceID:     workspaceID,
+		FileName:        &payload.FileName,
+		FileHash:        &payload.FileHash,
+		Summary:         summary,
+		CreatedByUserID: &userID,
+		StartedAt:       now,
+	}); err != nil {
 		return nil, fmt.Errorf("insert import batch: %w", err)
 	}
 
@@ -277,7 +258,7 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 	for _, group := range planned {
 		accountID := group.accountID
 		if accountID == uuid.Nil {
-			accountID, err = s.createImportAccountTx(ctx, tx, workspaceID, parsed.Institution, group.in)
+			accountID, err = s.createImportAccountTx(ctx, q, workspaceID, parsed.Institution, group.in)
 			if err != nil {
 				return nil, err
 			}
@@ -287,15 +268,14 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 			// updated_at is set by trigger. Without this opt-in, a re-import
 			// merges new transactions into an archived account silently —
 			// archive is a UI-only hide flag, not a write barrier.
-			if _, err := tx.Exec(ctx, `
-				update accounts
-				set archived_at = null
-				where workspace_id = $1 and id = $2 and archived_at is not null
-			`, workspaceID, accountID); err != nil {
+			if err := q.UnarchiveAccount(ctx, dbq.UnarchiveAccountParams{
+				WorkspaceID: workspaceID,
+				ID:          accountID,
+			}); err != nil {
 				return nil, fmt.Errorf("unarchive import account: %w", err)
 			}
 		}
-		ids, err := s.insertImportableTx(ctx, tx, workspaceID, accountID, batchID, incomingProvider(group.parsed.Profile), group.classified.importable)
+		ids, err := s.insertImportableTx(ctx, q, workspaceID, accountID, batchID, incomingProvider(group.parsed.Profile), group.classified.importable)
 		if err != nil {
 			return nil, err
 		}
@@ -305,7 +285,7 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 		out.TransactionIDs = append(out.TransactionIDs, ids...)
 		out.Conflicts = append(out.Conflicts, group.classified.conflicts...)
 		if group.parsed.DateFrom != nil && group.parsed.DateTo != nil {
-			if err := s.retireExplainedSynthetics(ctx, tx, workspaceID, accountID, *group.parsed.DateFrom, *group.parsed.DateTo); err != nil {
+			if err := s.retireExplainedSynthetics(ctx, q, workspaceID, accountID, *group.parsed.DateFrom, *group.parsed.DateTo); err != nil {
 				return nil, err
 			}
 		}
@@ -316,7 +296,7 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 	return out, nil
 }
 
-func (s *Service) createImportAccountTx(ctx context.Context, tx importTx, workspaceID uuid.UUID, institution string, group ApplyPlanGroup) (uuid.UUID, error) {
+func (s *Service) createImportAccountTx(ctx context.Context, q *dbq.Queries, workspaceID uuid.UUID, institution string, group ApplyPlanGroup) (uuid.UUID, error) {
 	openDate, _ := time.Parse(dateOnly, group.OpenDate)
 	openingBalanceDate, _ := time.Parse(dateOnly, group.OpeningBalanceDate)
 	accountID := uuidx.New()
@@ -328,61 +308,63 @@ func (s *Service) createImportAccountTx(ctx context.Context, tx importTx, worksp
 	}
 	openingTS := time.Date(openingBalanceDate.Year(), openingBalanceDate.Month(), openingBalanceDate.Day(), 0, 0, 0, 0, time.UTC)
 	includeInSavingsRate := group.Kind == "checking" || group.Kind == "savings" || group.Kind == "cash"
-	_, err := tx.Exec(ctx, `
-		insert into accounts (
-			id, workspace_id, name, kind, currency, institution,
-			open_date, opening_balance, opening_balance_date,
-			include_in_networth, include_in_savings_rate
-		) values (
-			$1, $2, $3, $4::account_kind, $5, $6,
-			$7, $8::numeric, $9, true, $10
-		)
-	`, accountID, workspaceID, strings.TrimSpace(group.Name), strings.TrimSpace(group.Kind), strings.ToUpper(strings.TrimSpace(group.Currency)), instPtr,
-		openDate, strings.TrimSpace(group.OpeningBalance), openingBalanceDate, includeInSavingsRate)
-	if err != nil {
+	if err := q.InsertImportAccount(ctx, dbq.InsertImportAccountParams{
+		ID:                   accountID,
+		WorkspaceID:          workspaceID,
+		Name:                 strings.TrimSpace(group.Name),
+		Kind:                 dbq.AccountKind(strings.TrimSpace(group.Kind)),
+		Currency:             strings.ToUpper(strings.TrimSpace(group.Currency)),
+		Institution:          instPtr,
+		OpenDate:             openDate,
+		OpeningBalance:       stringToNumeric(strings.TrimSpace(group.OpeningBalance)),
+		OpeningBalanceDate:   openingBalanceDate,
+		IncludeInSavingsRate: includeInSavingsRate,
+	}); err != nil {
 		return uuid.Nil, fmt.Errorf("insert import account: %w", err)
 	}
-	_, err = tx.Exec(ctx, `
-		insert into account_balance_snapshots (
-			id, workspace_id, account_id, as_of, balance, currency, source
-		) values (
-			$1, $2, $3, $4, $5::numeric, $6, 'opening'
-		)
-	`, snapshotID, workspaceID, accountID, openingTS, strings.TrimSpace(group.OpeningBalance), strings.ToUpper(strings.TrimSpace(group.Currency)))
-	if err != nil {
+	if err := q.InsertOpeningSnapshot(ctx, dbq.InsertOpeningSnapshotParams{
+		ID:          snapshotID,
+		WorkspaceID: workspaceID,
+		AccountID:   accountID,
+		AsOf:        openingTS,
+		Balance:     stringToNumeric(strings.TrimSpace(group.OpeningBalance)),
+		Currency:    strings.ToUpper(strings.TrimSpace(group.Currency)),
+	}); err != nil {
 		return uuid.Nil, fmt.Errorf("insert import opening snapshot: %w", err)
 	}
 	return accountID, nil
 }
 
-func (s *Service) insertImportableTx(ctx context.Context, tx importTx, workspaceID, accountID, batchID uuid.UUID, provider string, rows []ParsedTransaction) ([]uuid.UUID, error) {
+func (s *Service) insertImportableTx(ctx context.Context, q *dbq.Queries, workspaceID, accountID, batchID uuid.UUID, provider string, rows []ParsedTransaction) ([]uuid.UUID, error) {
 	inserted := make([]uuid.UUID, 0, len(rows))
 	for _, incoming := range rows {
 		id := uuidx.New()
 		rawJSON, _ := json.Marshal(incoming.Raw)
-		_, err := tx.Exec(ctx, `
-			insert into transactions (
-				id, workspace_id, account_id, status, booked_at, value_at, posted_at,
-				amount, currency, counterparty_raw, description, raw
-			) values (
-				$1, $2, $3, 'posted', $4, $5, $6,
-				$7::numeric, $8, $9, $10, $11::jsonb
-			)
-		`, id, workspaceID, accountID, incoming.BookedAt, incoming.ValueAt, incoming.PostedAt,
-			incoming.Amount.String(), incoming.Currency, incoming.CounterpartyRaw, incoming.Description, string(rawJSON))
-		if err != nil {
+		if err := q.InsertImportTransaction(ctx, dbq.InsertImportTransactionParams{
+			ID:              id,
+			WorkspaceID:     workspaceID,
+			AccountID:       accountID,
+			BookedAt:        incoming.BookedAt,
+			ValueAt:         incoming.ValueAt,
+			PostedAt:        incoming.PostedAt,
+			Amount:          decimalToNumeric(incoming.Amount),
+			Currency:        incoming.Currency,
+			CounterpartyRaw: incoming.CounterpartyRaw,
+			Description:     incoming.Description,
+			Raw:             rawJSON,
+		}); err != nil {
 			return nil, fmt.Errorf("insert transaction: %w", err)
 		}
-		_, err = tx.Exec(ctx, `
-			insert into source_refs (
-				id, workspace_id, entity_type, entity_id, provider,
-				import_batch_id, external_id, raw_payload, observed_at
-			) values (
-				$1, $2, 'transaction', $3, $4,
-				$5, $6, $7::jsonb, $8
-			)
-		`, uuidx.New(), workspaceID, id, provider, batchID, incoming.ExternalID, string(rawJSON), s.now())
-		if err != nil {
+		if err := q.InsertSourceRef(ctx, dbq.InsertSourceRefParams{
+			ID:            uuidx.New(),
+			WorkspaceID:   workspaceID,
+			EntityID:      id,
+			Provider:      &provider,
+			ImportBatchID: &batchID,
+			ExternalID:    &incoming.ExternalID,
+			RawPayload:    rawJSON,
+			ObservedAt:    s.now(),
+		}); err != nil {
 			return nil, fmt.Errorf("insert source ref: %w", err)
 		}
 		inserted = append(inserted, id)
@@ -622,28 +604,21 @@ func (s *Service) loadImportAccountMatches(ctx context.Context, workspaceID uuid
 	// same file matches the account the user already imported into instead
 	// of silently creating a duplicate. The wizard surfaces the archived
 	// state and the apply path unarchives the account before importing.
-	rows, err := s.pool.Query(ctx, `
-		select id, name, currency, institution, archived_at
-		from accounts
-		where workspace_id = $1
-		order by name
-	`, workspaceID)
+	rows, err := dbq.New(s.pool).ListImportAccountMatches(ctx, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("load import account matches: %w", err)
 	}
-	defer rows.Close()
-
-	out := []importAccountMatch{}
-	for rows.Next() {
-		var a importAccountMatch
-		var archivedAt *time.Time
-		if err := rows.Scan(&a.ID, &a.Name, &a.Currency, &a.Institution, &archivedAt); err != nil {
-			return nil, fmt.Errorf("scan import account match: %w", err)
-		}
-		a.Archived = archivedAt != nil
-		out = append(out, a)
+	out := make([]importAccountMatch, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, importAccountMatch{
+			ID:          r.ID,
+			Name:        r.Name,
+			Currency:    r.Currency,
+			Institution: r.Institution,
+			Archived:    r.ArchivedAt != nil,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func importCandidates(accounts []importAccountMatch, institution, currency string) []AccountCandidate {
@@ -667,8 +642,10 @@ func importCandidates(accounts []importAccountMatch, institution, currency strin
 }
 
 func (s *Service) accountCurrency(ctx context.Context, workspaceID, accountID uuid.UUID) (string, error) {
-	var currency string
-	err := s.pool.QueryRow(ctx, `select currency from accounts where workspace_id = $1 and id = $2`, workspaceID, accountID).Scan(&currency)
+	currency, err := dbq.New(s.pool).GetAccountCurrency(ctx, dbq.GetAccountCurrencyParams{
+		WorkspaceID: workspaceID,
+		ID:          accountID,
+	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return "", httpx.NewNotFoundError("account")
@@ -693,42 +670,36 @@ func (s *Service) loadExisting(ctx context.Context, workspaceID, accountID uuid.
 	if parsed.DateFrom == nil || parsed.DateTo == nil {
 		return nil, nil
 	}
-	rows, err := s.pool.Query(ctx, `
-		select t.id, t.booked_at, t.posted_at, t.amount::text, t.currency,
-		       coalesce(t.description, t.counterparty_raw, ''),
-		       sr.external_id,
-		       coalesce(t.raw->>'synthetic' = 'balance_reconcile', false)
-		from transactions t
-		left join source_refs sr
-		  on sr.workspace_id = t.workspace_id
-		 and sr.entity_type = 'transaction'
-		 and sr.entity_id = t.id
-		 and sr.provider = $6
-		where t.workspace_id = $1
-		  and t.account_id = $2
-		  and t.booked_at between $3 and $4
-		  and t.status <> 'voided'
-		  and t.currency = $5
-	`, workspaceID, accountID, *parsed.DateFrom, *parsed.DateTo, parsed.Currency, incomingProvider(parsed.Profile))
+	provider := incomingProvider(parsed.Profile)
+	rows, err := dbq.New(s.pool).LoadExistingTransactions(ctx, dbq.LoadExistingTransactionsParams{
+		Provider:    &provider,
+		WorkspaceID: workspaceID,
+		AccountID:   accountID,
+		DateFrom:    *parsed.DateFrom,
+		DateTo:      *parsed.DateTo,
+		Currency:    parsed.Currency,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("query existing transactions: %w", err)
 	}
-	defer rows.Close()
-	out := []existingTx{}
-	for rows.Next() {
-		var e existingTx
-		var amount string
-		if err := rows.Scan(&e.ID, &e.BookedAt, &e.PostedAt, &amount, &e.Currency, &e.Description, &e.SourceID, &e.Synthetic); err != nil {
-			return nil, err
-		}
-		d, err := decimal.NewFromString(amount)
+	out := make([]existingTx, 0, len(rows))
+	for _, r := range rows {
+		d, err := decimal.NewFromString(r.Amount)
 		if err != nil {
 			return nil, err
 		}
-		e.Amount = d
-		out = append(out, e)
+		out = append(out, existingTx{
+			ID:          r.ID,
+			BookedAt:    r.BookedAt,
+			PostedAt:    r.PostedAt,
+			Amount:      d,
+			Currency:    r.Currency,
+			Description: r.Description,
+			SourceID:    r.SourceID,
+			Synthetic:   r.Synthetic,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 type classifiedRows struct {
@@ -891,22 +862,13 @@ func decodeContent(encoded string) ([]byte, error) {
 // within ±7d. Called once per affected account after each section's inserts.
 // Voiding (status='voided') keeps the row visible in audit history while
 // removing it from the running balance.
-func (s *Service) retireExplainedSynthetics(ctx context.Context, tx importTx, workspaceID, accountID uuid.UUID, dateFrom, dateTo time.Time) error {
-	rows, err := tx.Query(ctx, `
-		select t.id, t.booked_at, t.posted_at, t.amount::text, t.currency,
-		       coalesce(t.raw->>'synthetic_residual', t.amount::text),
-		       sr.import_batch_id
-		from transactions t
-		left join source_refs sr
-		  on sr.workspace_id = t.workspace_id
-		 and sr.entity_type = 'transaction'
-		 and sr.entity_id = t.id
-		where t.workspace_id = $1
-		  and t.account_id = $2
-		  and t.status = 'posted'
-		  and t.raw->>'synthetic' = 'balance_reconcile'
-		  and t.booked_at between $3::timestamptz and $4::timestamptz
-	`, workspaceID, accountID, dateFrom.Add(-time.Duration(reviewDedupDays)*24*time.Hour), dateTo.Add(time.Duration(reviewDedupDays)*24*time.Hour))
+func (s *Service) retireExplainedSynthetics(ctx context.Context, q *dbq.Queries, workspaceID, accountID uuid.UUID, dateFrom, dateTo time.Time) error {
+	synthRows, err := q.LoadSyntheticCandidates(ctx, dbq.LoadSyntheticCandidatesParams{
+		WorkspaceID: workspaceID,
+		AccountID:   accountID,
+		DateFrom:    dateFrom.Add(-time.Duration(reviewDedupDays) * 24 * time.Hour),
+		DateTo:      dateTo.Add(time.Duration(reviewDedupDays) * 24 * time.Hour),
+	})
 	if err != nil {
 		return fmt.Errorf("scan synthetic rows: %w", err)
 	}
@@ -918,24 +880,18 @@ func (s *Service) retireExplainedSynthetics(ctx context.Context, tx importTx, wo
 		batchID  *uuid.UUID
 	}
 	var candidates []synthCandidate
-	for rows.Next() {
-		var c synthCandidate
-		var amount, residualStr string
-		var posted *time.Time
-		if err := rows.Scan(&c.id, &c.bookedAt, &posted, &amount, &c.currency, &residualStr, &c.batchID); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan synthetic row: %w", err)
-		}
-		residual, err := decimal.NewFromString(residualStr)
+	for _, r := range synthRows {
+		residual, err := decimal.NewFromString(r.Residual)
 		if err != nil {
 			continue
 		}
-		c.residual = residual
-		candidates = append(candidates, c)
-	}
-	rows.Close()
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return rowsErr
+		candidates = append(candidates, synthCandidate{
+			id:       r.ID,
+			bookedAt: r.BookedAt,
+			currency: r.Currency,
+			residual: residual,
+			batchID:  r.ImportBatchID,
+		})
 	}
 	if len(candidates) == 0 {
 		return nil
@@ -949,46 +905,40 @@ func (s *Service) retireExplainedSynthetics(ctx context.Context, tx importTx, wo
 		// many -15 transfers in the window covering a -15 synthetic). The
 		// synthetic only deserves voiding when *new* data — from a
 		// subsequent import — actually explains the residual.
-		realRows, err := tx.Query(ctx, `
-			select t.id, t.booked_at, t.posted_at, t.amount::text, t.currency,
-			       coalesce(t.description, t.counterparty_raw, '')
-			from transactions t
-			join source_refs sr
-			  on sr.workspace_id = t.workspace_id
-			 and sr.entity_type = 'transaction'
-			 and sr.entity_id = t.id
-			where t.workspace_id = $1
-			  and t.account_id = $2
-			  and t.status = 'posted'
-			  and t.currency = $3
-			  and t.booked_at between $4::timestamptz and $5::timestamptz
-			  and coalesce(t.raw->>'synthetic', '') <> 'balance_reconcile'
-			  and t.id <> $6
-			  and ($7::uuid is null or sr.import_batch_id <> $7::uuid)
-		`, workspaceID, accountID, c.currency, from, to, c.id, c.batchID)
+		realRows, err := q.LoadRealRowsForSynthetic(ctx, dbq.LoadRealRowsForSyntheticParams{
+			WorkspaceID:    workspaceID,
+			AccountID:      accountID,
+			Currency:       c.currency,
+			DateFrom:       from,
+			DateTo:         to,
+			ExcludeID:      c.id,
+			ExcludeBatchID: c.batchID,
+		})
 		if err != nil {
 			return fmt.Errorf("scan real rows for synthetic: %w", err)
 		}
 		var existing []existingTx
-		for realRows.Next() {
-			var e existingTx
-			var amount string
-			if err := realRows.Scan(&e.ID, &e.BookedAt, &e.PostedAt, &amount, &e.Currency, &e.Description); err != nil {
-				realRows.Close()
-				return err
-			}
-			d, err := decimal.NewFromString(amount)
+		for _, r := range realRows {
+			d, err := decimal.NewFromString(r.Amount)
 			if err != nil {
 				continue
 			}
-			e.Amount = d
-			existing = append(existing, e)
+			existing = append(existing, existingTx{
+				ID:          r.ID,
+				BookedAt:    r.BookedAt,
+				PostedAt:    r.PostedAt,
+				Amount:      d,
+				Currency:    r.Currency,
+				Description: r.Description,
+			})
 		}
-		realRows.Close()
 		if !residualExplainedByExisting(c.bookedAt, c.currency, c.residual, existing) {
 			continue
 		}
-		if _, err := tx.Exec(ctx, `update transactions set status = 'voided' where id = $1 and workspace_id = $2`, c.id, workspaceID); err != nil {
+		if err := q.VoidTransaction(ctx, dbq.VoidTransactionParams{
+			ID:          c.id,
+			WorkspaceID: workspaceID,
+		}); err != nil {
 			return fmt.Errorf("void synthetic %s: %w", c.id, err)
 		}
 	}
