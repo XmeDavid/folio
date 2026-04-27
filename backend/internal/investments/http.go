@@ -3,6 +3,7 @@ package investments
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/xmedavid/folio/backend/internal/auth"
 	"github.com/xmedavid/folio/backend/internal/httpx"
+	"github.com/xmedavid/folio/backend/internal/providers/ibkr"
+	"github.com/xmedavid/folio/backend/internal/providers/revolut"
 )
 
 // Handler bundles the investments HTTP endpoints. Routes are mounted under
@@ -42,6 +45,69 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/dividends", h.listDividends)
 	r.Post("/dividends", h.createDividend)
 	r.Delete("/dividends/{dividendId}", h.deleteDividend)
+
+	r.Post("/imports/{format}/{accountId}", h.importUpload)
+}
+
+// ---------------------------------------------------------------------------
+// Imports
+// ---------------------------------------------------------------------------
+
+// importUpload accepts a multipart/form-data file upload at
+// /imports/{format}/{accountId}. format is "ibkr" or "revolut_trading"; the
+// parser routes by format and yields []ImportEvent which the service ingests.
+// Max upload size is capped at 8 MiB.
+func (h *Handler) importUpload(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.MustWorkspace(r).ID
+	format := chi.URLParam(r, "format")
+	accountID, err := uuid.Parse(chi.URLParam(r, "accountId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "accountId must be a UUID")
+		return
+	}
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "expected multipart/form-data with file=...")
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "missing file field")
+		return
+	}
+	defer file.Close()
+	body, err := io.ReadAll(file)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "failed to read upload")
+		return
+	}
+
+	var events []ImportEvent
+	switch format {
+	case "ibkr":
+		res, err := ibkr.Parse(body)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "parse_error", "ibkr: "+err.Error())
+			return
+		}
+		events = res.Events
+	case "revolut_trading":
+		res, err := revolut.ParseTradingCSV(body)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "parse_error", "revolut: "+err.Error())
+			return
+		}
+		events = res.Events
+	default:
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "format must be ibkr or revolut_trading")
+		return
+	}
+
+	summary, err := h.svc.IngestImport(r.Context(), workspaceID, accountID, events)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, summary)
 }
 
 // ---------------------------------------------------------------------------

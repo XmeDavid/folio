@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/jobs"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
@@ -40,30 +41,29 @@ func (s *Service) SendEmailVerification(ctx context.Context, userID uuid.UUID) e
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var email, displayName string
-	var verifiedAt *time.Time
-	if err := tx.QueryRow(ctx, `
-		select email, display_name, email_verified_at from users where id = $1
-	`, userID).Scan(&email, &displayName, &verifiedAt); err != nil {
+	q := dbq.New(tx)
+	row, err := q.GetUserEmailAndName(ctx, userID)
+	if err != nil {
 		return err
 	}
-	if verifiedAt != nil {
+	if row.EmailVerifiedAt != nil {
 		return tx.Commit(ctx)
 	}
 	plaintext, hash := GenerateSessionToken()
 	tokenID := uuidx.New()
-	if _, err := tx.Exec(ctx, `
-		insert into auth_tokens (id, user_id, purpose, token_hash, email, expires_at)
-		values ($1, $2, $3, $4, $5, $6)
-	`, tokenID, userID, purposeEmailVerify, hash, email, s.now().Add(verifyEmailTTL)); err != nil {
+	if err := q.InsertAuthToken(ctx, dbq.InsertAuthTokenParams{
+		ID: tokenID, UserID: userID, Purpose: purposeEmailVerify,
+		TokenHash: hash, Email: &row.Email,
+		ExpiresAt: s.now().Add(verifyEmailTTL),
+	}); err != nil {
 		return fmt.Errorf("insert verify token: %w", err)
 	}
 	if err := s.enqueueEmailTx(ctx, tx, jobs.SendEmailArgs{
 		TemplateName:   "verify_email",
-		ToAddress:      email,
+		ToAddress:      row.Email,
 		IdempotencyKey: fmt.Sprintf("verify_email:%s", tokenID),
 		Data: map[string]any{
-			"DisplayName": displayName,
+			"DisplayName": row.DisplayName,
 			"VerifyURL":   s.cfg.AppURL + "/auth/verify/" + plaintext,
 		},
 	}); err != nil {
@@ -76,14 +76,13 @@ func (s *Service) VerifyEmail(ctx context.Context, plaintext string) error {
 	return s.consumeUserToken(ctx, plaintext, purposeEmailVerify, func(ctx context.Context, tx pgx.Tx, tokenID, userID uuid.UUID, tokenEmail string) error {
 		// Bind to the email the token was issued for — if the user has since
 		// changed addresses, an old verify link must not re-verify the new one.
-		ct, err := tx.Exec(ctx, `
-			update users set email_verified_at = coalesce(email_verified_at, now())
-			where id = $1 and email = $2
-		`, userID, tokenEmail)
+		n, err := dbq.New(tx).VerifyUserEmail(ctx, dbq.VerifyUserEmailParams{
+			ID: userID, Email: tokenEmail,
+		})
 		if err != nil {
 			return err
 		}
-		if ct.RowsAffected() == 0 {
+		if n == 0 {
 			return ErrTokenInvalid
 		}
 		return writeAuditTx(ctx, tx, nil, &userID, "user.email_verified", "user", userID, nil, nil, nil, "")
@@ -95,9 +94,7 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string, ip net
 	if email == "" || !strings.Contains(email, "@") {
 		return nil
 	}
-	var userID uuid.UUID
-	var displayName string
-	err := s.pool.QueryRow(ctx, `select id, display_name from users where email = $1`, email).Scan(&userID, &displayName)
+	row, err := dbq.New(s.pool).GetUserIDAndNameByEmail(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -111,10 +108,11 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string, ip net
 	defer func() { _ = tx.Rollback(ctx) }()
 	plaintext, hash := GenerateSessionToken()
 	tokenID := uuidx.New()
-	if _, err := tx.Exec(ctx, `
-		insert into auth_tokens (id, user_id, purpose, token_hash, email, expires_at)
-		values ($1, $2, $3, $4, $5, $6)
-	`, tokenID, userID, purposePasswordReset, hash, email, s.now().Add(passwordResetTTL)); err != nil {
+	if err := dbq.New(tx).InsertAuthToken(ctx, dbq.InsertAuthTokenParams{
+		ID: tokenID, UserID: row.ID, Purpose: purposePasswordReset,
+		TokenHash: hash, Email: &email,
+		ExpiresAt: s.now().Add(passwordResetTTL),
+	}); err != nil {
 		return err
 	}
 	if err := s.enqueueEmailTx(ctx, tx, jobs.SendEmailArgs{
@@ -122,7 +120,7 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string, ip net
 		ToAddress:      email,
 		IdempotencyKey: fmt.Sprintf("password_reset:%s", tokenID),
 		Data: map[string]any{
-			"DisplayName": displayName,
+			"DisplayName": row.DisplayName,
 			"ResetURL":    s.cfg.AppURL + "/reset/" + plaintext,
 			"ExpiresIn":   passwordResetCopy,
 		},
@@ -133,20 +131,17 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string, ip net
 }
 
 func (s *Service) ResetPassword(ctx context.Context, plaintext, newPassword string) error {
-	var email, displayName string
-	var userID uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		select u.id, u.email, u.display_name
-		from auth_tokens t join users u on u.id = t.user_id
-		where t.token_hash = $1 and t.purpose = $2 and t.consumed_at is null
-	`, HashToken(plaintext), purposePasswordReset).Scan(&userID, &email, &displayName)
+	row, err := dbq.New(s.pool).GetUserForPasswordReset(ctx, dbq.GetUserForPasswordResetParams{
+		TokenHash: HashToken(plaintext),
+		Purpose:   purposePasswordReset,
+	})
 	if err != nil && errors.Is(err, pgx.ErrNoRows) {
 		return ErrTokenInvalid
 	}
 	if err != nil {
 		return err
 	}
-	if err := CheckPasswordPolicy(newPassword, email, displayName); err != nil {
+	if err := CheckPasswordPolicy(newPassword, row.Email, row.DisplayName); err != nil {
 		return err
 	}
 	hash, err := HashPassword(newPassword, s.cfg.SecretKey)
@@ -154,15 +149,16 @@ func (s *Service) ResetPassword(ctx context.Context, plaintext, newPassword stri
 		return err
 	}
 	return s.consumeUserToken(ctx, plaintext, purposePasswordReset, func(ctx context.Context, tx pgx.Tx, tokenID, userID uuid.UUID, _ string) error {
-		if _, err := tx.Exec(ctx, `update users set password_hash = $1 where id = $2`, hash, userID); err != nil {
+		q := dbq.New(tx)
+		if err := q.UpdateUserPassword(ctx, dbq.UpdateUserPasswordParams{PasswordHash: hash, ID: userID}); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `delete from sessions where user_id = $1`, userID); err != nil {
+		if err := q.DeleteSessionsByUser(ctx, userID); err != nil {
 			return err
 		}
 		// Kill pending MFA challenges too — otherwise an attacker who phished
 		// the reset link could complete a challenge created before the reset.
-		if _, err := tx.Exec(ctx, `update auth_mfa_challenges set consumed_at = now() where user_id = $1 and consumed_at is null`, userID); err != nil {
+		if err := q.ConsumeOpenMFAChallengesByUser(ctx, userID); err != nil {
 			return err
 		}
 		return writeAuditTx(ctx, tx, nil, &userID, "user.password_reset_completed", "user", userID, nil, nil, nil, "")
@@ -174,8 +170,10 @@ func (s *Service) RequestEmailChange(ctx context.Context, userID uuid.UUID, newE
 	if newEmail == "" || !strings.Contains(newEmail, "@") {
 		return httpx.NewValidationError("email is required")
 	}
-	var exists bool
-	if err := s.pool.QueryRow(ctx, `select exists(select 1 from users where email = $1 and id <> $2)`, newEmail, userID).Scan(&exists); err != nil {
+	exists, err := dbq.New(s.pool).CheckEmailExistsExcludingUser(ctx, dbq.CheckEmailExistsExcludingUserParams{
+		Email: newEmail, ID: userID,
+	})
+	if err != nil {
 		return err
 	}
 	if exists {
@@ -188,16 +186,18 @@ func (s *Service) RequestEmailChange(ctx context.Context, userID uuid.UUID, newE
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var oldEmail, displayName string
-	if err := tx.QueryRow(ctx, `select email, display_name from users where id = $1`, userID).Scan(&oldEmail, &displayName); err != nil {
+	q := dbq.New(tx)
+	urow, err := q.GetUserEmailAndDisplayName(ctx, userID)
+	if err != nil {
 		return err
 	}
 	plaintext, hash := GenerateSessionToken()
 	tokenID := uuidx.New()
-	if _, err := tx.Exec(ctx, `
-		insert into auth_tokens (id, user_id, purpose, token_hash, email, expires_at)
-		values ($1, $2, $3, $4, $5, $6)
-	`, tokenID, userID, purposeEmailChange, hash, newEmail, s.now().Add(emailChangeTTL)); err != nil {
+	if err := q.InsertAuthToken(ctx, dbq.InsertAuthTokenParams{
+		ID: tokenID, UserID: userID, Purpose: purposeEmailChange,
+		TokenHash: hash, Email: &newEmail,
+		ExpiresAt: s.now().Add(emailChangeTTL),
+	}); err != nil {
 		return err
 	}
 	if err := s.enqueueEmailTx(ctx, tx, jobs.SendEmailArgs{
@@ -205,9 +205,9 @@ func (s *Service) RequestEmailChange(ctx context.Context, userID uuid.UUID, newE
 		ToAddress:      newEmail,
 		IdempotencyKey: fmt.Sprintf("email_change_new:%s", tokenID),
 		Data: map[string]any{
-			"DisplayName": displayName,
+			"DisplayName": urow.DisplayName,
 			"ConfirmURL":  s.cfg.AppURL + "/auth/email/confirm/" + plaintext,
-			"OldEmail":    oldEmail,
+			"OldEmail":    urow.Email,
 			"NewEmail":    newEmail,
 		},
 	}); err != nil {
@@ -221,26 +221,27 @@ func (s *Service) RequestEmailChange(ctx context.Context, userID uuid.UUID, newE
 
 func (s *Service) ConfirmEmailChange(ctx context.Context, plaintext string) error {
 	return s.consumeUserToken(ctx, plaintext, purposeEmailChange, func(ctx context.Context, tx pgx.Tx, tokenID, userID uuid.UUID, newEmail string) error {
-		var oldEmail, displayName string
-		if err := tx.QueryRow(ctx, `select email, display_name from users where id = $1`, userID).Scan(&oldEmail, &displayName); err != nil {
+		q := dbq.New(tx)
+		urow, err := q.GetUserEmailAndDisplayName(ctx, userID)
+		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `update users set email = $1, email_verified_at = now() where id = $2`, newEmail, userID); err != nil {
+		if err := q.UpdateUserEmail(ctx, dbq.UpdateUserEmailParams{Email: newEmail, ID: userID}); err != nil {
 			return err
 		}
 		if err := s.enqueueEmailTx(ctx, tx, jobs.SendEmailArgs{
 			TemplateName:   "email_change_old_notice",
-			ToAddress:      oldEmail,
+			ToAddress:      urow.Email,
 			IdempotencyKey: fmt.Sprintf("email_change_old_notice:%s", tokenID),
 			Data: map[string]any{
-				"DisplayName": displayName,
-				"OldEmail":    oldEmail,
+				"DisplayName": urow.DisplayName,
+				"OldEmail":    urow.Email,
 				"NewEmail":    newEmail,
 			},
 		}); err != nil {
 			return err
 		}
-		return writeAuditTx(ctx, tx, nil, &userID, "user.email_change_confirmed", "user", userID, nil, map[string]any{"oldEmail": oldEmail, "newEmail": newEmail}, nil, "")
+		return writeAuditTx(ctx, tx, nil, &userID, "user.email_change_confirmed", "user", userID, nil, map[string]any{"oldEmail": urow.Email, "newEmail": newEmail}, nil, "")
 	})
 }
 
@@ -250,28 +251,25 @@ func (s *Service) consumeUserToken(ctx context.Context, plaintext, purpose strin
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var tokenID, userID uuid.UUID
-	var email string
-	var expiresAt time.Time
-	err = tx.QueryRow(ctx, `
-		select id, user_id, coalesce(email::text, ''), expires_at
-		from auth_tokens
-		where token_hash = $1 and purpose = $2 and consumed_at is null
-		for update
-	`, HashToken(plaintext), purpose).Scan(&tokenID, &userID, &email, &expiresAt)
+	q := dbq.New(tx)
+	row, err := q.GetAuthTokenForConsume(ctx, dbq.GetAuthTokenForConsumeParams{
+		TokenHash: HashToken(plaintext),
+		Purpose:   purpose,
+	})
 	if err != nil && errors.Is(err, pgx.ErrNoRows) {
 		return ErrTokenInvalid
 	}
 	if err != nil {
 		return err
 	}
-	if expiresAt.Before(s.now()) {
+	email := row.Email
+	if row.ExpiresAt.Before(s.now()) {
 		return ErrTokenExpired
 	}
-	if err := fn(ctx, tx, tokenID, userID, email); err != nil {
+	if err := fn(ctx, tx, row.ID, row.UserID, email); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `update auth_tokens set consumed_at = now() where id = $1`, tokenID); err != nil {
+	if err := q.ConsumeAuthToken(ctx, row.ID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

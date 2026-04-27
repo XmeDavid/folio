@@ -344,4 +344,47 @@ export async function deleteDividend(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Imports
+// ---------------------------------------------------------------------------
+
+export type ImportFormat = "ibkr" | "revolut_trading";
+
+export type ImportSummary = {
+  tradesCreated: number;
+  dividendsCreated: number;
+  instrumentsTouched: number;
+  skipped: number;
+  warnings?: string[];
+};
+
+export async function uploadInvestmentImport(
+  workspaceId: string,
+  format: ImportFormat,
+  accountId: string,
+  file: File
+): Promise<ImportSummary> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(
+    `${baseUrl}${root(workspaceId)}/imports/${format}/${accountId}`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE },
+      body: form,
+    }
+  );
+  if (!res.ok) {
+    let parsed: unknown;
+    try {
+      parsed = await res.json();
+    } catch {
+      parsed = undefined;
+    }
+    throw new ApiError(res.status, parsed);
+  }
+  return (await res.json()) as ImportSummary;
+}
+
 export { ApiError };

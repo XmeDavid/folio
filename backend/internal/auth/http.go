@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/identity"
 )
@@ -189,10 +190,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
 		sid := SessionIDFromToken(c.Value)
-		var userID uuid.UUID
-		err := h.svc.pool.QueryRow(r.Context(),
-			`delete from sessions where id = $1 returning user_id`, sid,
-		).Scan(&userID)
+		userID, err := dbq.New(h.svc.pool).DeleteSessionByIDReturningUserID(r.Context(), sid)
 		switch {
 		case err == nil:
 			ip := parseIPForStorage(ipFromRequest(r))

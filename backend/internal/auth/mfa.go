@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
@@ -67,18 +68,24 @@ func (s *Service) CompleteMFA(ctx context.Context, in CompleteMFAInput) (*Comple
 	}
 	token, _ := GenerateSessionToken()
 	sid := SessionIDFromToken(token)
-	if _, err := tx.Exec(ctx, `
-		insert into sessions (id, user_id, created_at, expires_at, last_seen_at, user_agent, ip)
-		values ($1,$2,$3,$4,$3,$5,$6)
-	`, sid, c.UserID, now, now.Add(s.cfg.SessionAbsolute), in.UserAgent, ipString(in.IP)); err != nil {
+	q := dbq.New(tx)
+	if err := q.InsertSession(ctx, dbq.InsertSessionParams{
+		ID: sid, UserID: c.UserID, CreatedAt: now,
+		ExpiresAt: now.Add(s.cfg.SessionAbsolute),
+		UserAgent: &in.UserAgent, Ip: netIPToAddr(in.IP),
+	}); err != nil {
 		return nil, err
 	}
 	// Fix #6: invalidate any pre-existing sessions for this user. After a
 	// successful MFA-gated login, prior sessions (e.g. attacker-set) die.
-	if _, err := tx.Exec(ctx, `delete from sessions where user_id = $1 and id <> $2`, c.UserID, sid); err != nil {
+	if err := q.DeleteOtherSessionsByUser(ctx, dbq.DeleteOtherSessionsByUserParams{
+		UserID: c.UserID, ID: sid,
+	}); err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `update users set last_login_at = $1 where id = $2`, now, c.UserID); err != nil {
+	if err := q.UpdateUserLastLoginAt(ctx, dbq.UpdateUserLastLoginAtParams{
+		LastLoginAt: &now, ID: c.UserID,
+	}); err != nil {
 		return nil, err
 	}
 	if err := writeAuditTx(ctx, tx, nil, &c.UserID, "user.login_succeeded", "user", c.UserID, nil, nil, in.IP, in.UserAgent); err != nil {
@@ -105,8 +112,8 @@ func (s *Service) CompleteReauth(ctx context.Context, sessionID string, userID u
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var hash string
-	if err := tx.QueryRow(ctx, `select password_hash from users where id = $1 for update`, userID).Scan(&hash); err != nil {
+	hash, err := dbq.New(tx).GetUserPasswordHash(ctx, userID)
+	if err != nil {
 		return err
 	}
 	ok, err := VerifyPassword(password, hash, s.cfg.SecretKey)
@@ -125,7 +132,10 @@ func (s *Service) CompleteReauth(ctx context.Context, sessionID string, userID u
 		// No TOTP but passkeys exist — client must run the webauthn reauth.
 		return ErrUseWebAuthnReauth
 	}
-	if _, err := tx.Exec(ctx, `update sessions set reauth_at = $3 where id = $1 and user_id = $2`, sessionID, userID, s.now().UTC()); err != nil {
+	now := s.now().UTC()
+	if err := dbq.New(tx).UpdateSessionReauthAt(ctx, dbq.UpdateSessionReauthAtParams{
+		ID: sessionID, UserID: userID, ReauthAt: &now,
+	}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -191,7 +201,9 @@ func (s *Service) CompleteReauthWebAuthn(ctx context.Context, sessionID string, 
 	if err := ConsumeMFAChallenge(ctx, tx, c.ID, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `update sessions set reauth_at = $3 where id = $1 and user_id = $2`, sessionID, userID, now); err != nil {
+	if err := dbq.New(tx).UpdateSessionReauthAt(ctx, dbq.UpdateSessionReauthAtParams{
+		ID: sessionID, UserID: userID, ReauthAt: &now,
+	}); err != nil {
 		return err
 	}
 	if err := writeAuditTx(ctx, tx, nil, &userID, "user.reauth_succeeded", "user", userID, nil, map[string]any{"method": "webauthn"}, ip, ua); err != nil {

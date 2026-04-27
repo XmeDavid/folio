@@ -2722,7 +2722,7 @@ type Account struct {
 	Name                 string         `json:"name"`
 	Nickname             *string        `json:"nickname"`
 	Kind                 AccountKind    `json:"kind"`
-	Currency             interface{}    `json:"currency"`
+	Currency             string         `json:"currency"`
 	Institution          *string        `json:"institution"`
 	OpenDate             time.Time      `json:"open_date"`
 	CloseDate            *time.Time     `json:"close_date"`
@@ -2743,7 +2743,7 @@ type AccountBalanceSnapshot struct {
 	AccountID   uuid.UUID             `json:"account_id"`
 	AsOf        time.Time             `json:"as_of"`
 	Balance     pgtype.Numeric        `json:"balance"`
-	Currency    interface{}           `json:"currency"`
+	Currency    string                `json:"currency"`
 	Source      BalanceSnapshotSource `json:"source"`
 	Note        *string               `json:"note"`
 	CreatedAt   time.Time             `json:"created_at"`
@@ -2791,10 +2791,10 @@ type Asset struct {
 	Description      string               `json:"description"`
 	AcquiredDate     time.Time            `json:"acquired_date"`
 	AcquiredCost     pgtype.Numeric       `json:"acquired_cost"`
-	Currency         interface{}          `json:"currency"`
+	Currency         string               `json:"currency"`
 	DisposalDate     *time.Time           `json:"disposal_date"`
 	DisposalAmount   pgtype.Numeric       `json:"disposal_amount"`
-	DisposalCurrency interface{}          `json:"disposal_currency"`
+	DisposalCurrency *string              `json:"disposal_currency"`
 	ValuationMethod  AssetValuationMethod `json:"valuation_method"`
 	Notes            *string              `json:"notes"`
 	CreatedAt        time.Time            `json:"created_at"`
@@ -2822,7 +2822,7 @@ type AssetEvent struct {
 	Kind                AssetEventKind `json:"kind"`
 	OccurredAt          time.Time      `json:"occurred_at"`
 	Amount              pgtype.Numeric `json:"amount"`
-	Currency            interface{}    `json:"currency"`
+	Currency            *string        `json:"currency"`
 	LinkedTransactionID *uuid.UUID     `json:"linked_transaction_id"`
 	Note                *string        `json:"note"`
 	CreatedAt           time.Time      `json:"created_at"`
@@ -2834,7 +2834,7 @@ type AssetValuation struct {
 	AssetID     uuid.UUID            `json:"asset_id"`
 	AsOf        time.Time            `json:"as_of"`
 	Value       pgtype.Numeric       `json:"value"`
-	Currency    interface{}          `json:"currency"`
+	Currency    string               `json:"currency"`
 	Source      AssetValuationSource `json:"source"`
 	Note        *string              `json:"note"`
 	CreatedAt   time.Time            `json:"created_at"`
@@ -2994,7 +2994,7 @@ type CyclePlanLine struct {
 	GoalID              *uuid.UUID        `json:"goal_id"`
 	TripID              *uuid.UUID        `json:"trip_id"`
 	PlannedAmount       pgtype.Numeric    `json:"planned_amount"`
-	Currency            interface{}       `json:"currency"`
+	Currency            string            `json:"currency"`
 	Note                *string           `json:"note"`
 	SortOrder           int32             `json:"sort_order"`
 	CreatedAt           time.Time         `json:"created_at"`
@@ -3008,7 +3008,7 @@ type DividendEvent struct {
 	ExDate                  time.Time      `json:"ex_date"`
 	PayDate                 time.Time      `json:"pay_date"`
 	AmountPerUnit           pgtype.Numeric `json:"amount_per_unit"`
-	Currency                interface{}    `json:"currency"`
+	Currency                string         `json:"currency"`
 	TotalAmount             pgtype.Numeric `json:"total_amount"`
 	TaxWithheld             pgtype.Numeric `json:"tax_withheld"`
 	LinkedCashTransactionID *uuid.UUID     `json:"linked_cash_transaction_id"`
@@ -3037,8 +3037,8 @@ type ExportTemplate struct {
 
 type FxRate struct {
 	ID            uuid.UUID      `json:"id"`
-	BaseCurrency  interface{}    `json:"base_currency"`
-	QuoteCurrency interface{}    `json:"quote_currency"`
+	BaseCurrency  string         `json:"base_currency"`
+	QuoteCurrency string         `json:"quote_currency"`
 	AsOf          time.Time      `json:"as_of"`
 	Rate          pgtype.Numeric `json:"rate"`
 	Source        FxSource       `json:"source"`
@@ -3050,7 +3050,7 @@ type Goal struct {
 	WorkspaceID               uuid.UUID      `json:"workspace_id"`
 	Name                      string         `json:"name"`
 	TargetAmount              pgtype.Numeric `json:"target_amount"`
-	Currency                  interface{}    `json:"currency"`
+	Currency                  string         `json:"currency"`
 	Deadline                  *time.Time     `json:"deadline"`
 	Priority                  int32          `json:"priority"`
 	Status                    GoalStatus     `json:"status"`
@@ -3077,7 +3077,7 @@ type GoalAllocation struct {
 	GoalID      uuid.UUID            `json:"goal_id"`
 	AccountID   uuid.UUID            `json:"account_id"`
 	Balance     pgtype.Numeric       `json:"balance"`
-	Currency    interface{}          `json:"currency"`
+	Currency    string               `json:"currency"`
 	AsOf        time.Time            `json:"as_of"`
 	Source      GoalAllocationSource `json:"source"`
 	CreatedAt   time.Time            `json:"created_at"`
@@ -3090,7 +3090,7 @@ type GoalContribution struct {
 	TransactionID  *uuid.UUID     `json:"transaction_id"`
 	PlannedEventID *uuid.UUID     `json:"planned_event_id"`
 	Amount         pgtype.Numeric `json:"amount"`
-	Currency       interface{}    `json:"currency"`
+	Currency       string         `json:"currency"`
 	AppliedAt      time.Time      `json:"applied_at"`
 	CreatedAt      time.Time      `json:"created_at"`
 }
@@ -3130,7 +3130,7 @@ type IncomeSource struct {
 	AccountID      uuid.UUID        `json:"account_id"`
 	AmountType     IncomeAmountType `json:"amount_type"`
 	ExpectedAmount pgtype.Numeric   `json:"expected_amount"`
-	Currency       interface{}      `json:"currency"`
+	Currency       string           `json:"currency"`
 	Cadence        []byte           `json:"cadence"`
 	TaxHint        *TaxHint         `json:"tax_hint"`
 	Notes          *string          `json:"notes"`
@@ -3140,17 +3140,17 @@ type IncomeSource struct {
 }
 
 type Instrument struct {
-	ID         uuid.UUID   `json:"id"`
-	Symbol     string      `json:"symbol"`
-	Isin       *string     `json:"isin"`
-	Name       string      `json:"name"`
-	AssetClass AssetClass  `json:"asset_class"`
-	Currency   interface{} `json:"currency"`
-	Exchange   *string     `json:"exchange"`
-	Metadata   []byte      `json:"metadata"`
-	Active     bool        `json:"active"`
-	CreatedAt  time.Time   `json:"created_at"`
-	UpdatedAt  time.Time   `json:"updated_at"`
+	ID         uuid.UUID  `json:"id"`
+	Symbol     string     `json:"symbol"`
+	Isin       *string    `json:"isin"`
+	Name       string     `json:"name"`
+	AssetClass AssetClass `json:"asset_class"`
+	Currency   string     `json:"currency"`
+	Exchange   *string    `json:"exchange"`
+	Metadata   []byte     `json:"metadata"`
+	Active     bool       `json:"active"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
 type InstrumentPrice struct {
@@ -3158,7 +3158,7 @@ type InstrumentPrice struct {
 	InstrumentID uuid.UUID      `json:"instrument_id"`
 	AsOf         time.Time      `json:"as_of"`
 	Price        pgtype.Numeric `json:"price"`
-	Currency     interface{}    `json:"currency"`
+	Currency     string         `json:"currency"`
 	Source       PriceSource    `json:"source"`
 	ProviderRef  *string        `json:"provider_ref"`
 	CreatedAt    time.Time      `json:"created_at"`
@@ -3182,7 +3182,7 @@ type InvestmentLot struct {
 	QuantityOpening   pgtype.Numeric `json:"quantity_opening"`
 	QuantityRemaining pgtype.Numeric `json:"quantity_remaining"`
 	CostBasisPerUnit  pgtype.Numeric `json:"cost_basis_per_unit"`
-	Currency          interface{}    `json:"currency"`
+	Currency          string         `json:"currency"`
 	SourceTradeID     *uuid.UUID     `json:"source_trade_id"`
 	ClosedAt          *time.Time     `json:"closed_at"`
 	CreatedAt         time.Time      `json:"created_at"`
@@ -3196,7 +3196,7 @@ type InvestmentLotConsumption struct {
 	SellTradeID      uuid.UUID      `json:"sell_trade_id"`
 	QuantityConsumed pgtype.Numeric `json:"quantity_consumed"`
 	RealisedGain     pgtype.Numeric `json:"realised_gain"`
-	Currency         interface{}    `json:"currency"`
+	Currency         string         `json:"currency"`
 	ConsumedAt       time.Time      `json:"consumed_at"`
 	CreatedAt        time.Time      `json:"created_at"`
 }
@@ -3207,7 +3207,7 @@ type InvestmentPosition struct {
 	WorkspaceID    uuid.UUID      `json:"workspace_id"`
 	Quantity       pgtype.Numeric `json:"quantity"`
 	AverageCost    pgtype.Numeric `json:"average_cost"`
-	Currency       interface{}    `json:"currency"`
+	Currency       string         `json:"currency"`
 	LastPrice      pgtype.Numeric `json:"last_price"`
 	LastPriceAt    *time.Time     `json:"last_price_at"`
 	UnrealisedGain pgtype.Numeric `json:"unrealised_gain"`
@@ -3222,9 +3222,9 @@ type InvestmentTrade struct {
 	Side                    TradeSide      `json:"side"`
 	Quantity                pgtype.Numeric `json:"quantity"`
 	Price                   pgtype.Numeric `json:"price"`
-	Currency                interface{}    `json:"currency"`
+	Currency                string         `json:"currency"`
 	FeeAmount               pgtype.Numeric `json:"fee_amount"`
-	FeeCurrency             interface{}    `json:"fee_currency"`
+	FeeCurrency             string         `json:"fee_currency"`
 	TradeDate               time.Time      `json:"trade_date"`
 	SettleDate              *time.Time     `json:"settle_date"`
 	LinkedCashTransactionID *uuid.UUID     `json:"linked_cash_transaction_id"`
@@ -3262,7 +3262,7 @@ type MortgagePayment struct {
 	DueOn               time.Time             `json:"due_on"`
 	PrincipalAmount     pgtype.Numeric        `json:"principal_amount"`
 	InterestAmount      pgtype.Numeric        `json:"interest_amount"`
-	Currency            interface{}           `json:"currency"`
+	Currency            string                `json:"currency"`
 	LinkedTransactionID *uuid.UUID            `json:"linked_transaction_id"`
 	Status              MortgagePaymentStatus `json:"status"`
 	PaidAt              *time.Time            `json:"paid_at"`
@@ -3275,7 +3275,7 @@ type MortgageSchedule struct {
 	WorkspaceID       uuid.UUID      `json:"workspace_id"`
 	AccountID         uuid.UUID      `json:"account_id"`
 	OriginalPrincipal pgtype.Numeric `json:"original_principal"`
-	Currency          interface{}    `json:"currency"`
+	Currency          string         `json:"currency"`
 	InterestRate      pgtype.Numeric `json:"interest_rate"`
 	TermMonths        int32          `json:"term_months"`
 	StartDate         time.Time      `json:"start_date"`
@@ -3288,7 +3288,7 @@ type NetworthSnapshot struct {
 	WorkspaceID    uuid.UUID      `json:"workspace_id"`
 	AsOf           time.Time      `json:"as_of"`
 	TotalValue     pgtype.Numeric `json:"total_value"`
-	BaseCurrency   interface{}    `json:"base_currency"`
+	BaseCurrency   string         `json:"base_currency"`
 	BreakdownJsonb []byte         `json:"breakdown_jsonb"`
 	ComputedAt     time.Time      `json:"computed_at"`
 	CreatedAt      time.Time      `json:"created_at"`
@@ -3393,7 +3393,7 @@ type PlannedEvent struct {
 	MerchantID            *uuid.UUID            `json:"merchant_id"`
 	PlannedFor            time.Time             `json:"planned_for"`
 	Amount                pgtype.Numeric        `json:"amount"`
-	Currency              interface{}           `json:"currency"`
+	Currency              string                `json:"currency"`
 	Status                PlannedEventStatus    `json:"status"`
 	ExecutedTransactionID *uuid.UUID            `json:"executed_transaction_id"`
 	CreatedAt             time.Time             `json:"created_at"`
@@ -3455,7 +3455,7 @@ type Receivable struct {
 	CounterpartyLabel    string              `json:"counterparty_label"`
 	Direction            ReceivableDirection `json:"direction"`
 	Amount               pgtype.Numeric      `json:"amount"`
-	Currency             interface{}         `json:"currency"`
+	Currency             string              `json:"currency"`
 	Origin               ReceivableOrigin    `json:"origin"`
 	OriginEventID        *uuid.UUID          `json:"origin_event_id"`
 	DueDate              *time.Time          `json:"due_date"`
@@ -3472,10 +3472,10 @@ type ReconciliationCheckpoint struct {
 	AccountID        uuid.UUID            `json:"account_id"`
 	StatementDate    time.Time            `json:"statement_date"`
 	AssertedBalance  pgtype.Numeric       `json:"asserted_balance"`
-	AssertedCurrency interface{}          `json:"asserted_currency"`
+	AssertedCurrency string               `json:"asserted_currency"`
 	Status           ReconciliationStatus `json:"status"`
 	DriftAmount      pgtype.Numeric       `json:"drift_amount"`
-	DriftCurrency    interface{}          `json:"drift_currency"`
+	DriftCurrency    *string              `json:"drift_currency"`
 	ResolvedAt       *time.Time           `json:"resolved_at"`
 	Notes            *string              `json:"notes"`
 	CreatedAt        time.Time            `json:"created_at"`
@@ -3494,7 +3494,7 @@ type RecurringTemplate struct {
 	AmountType      RecurringAmountType   `json:"amount_type"`
 	Amount          pgtype.Numeric        `json:"amount"`
 	Percentage      pgtype.Numeric        `json:"percentage"`
-	Currency        interface{}           `json:"currency"`
+	Currency        string                `json:"currency"`
 	Cadence         []byte                `json:"cadence"`
 	StartDate       time.Time             `json:"start_date"`
 	EndDate         *time.Time            `json:"end_date"`
@@ -3554,7 +3554,7 @@ type RetirementContributionLimit struct {
 	Year      int32            `json:"year"`
 	Pillar    RetirementPillar `json:"pillar"`
 	Amount    pgtype.Numeric   `json:"amount"`
-	Currency  interface{}      `json:"currency"`
+	Currency  string           `json:"currency"`
 	CreatedAt time.Time        `json:"created_at"`
 }
 
@@ -3564,7 +3564,7 @@ type RolloverPolicy struct {
 	CategoryID  uuid.UUID         `json:"category_id"`
 	Behavior    RolloverBehavior  `json:"behavior"`
 	CapAmount   pgtype.Numeric    `json:"cap_amount"`
-	CapCurrency interface{}       `json:"cap_currency"`
+	CapCurrency *string           `json:"cap_currency"`
 	Overspend   OverspendBehavior `json:"overspend"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
@@ -3613,7 +3613,7 @@ type Settlement struct {
 	ReceivableID          uuid.UUID      `json:"receivable_id"`
 	SettlingTransactionID *uuid.UUID     `json:"settling_transaction_id"`
 	Amount                pgtype.Numeric `json:"amount"`
-	Currency              interface{}    `json:"currency"`
+	Currency              string         `json:"currency"`
 	SettledAt             time.Time      `json:"settled_at"`
 	Note                  *string        `json:"note"`
 	CreatedAt             time.Time      `json:"created_at"`
@@ -3639,7 +3639,7 @@ type SplitBillAllocation struct {
 	ParticipantTripID *uuid.UUID     `json:"participant_trip_id"`
 	PersonID          *uuid.UUID     `json:"person_id"`
 	AmountOwed        pgtype.Numeric `json:"amount_owed"`
-	Currency          interface{}    `json:"currency"`
+	Currency          string         `json:"currency"`
 	ItemDescription   *string        `json:"item_description"`
 	TransactionLineID *uuid.UUID     `json:"transaction_line_id"`
 	CreatedAt         time.Time      `json:"created_at"`
@@ -3651,7 +3651,7 @@ type SplitBillEvent struct {
 	TransactionID    *uuid.UUID            `json:"transaction_id"`
 	TripID           *uuid.UUID            `json:"trip_id"`
 	TotalAmount      pgtype.Numeric        `json:"total_amount"`
-	Currency         interface{}           `json:"currency"`
+	Currency         string                `json:"currency"`
 	AllocationMethod SplitAllocationMethod `json:"allocation_method"`
 	Note             *string               `json:"note"`
 	State            SplitBillState        `json:"state"`
@@ -3697,9 +3697,9 @@ type Transaction struct {
 	ValueAt          *time.Time        `json:"value_at"`
 	PostedAt         *time.Time        `json:"posted_at"`
 	Amount           pgtype.Numeric    `json:"amount"`
-	Currency         interface{}       `json:"currency"`
+	Currency         string            `json:"currency"`
 	OriginalAmount   pgtype.Numeric    `json:"original_amount"`
-	OriginalCurrency interface{}       `json:"original_currency"`
+	OriginalCurrency *string           `json:"original_currency"`
 	MerchantID       *uuid.UUID        `json:"merchant_id"`
 	CategoryID       *uuid.UUID        `json:"category_id"`
 	CounterpartyRaw  *string           `json:"counterparty_raw"`
@@ -3716,7 +3716,7 @@ type TransactionLine struct {
 	WorkspaceID   uuid.UUID      `json:"workspace_id"`
 	TransactionID uuid.UUID      `json:"transaction_id"`
 	Amount        pgtype.Numeric `json:"amount"`
-	Currency      interface{}    `json:"currency"`
+	Currency      string         `json:"currency"`
 	CategoryID    uuid.UUID      `json:"category_id"`
 	MerchantID    *uuid.UUID     `json:"merchant_id"`
 	Note          *string        `json:"note"`
@@ -3738,7 +3738,7 @@ type TransferMatch struct {
 	DestinationTransactionID *uuid.UUID      `json:"destination_transaction_id"`
 	FxRate                   pgtype.Numeric  `json:"fx_rate"`
 	FeeAmount                pgtype.Numeric  `json:"fee_amount"`
-	FeeCurrency              interface{}     `json:"fee_currency"`
+	FeeCurrency              *string         `json:"fee_currency"`
 	ToleranceNote            *string         `json:"tolerance_note"`
 	Provenance               MatchProvenance `json:"provenance"`
 	MatchedByUserID          *uuid.UUID      `json:"matched_by_user_id"`
@@ -3754,7 +3754,7 @@ type Trip struct {
 	StartDate     time.Time      `json:"start_date"`
 	EndDate       time.Time      `json:"end_date"`
 	OverallBudget pgtype.Numeric `json:"overall_budget"`
-	Currency      interface{}    `json:"currency"`
+	Currency      string         `json:"currency"`
 	Status        TripStatus     `json:"status"`
 	Notes         *string        `json:"notes"`
 	CreatedAt     time.Time      `json:"created_at"`
@@ -3768,7 +3768,7 @@ type TripBudget struct {
 	Category     TripCategory   `json:"category"`
 	CustomLabel  *string        `json:"custom_label"`
 	BudgetAmount pgtype.Numeric `json:"budget_amount"`
-	Currency     interface{}    `json:"currency"`
+	Currency     string         `json:"currency"`
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 }
@@ -3807,13 +3807,13 @@ type User struct {
 }
 
 type UserPreference struct {
-	UserID          uuid.UUID   `json:"user_id"`
-	Theme           *string     `json:"theme"`
-	DateFormat      *string     `json:"date_format"`
-	NumberFormat    *string     `json:"number_format"`
-	DisplayCurrency interface{} `json:"display_currency"`
-	FeatureFlags    []byte      `json:"feature_flags"`
-	UpdatedAt       time.Time   `json:"updated_at"`
+	UserID          uuid.UUID `json:"user_id"`
+	Theme           *string   `json:"theme"`
+	DateFormat      *string   `json:"date_format"`
+	NumberFormat    *string   `json:"number_format"`
+	DisplayCurrency *string   `json:"display_currency"`
+	FeatureFlags    []byte    `json:"feature_flags"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type WebauthnCredential struct {
@@ -3845,7 +3845,7 @@ type WishlistItem struct {
 	WorkspaceID    uuid.UUID      `json:"workspace_id"`
 	Name           string         `json:"name"`
 	EstimatedPrice pgtype.Numeric `json:"estimated_price"`
-	Currency       interface{}    `json:"currency"`
+	Currency       string         `json:"currency"`
 	Url            *string        `json:"url"`
 	Notes          *string        `json:"notes"`
 	Priority       int32          `json:"priority"`
@@ -3862,7 +3862,7 @@ type WishlistPriceObservation struct {
 	WishlistItemID uuid.UUID           `json:"wishlist_item_id"`
 	ObservedAt     time.Time           `json:"observed_at"`
 	Price          pgtype.Numeric      `json:"price"`
-	Currency       interface{}         `json:"currency"`
+	Currency       string              `json:"currency"`
 	Source         WishlistPriceSource `json:"source"`
 	ScraperRunID   *uuid.UUID          `json:"scraper_run_id"`
 	Note           *string             `json:"note"`
@@ -3876,22 +3876,22 @@ type WishlistPurchaseLink struct {
 	TransactionID  uuid.UUID      `json:"transaction_id"`
 	PurchasedAt    time.Time      `json:"purchased_at"`
 	ActualAmount   pgtype.Numeric `json:"actual_amount"`
-	Currency       interface{}    `json:"currency"`
+	Currency       string         `json:"currency"`
 	Variance       pgtype.Numeric `json:"variance"`
 	CreatedAt      time.Time      `json:"created_at"`
 }
 
 type Workspace struct {
-	ID             uuid.UUID   `json:"id"`
-	Name           string      `json:"name"`
-	Slug           string      `json:"slug"`
-	BaseCurrency   interface{} `json:"base_currency"`
-	CycleAnchorDay int16       `json:"cycle_anchor_day"`
-	Locale         string      `json:"locale"`
-	Timezone       string      `json:"timezone"`
-	DeletedAt      *time.Time  `json:"deleted_at"`
-	CreatedAt      time.Time   `json:"created_at"`
-	UpdatedAt      time.Time   `json:"updated_at"`
+	ID             uuid.UUID  `json:"id"`
+	Name           string     `json:"name"`
+	Slug           string     `json:"slug"`
+	BaseCurrency   string     `json:"base_currency"`
+	CycleAnchorDay int16      `json:"cycle_anchor_day"`
+	Locale         string     `json:"locale"`
+	Timezone       string     `json:"timezone"`
+	DeletedAt      *time.Time `json:"deleted_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 type WorkspaceInvite struct {

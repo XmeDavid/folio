@@ -7,10 +7,165 @@ package dbq
 
 import (
 	"context"
+	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+const acceptWorkspaceInvite = `-- name: AcceptWorkspaceInvite :exec
+UPDATE workspace_invites SET accepted_at = now() WHERE id = $1
+`
+
+func (q *Queries) AcceptWorkspaceInvite(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, acceptWorkspaceInvite, id)
+	return err
+}
+
+const acquireFirstRunLock = `-- name: AcquireFirstRunLock :exec
+SELECT pg_advisory_xact_lock($1)
+`
+
+func (q *Queries) AcquireFirstRunLock(ctx context.Context, pgAdvisoryXactLock int64) error {
+	_, err := q.db.Exec(ctx, acquireFirstRunLock, pgAdvisoryXactLock)
+	return err
+}
+
+const checkEmailExistsExcludingUser = `-- name: CheckEmailExistsExcludingUser :one
+SELECT exists(SELECT 1 FROM users WHERE email = $1 AND id <> $2) AS email_exists
+`
+
+type CheckEmailExistsExcludingUserParams struct {
+	Email string    `json:"email"`
+	ID    uuid.UUID `json:"id"`
+}
+
+func (q *Queries) CheckEmailExistsExcludingUser(ctx context.Context, arg CheckEmailExistsExcludingUserParams) (bool, error) {
+	row := q.db.QueryRow(ctx, checkEmailExistsExcludingUser, arg.Email, arg.ID)
+	var email_exists bool
+	err := row.Scan(&email_exists)
+	return email_exists, err
+}
+
+const deleteSessionsByUser = `-- name: DeleteSessionsByUser :exec
+DELETE FROM sessions WHERE user_id = $1
+`
+
+func (q *Queries) DeleteSessionsByUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteSessionsByUser, userID)
+	return err
+}
+
+const getUserByEmailWithPassword = `-- name: GetUserByEmailWithPassword :one
+SELECT id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at, password_hash
+FROM users WHERE email = $1
+`
+
+type GetUserByEmailWithPasswordRow struct {
+	ID              uuid.UUID  `json:"id"`
+	Email           string     `json:"email"`
+	DisplayName     string     `json:"display_name"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at"`
+	IsAdmin         bool       `json:"is_admin"`
+	LastWorkspaceID *uuid.UUID `json:"last_workspace_id"`
+	CreatedAt       time.Time  `json:"created_at"`
+	PasswordHash    string     `json:"password_hash"`
+}
+
+func (q *Queries) GetUserByEmailWithPassword(ctx context.Context, email string) (GetUserByEmailWithPasswordRow, error) {
+	row := q.db.QueryRow(ctx, getUserByEmailWithPassword, email)
+	var i GetUserByEmailWithPasswordRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.EmailVerifiedAt,
+		&i.IsAdmin,
+		&i.LastWorkspaceID,
+		&i.CreatedAt,
+		&i.PasswordHash,
+	)
+	return i, err
+}
+
+const getUserByID = `-- name: GetUserByID :one
+SELECT id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at
+FROM users WHERE id = $1
+`
+
+type GetUserByIDRow struct {
+	ID              uuid.UUID  `json:"id"`
+	Email           string     `json:"email"`
+	DisplayName     string     `json:"display_name"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at"`
+	IsAdmin         bool       `json:"is_admin"`
+	LastWorkspaceID *uuid.UUID `json:"last_workspace_id"`
+	CreatedAt       time.Time  `json:"created_at"`
+}
+
+func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error) {
+	row := q.db.QueryRow(ctx, getUserByID, id)
+	var i GetUserByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.EmailVerifiedAt,
+		&i.IsAdmin,
+		&i.LastWorkspaceID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getUserEmailAndDisplayName = `-- name: GetUserEmailAndDisplayName :one
+SELECT email, display_name FROM users WHERE id = $1
+`
+
+type GetUserEmailAndDisplayNameRow struct {
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+}
+
+func (q *Queries) GetUserEmailAndDisplayName(ctx context.Context, id uuid.UUID) (GetUserEmailAndDisplayNameRow, error) {
+	row := q.db.QueryRow(ctx, getUserEmailAndDisplayName, id)
+	var i GetUserEmailAndDisplayNameRow
+	err := row.Scan(&i.Email, &i.DisplayName)
+	return i, err
+}
+
+const getUserEmailAndName = `-- name: GetUserEmailAndName :one
+SELECT email, display_name, email_verified_at FROM users WHERE id = $1
+`
+
+type GetUserEmailAndNameRow struct {
+	Email           string     `json:"email"`
+	DisplayName     string     `json:"display_name"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at"`
+}
+
+func (q *Queries) GetUserEmailAndName(ctx context.Context, id uuid.UUID) (GetUserEmailAndNameRow, error) {
+	row := q.db.QueryRow(ctx, getUserEmailAndName, id)
+	var i GetUserEmailAndNameRow
+	err := row.Scan(&i.Email, &i.DisplayName, &i.EmailVerifiedAt)
+	return i, err
+}
+
+const getUserIDAndNameByEmail = `-- name: GetUserIDAndNameByEmail :one
+SELECT id, display_name FROM users WHERE email = $1
+`
+
+type GetUserIDAndNameByEmailRow struct {
+	ID          uuid.UUID `json:"id"`
+	DisplayName string    `json:"display_name"`
+}
+
+func (q *Queries) GetUserIDAndNameByEmail(ctx context.Context, email string) (GetUserIDAndNameByEmailRow, error) {
+	row := q.db.QueryRow(ctx, getUserIDAndNameByEmail, email)
+	var i GetUserIDAndNameByEmailRow
+	err := row.Scan(&i.ID, &i.DisplayName)
+	return i, err
+}
 
 const getUserIDByEmail = `-- name: GetUserIDByEmail :one
 SELECT id FROM users WHERE email = $1
@@ -21,6 +176,171 @@ func (q *Queries) GetUserIDByEmail(ctx context.Context, email string) (uuid.UUID
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const getUserIsAdmin = `-- name: GetUserIsAdmin :one
+SELECT is_admin FROM users WHERE id = $1
+`
+
+func (q *Queries) GetUserIsAdmin(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, getUserIsAdmin, id)
+	var is_admin bool
+	err := row.Scan(&is_admin)
+	return is_admin, err
+}
+
+const getUserPasswordHash = `-- name: GetUserPasswordHash :one
+SELECT password_hash FROM users WHERE id = $1
+`
+
+func (q *Queries) GetUserPasswordHash(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getUserPasswordHash, id)
+	var password_hash string
+	err := row.Scan(&password_hash)
+	return password_hash, err
+}
+
+const getWorkspaceInviteByTokenHash = `-- name: GetWorkspaceInviteByTokenHash :one
+SELECT id, workspace_id, email, role::text AS role, expires_at, revoked_at, accepted_at
+FROM workspace_invites WHERE token_hash = $1 FOR UPDATE
+`
+
+type GetWorkspaceInviteByTokenHashRow struct {
+	ID          uuid.UUID  `json:"id"`
+	WorkspaceID uuid.UUID  `json:"workspace_id"`
+	Email       string     `json:"email"`
+	Role        string     `json:"role"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	RevokedAt   *time.Time `json:"revoked_at"`
+	AcceptedAt  *time.Time `json:"accepted_at"`
+}
+
+func (q *Queries) GetWorkspaceInviteByTokenHash(ctx context.Context, tokenHash []byte) (GetWorkspaceInviteByTokenHashRow, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceInviteByTokenHash, tokenHash)
+	var i GetWorkspaceInviteByTokenHashRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Email,
+		&i.Role,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.AcceptedAt,
+	)
+	return i, err
+}
+
+const insertAuditDirect = `-- name: InsertAuditDirect :exec
+INSERT INTO audit_events (id, workspace_id, actor_user_id, action, entity_type, entity_id, ip, user_agent)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+`
+
+type InsertAuditDirectParams struct {
+	ID          uuid.UUID   `json:"id"`
+	WorkspaceID *uuid.UUID  `json:"workspace_id"`
+	ActorUserID *uuid.UUID  `json:"actor_user_id"`
+	Action      string      `json:"action"`
+	EntityType  string      `json:"entity_type"`
+	EntityID    uuid.UUID   `json:"entity_id"`
+	Ip          *netip.Addr `json:"ip"`
+	UserAgent   *string     `json:"user_agent"`
+}
+
+func (q *Queries) InsertAuditDirect(ctx context.Context, arg InsertAuditDirectParams) error {
+	_, err := q.db.Exec(ctx, insertAuditDirect,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.ActorUserID,
+		arg.Action,
+		arg.EntityType,
+		arg.EntityID,
+		arg.Ip,
+		arg.UserAgent,
+	)
+	return err
+}
+
+const insertInvitedMembership = `-- name: InsertInvitedMembership :exec
+INSERT INTO workspace_memberships (workspace_id, user_id, role)
+VALUES ($1, $2, $3::workspace_role)
+`
+
+type InsertInvitedMembershipParams struct {
+	WorkspaceID uuid.UUID     `json:"workspace_id"`
+	UserID      uuid.UUID     `json:"user_id"`
+	Column3     WorkspaceRole `json:"column_3"`
+}
+
+func (q *Queries) InsertInvitedMembership(ctx context.Context, arg InsertInvitedMembershipParams) error {
+	_, err := q.db.Exec(ctx, insertInvitedMembership, arg.WorkspaceID, arg.UserID, arg.Column3)
+	return err
+}
+
+const insertLoginFailedAudit = `-- name: InsertLoginFailedAudit :exec
+INSERT INTO audit_events (id, workspace_id, actor_user_id, action, entity_type, entity_id, after_jsonb, ip, user_agent)
+VALUES ($1, null, null, 'user.login_failed', 'email', $2, jsonb_build_object('email', $3::text), $4, $5)
+`
+
+type InsertLoginFailedAuditParams struct {
+	ID        uuid.UUID   `json:"id"`
+	EntityID  uuid.UUID   `json:"entity_id"`
+	Column3   string      `json:"column_3"`
+	Ip        *netip.Addr `json:"ip"`
+	UserAgent *string     `json:"user_agent"`
+}
+
+func (q *Queries) InsertLoginFailedAudit(ctx context.Context, arg InsertLoginFailedAuditParams) error {
+	_, err := q.db.Exec(ctx, insertLoginFailedAudit,
+		arg.ID,
+		arg.EntityID,
+		arg.Column3,
+		arg.Ip,
+		arg.UserAgent,
+	)
+	return err
+}
+
+const insertUserReturning = `-- name: InsertUserReturning :one
+INSERT INTO users (id, email, password_hash, display_name)
+VALUES ($1, $2, $3, $4)
+RETURNING id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at
+`
+
+type InsertUserReturningParams struct {
+	ID           uuid.UUID `json:"id"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"password_hash"`
+	DisplayName  string    `json:"display_name"`
+}
+
+type InsertUserReturningRow struct {
+	ID              uuid.UUID  `json:"id"`
+	Email           string     `json:"email"`
+	DisplayName     string     `json:"display_name"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at"`
+	IsAdmin         bool       `json:"is_admin"`
+	LastWorkspaceID *uuid.UUID `json:"last_workspace_id"`
+	CreatedAt       time.Time  `json:"created_at"`
+}
+
+func (q *Queries) InsertUserReturning(ctx context.Context, arg InsertUserReturningParams) (InsertUserReturningRow, error) {
+	row := q.db.QueryRow(ctx, insertUserReturning,
+		arg.ID,
+		arg.Email,
+		arg.PasswordHash,
+		arg.DisplayName,
+	)
+	var i InsertUserReturningRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.EmailVerifiedAt,
+		&i.IsAdmin,
+		&i.LastWorkspaceID,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const listAdminUsers = `-- name: ListAdminUsers :many
@@ -54,4 +374,89 @@ func (q *Queries) ListAdminUsers(ctx context.Context) ([]ListAdminUsersRow, erro
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateUserEmail = `-- name: UpdateUserEmail :exec
+UPDATE users SET email = $1, email_verified_at = now() WHERE id = $2
+`
+
+type UpdateUserEmailParams struct {
+	Email string    `json:"email"`
+	ID    uuid.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) error {
+	_, err := q.db.Exec(ctx, updateUserEmail, arg.Email, arg.ID)
+	return err
+}
+
+const updateUserLastLoginAt = `-- name: UpdateUserLastLoginAt :exec
+UPDATE users SET last_login_at = $1 WHERE id = $2
+`
+
+type UpdateUserLastLoginAtParams struct {
+	LastLoginAt *time.Time `json:"last_login_at"`
+	ID          uuid.UUID  `json:"id"`
+}
+
+func (q *Queries) UpdateUserLastLoginAt(ctx context.Context, arg UpdateUserLastLoginAtParams) error {
+	_, err := q.db.Exec(ctx, updateUserLastLoginAt, arg.LastLoginAt, arg.ID)
+	return err
+}
+
+const updateUserLastWorkspace = `-- name: UpdateUserLastWorkspace :exec
+UPDATE users SET last_workspace_id = $1 WHERE id = $2
+`
+
+type UpdateUserLastWorkspaceParams struct {
+	LastWorkspaceID *uuid.UUID `json:"last_workspace_id"`
+	ID              uuid.UUID  `json:"id"`
+}
+
+func (q *Queries) UpdateUserLastWorkspace(ctx context.Context, arg UpdateUserLastWorkspaceParams) error {
+	_, err := q.db.Exec(ctx, updateUserLastWorkspace, arg.LastWorkspaceID, arg.ID)
+	return err
+}
+
+const updateUserPassword = `-- name: UpdateUserPassword :exec
+UPDATE users SET password_hash = $1 WHERE id = $2
+`
+
+type UpdateUserPasswordParams struct {
+	PasswordHash string    `json:"password_hash"`
+	ID           uuid.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
+	_, err := q.db.Exec(ctx, updateUserPassword, arg.PasswordHash, arg.ID)
+	return err
+}
+
+const userExists = `-- name: UserExists :one
+SELECT exists(SELECT 1 FROM users) AS user_exists
+`
+
+func (q *Queries) UserExists(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, userExists)
+	var user_exists bool
+	err := row.Scan(&user_exists)
+	return user_exists, err
+}
+
+const verifyUserEmail = `-- name: VerifyUserEmail :execrows
+UPDATE users SET email_verified_at = coalesce(email_verified_at, now())
+WHERE id = $1 AND email = $2
+`
+
+type VerifyUserEmailParams struct {
+	ID    uuid.UUID `json:"id"`
+	Email string    `json:"email"`
+}
+
+func (q *Queries) VerifyUserEmail(ctx context.Context, arg VerifyUserEmailParams) (int64, error) {
+	result, err := q.db.Exec(ctx, verifyUserEmail, arg.ID, arg.Email)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

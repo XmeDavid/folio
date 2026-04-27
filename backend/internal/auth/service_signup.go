@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/identity"
 	"github.com/xmedavid/folio/backend/internal/jobs"
@@ -115,21 +115,21 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 		return nil, err
 	}
 
+	q := dbq.New(tx)
 	userID := uuidx.New()
-	var user identity.User
-	err = tx.QueryRow(ctx, `
-		insert into users (id, email, password_hash, display_name)
-		values ($1, $2, $3, $4)
-		returning id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at
-	`, userID, in.Email, hash, in.DisplayName).Scan(
-		&user.ID, &user.Email, &user.DisplayName, &user.EmailVerifiedAt,
-		&user.IsAdmin, &user.LastWorkspaceID, &user.CreatedAt,
-	)
+	row, err := q.InsertUserReturning(ctx, dbq.InsertUserReturningParams{
+		ID: userID, Email: in.Email, PasswordHash: hash, DisplayName: in.DisplayName,
+	})
 	if err != nil {
 		if isUsersEmailKey(err) {
 			return nil, httpx.NewValidationError("that email is already registered")
 		}
 		return nil, fmt.Errorf("insert user: %w", err)
+	}
+	user := identity.User{
+		ID: row.ID, Email: row.Email, DisplayName: row.DisplayName,
+		EmailVerifiedAt: row.EmailVerifiedAt, IsAdmin: row.IsAdmin,
+		LastWorkspaceID: row.LastWorkspaceID, CreatedAt: row.CreatedAt,
 	}
 
 	workspaceCI := identity.CreateWorkspaceInput{
@@ -148,7 +148,9 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 		return nil, err
 	}
 
-	if _, err := tx.Exec(ctx, `update users set last_workspace_id = $1 where id = $2`, workspace.ID, userID); err != nil {
+	if err := q.UpdateUserLastWorkspace(ctx, dbq.UpdateUserLastWorkspaceParams{
+		LastWorkspaceID: &workspace.ID, ID: userID,
+	}); err != nil {
 		return nil, fmt.Errorf("set last_workspace_id: %w", err)
 	}
 	user.LastWorkspaceID = &workspace.ID
@@ -156,10 +158,11 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 	plaintext, _ := GenerateSessionToken()
 	sid := SessionIDFromToken(plaintext)
 	now := s.now().UTC()
-	if _, err := tx.Exec(ctx, `
-		insert into sessions (id, user_id, created_at, expires_at, last_seen_at, user_agent, ip)
-		values ($1, $2, $3, $4, $3, $5, $6)
-	`, sid, userID, now, now.Add(s.cfg.SessionAbsolute), in.UserAgent, ipString(in.IP)); err != nil {
+	if err := q.InsertSession(ctx, dbq.InsertSessionParams{
+		ID: sid, UserID: userID, CreatedAt: now,
+		ExpiresAt: now.Add(s.cfg.SessionAbsolute),
+		UserAgent: &in.UserAgent, Ip: netIPToAddr(in.IP),
+	}); err != nil {
 		return nil, fmt.Errorf("insert session: %w", err)
 	}
 
@@ -172,10 +175,11 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 	}
 	verifyPlaintext, verifyHash := GenerateSessionToken()
 	verifyTokenID := uuidx.New()
-	if _, err := tx.Exec(ctx, `
-		insert into auth_tokens (id, user_id, purpose, token_hash, email, expires_at)
-		values ($1, $2, $3, $4, $5, $6)
-	`, verifyTokenID, userID, purposeEmailVerify, verifyHash, user.Email, now.Add(verifyEmailTTL)); err != nil {
+	if err := q.InsertAuthToken(ctx, dbq.InsertAuthTokenParams{
+		ID: verifyTokenID, UserID: userID, Purpose: purposeEmailVerify,
+		TokenHash: verifyHash, Email: &user.Email,
+		ExpiresAt: now.Add(verifyEmailTTL),
+	}); err != nil {
 		return nil, fmt.Errorf("insert verify token: %w", err)
 	}
 	if err := s.enqueueEmailTx(ctx, tx, jobs.SendEmailArgs{
@@ -194,50 +198,36 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 	// signup email (spec §4.2). Verification is bypassed on purpose: signing
 	// up with an invite token sent to this email proves the address.
 	if in.InviteToken != "" {
-		var (
-			inviteID     uuid.UUID
-			invWorkspaceID  uuid.UUID
-			inviteEmail  string
-			inviteRole   string
-			inviteExpiry time.Time
-			revokedAt    *time.Time
-			acceptedAt   *time.Time
-		)
-		err := tx.QueryRow(ctx, `
-			select id, workspace_id, email, role::text, expires_at, revoked_at, accepted_at
-			from workspace_invites where token_hash = $1 for update
-		`, identity.HashInviteToken(in.InviteToken)).Scan(&inviteID, &invWorkspaceID, &inviteEmail,
-			&inviteRole, &inviteExpiry, &revokedAt, &acceptedAt)
+		inv, err := q.GetWorkspaceInviteByTokenHash(ctx, identity.HashInviteToken(in.InviteToken))
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if errors.Is(err, identity.ErrInviteNotFound) {
 				return nil, identity.ErrInviteNotFound
 			}
 			return nil, fmt.Errorf("select invite: %w", err)
 		}
-		if revokedAt != nil {
+		if inv.RevokedAt != nil {
 			return nil, identity.ErrInviteRevoked
 		}
-		if acceptedAt != nil {
+		if inv.AcceptedAt != nil {
 			return nil, identity.ErrInviteAlreadyUsed
 		}
-		if inviteExpiry.Before(s.now()) {
+		if inv.ExpiresAt.Before(s.now()) {
 			return nil, identity.ErrInviteExpired
 		}
-		if strings.ToLower(inviteEmail) != strings.ToLower(in.Email) {
+		if strings.ToLower(inv.Email) != strings.ToLower(in.Email) {
 			return nil, identity.ErrInviteEmailMismatch
 		}
-		if _, err := tx.Exec(ctx, `
-			insert into workspace_memberships (workspace_id, user_id, role)
-			values ($1, $2, $3::workspace_role)
-		`, invWorkspaceID, userID, inviteRole); err != nil {
+		if err := q.InsertInvitedMembership(ctx, dbq.InsertInvitedMembershipParams{
+			WorkspaceID: inv.WorkspaceID, UserID: userID,
+			Column3: dbq.WorkspaceRole(inv.Role),
+		}); err != nil {
 			return nil, fmt.Errorf("insert invited membership: %w", err)
 		}
-		if _, err := tx.Exec(ctx,
-			`update workspace_invites set accepted_at = now() where id = $1`, inviteID); err != nil {
+		if err := q.AcceptWorkspaceInvite(ctx, inv.ID); err != nil {
 			return nil, fmt.Errorf("consume invite: %w", err)
 		}
-		if err := writeAuditTx(ctx, tx, &invWorkspaceID, &userID, "member.invite_accepted",
-			"invite", inviteID, nil, map[string]any{"role": inviteRole, "email": inviteEmail},
+		if err := writeAuditTx(ctx, tx, &inv.WorkspaceID, &userID, "member.invite_accepted",
+			"invite", inv.ID, nil, map[string]any{"role": inv.Role, "email": inv.Email},
 			in.IP, in.UserAgent); err != nil {
 			return nil, err
 		}
@@ -249,9 +239,11 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 		}
 		// Keep the returned user in sync with the in-tx grant so the first
 		// signup response reflects is_admin=true without a refetch.
-		if err := tx.QueryRow(ctx, `select is_admin from users where id = $1`, user.ID).Scan(&user.IsAdmin); err != nil {
+		isAdmin, err := q.GetUserIsAdmin(ctx, user.ID)
+		if err != nil {
 			return nil, fmt.Errorf("refresh is_admin: %w", err)
 		}
+		user.IsAdmin = isAdmin
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
@@ -265,7 +257,7 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 // invite_only allows the first-ever user to bootstrap the instance; after
 // that it requires a non-empty token. Token validity is verified later in the
 // same transaction.
-func (s *Service) enforceRegistrationModeTx(ctx context.Context, tx pgx.Tx, inviteToken string) error {
+func (s *Service) enforceRegistrationModeTx(ctx context.Context, tx interface{ QueryRow(context.Context, string, ...any) interface{ Scan(...any) error } }, inviteToken string) error {
 	switch s.cfg.Registration {
 	case RegistrationOpen:
 		return nil
@@ -294,12 +286,13 @@ func (s *Service) enforceRegistrationModeTx(ctx context.Context, tx pgx.Tx, invi
 	}
 }
 
-func (s *Service) userExistsForRegistrationTx(ctx context.Context, tx pgx.Tx) (bool, error) {
-	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock($1)`, firstRunSignupLockKey); err != nil {
+func (s *Service) userExistsForRegistrationTx(ctx context.Context, tx interface{ QueryRow(context.Context, string, ...any) interface{ Scan(...any) error } }) (bool, error) {
+	q := dbq.New(tx.(dbq.DBTX))
+	if err := q.AcquireFirstRunLock(ctx, firstRunSignupLockKey); err != nil {
 		return false, fmt.Errorf("first-run lock: %w", err)
 	}
-	var exists bool
-	if err := tx.QueryRow(ctx, `select exists(select 1 from users)`).Scan(&exists); err != nil {
+	exists, err := q.UserExists(ctx)
+	if err != nil {
 		return false, fmt.Errorf("first-run check: %w", err)
 	}
 	return exists, nil
@@ -314,14 +307,4 @@ func isUsersEmailKey(err error) bool {
 		return false
 	}
 	return pe.Code == "23505" && pe.ConstraintName == "users_email_key"
-}
-
-// ipString renders an IP for storage in `sessions.ip` / `audit_events.ip`
-// (both `inet` columns). Returns nil for a nil IP so pgx writes SQL NULL —
-// returning "" produces a malformed-inet error from Postgres.
-func ipString(ip net.IP) any {
-	if ip == nil {
-		return nil
-	}
-	return ip.String()
 }

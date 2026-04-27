@@ -39,6 +39,16 @@ func netIPToAddr(ip net.IP) *netip.Addr {
 	return &addr
 }
 
+// netIPToAddrVal converts a net.IP to netip.Addr for non-nullable inet columns.
+// Returns the zero Addr for a nil/unparseable IP.
+func netIPToAddrVal(ip net.IP) netip.Addr {
+	if ip == nil {
+		return netip.Addr{}
+	}
+	addr, _ := netip.AddrFromSlice(ip)
+	return addr
+}
+
 // WriteAudit is the non-transactional audit-write helper for steady-state
 // events (workspace admin actions, member changes). Best-effort — errors are
 // logged, not surfaced, so an audit-table blip doesn't bring down the

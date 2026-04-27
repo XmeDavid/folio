@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/identity"
 )
@@ -28,17 +29,9 @@ func (s *Service) RequireMembership(next http.Handler) http.Handler {
 			return
 		}
 
-		var workspace identity.Workspace
-		var role identity.Role
-		err = s.pool.QueryRow(r.Context(), `
-			select t.id, t.name, t.slug, t.base_currency, t.cycle_anchor_day,
-			       t.locale, t.timezone, t.deleted_at, t.created_at, m.role
-			from workspaces t
-			join workspace_memberships m on m.workspace_id = t.id
-			where t.id = $1 and m.user_id = $2 and t.deleted_at is null
-		`, tid, user.ID).Scan(&workspace.ID, &workspace.Name, &workspace.Slug, &workspace.BaseCurrency,
-			&workspace.CycleAnchorDay, &workspace.Locale, &workspace.Timezone, &workspace.DeletedAt,
-			&workspace.CreatedAt, &role)
+		row, err := dbq.New(s.pool).GetWorkspaceWithMembership(r.Context(), dbq.GetWorkspaceWithMembershipParams{
+			ID: tid, UserID: user.ID,
+		})
 		if err != nil && errors.Is(err, pgx.ErrNoRows) {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
 			return
@@ -48,10 +41,29 @@ func (s *Service) RequireMembership(next http.Handler) http.Handler {
 			return
 		}
 
+		workspace := identity.Workspace{
+			ID: row.ID, Name: row.Name, Slug: row.Slug,
+			BaseCurrency: asString(row.BaseCurrency), CycleAnchorDay: int(row.CycleAnchorDay),
+			Locale: row.Locale, Timezone: row.Timezone,
+			DeletedAt: row.DeletedAt, CreatedAt: row.CreatedAt,
+		}
+		role := identity.Role(row.Role)
+
 		ctx := WithWorkspace(r.Context(), workspace)
 		ctx = WithRole(ctx, role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// asString converts an interface{} (from sqlc domain types) to string.
+func asString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // RequireWorkspaceOwnerIncludingDeleted verifies that the authenticated user is
@@ -72,17 +84,9 @@ func (s *Service) RequireWorkspaceOwnerIncludingDeleted(next http.Handler) http.
 			return
 		}
 
-		var workspace identity.Workspace
-		var role identity.Role
-		err = s.pool.QueryRow(r.Context(), `
-			select t.id, t.name, t.slug, t.base_currency, t.cycle_anchor_day,
-			       t.locale, t.timezone, t.deleted_at, t.created_at, m.role
-			from workspaces t
-			join workspace_memberships m on m.workspace_id = t.id
-			where t.id = $1 and m.user_id = $2 and m.role = 'owner'
-		`, tid, user.ID).Scan(&workspace.ID, &workspace.Name, &workspace.Slug, &workspace.BaseCurrency,
-			&workspace.CycleAnchorDay, &workspace.Locale, &workspace.Timezone, &workspace.DeletedAt,
-			&workspace.CreatedAt, &role)
+		row, err := dbq.New(s.pool).GetWorkspaceWithOwnership(r.Context(), dbq.GetWorkspaceWithOwnershipParams{
+			ID: tid, UserID: user.ID,
+		})
 		if err != nil && errors.Is(err, pgx.ErrNoRows) {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
 			return
@@ -91,6 +95,14 @@ func (s *Service) RequireWorkspaceOwnerIncludingDeleted(next http.Handler) http.
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "lookup failed")
 			return
 		}
+
+		workspace := identity.Workspace{
+			ID: row.ID, Name: row.Name, Slug: row.Slug,
+			BaseCurrency: asString(row.BaseCurrency), CycleAnchorDay: int(row.CycleAnchorDay),
+			Locale: row.Locale, Timezone: row.Timezone,
+			DeletedAt: row.DeletedAt, CreatedAt: row.CreatedAt,
+		}
+		role := identity.Role(row.Role)
 
 		ctx := WithWorkspace(r.Context(), workspace)
 		ctx = WithRole(ctx, role)

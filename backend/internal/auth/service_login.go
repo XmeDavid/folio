@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/identity"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
@@ -68,13 +69,8 @@ func (s *Service) Login(ctx context.Context, raw LoginInput) (*LoginResult, erro
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var hash string
-	var user identity.User
-	err = tx.QueryRow(ctx, `
-		select id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at, password_hash
-		from users where email = $1
-	`, in.Email).Scan(&user.ID, &user.Email, &user.DisplayName, &user.EmailVerifiedAt,
-		&user.IsAdmin, &user.LastWorkspaceID, &user.CreatedAt, &hash)
+	q := dbq.New(tx)
+	row, err := q.GetUserByEmailWithPassword(ctx, in.Email)
 	if err != nil && errors.Is(err, pgx.ErrNoRows) {
 		_, _ = VerifyPassword("dummy", dummyHash, nil)
 		s.logLoginFailed(ctx, in.Email, in.IP, in.UserAgent)
@@ -83,7 +79,12 @@ func (s *Service) Login(ctx context.Context, raw LoginInput) (*LoginResult, erro
 	if err != nil {
 		return nil, fmt.Errorf("select user: %w", err)
 	}
-	ok, err := VerifyPassword(in.Password, hash, s.cfg.SecretKey)
+	user := identity.User{
+		ID: row.ID, Email: row.Email, DisplayName: row.DisplayName,
+		EmailVerifiedAt: row.EmailVerifiedAt, IsAdmin: row.IsAdmin,
+		LastWorkspaceID: row.LastWorkspaceID, CreatedAt: row.CreatedAt,
+	}
+	ok, err := VerifyPassword(in.Password, row.PasswordHash, s.cfg.SecretKey)
 	if err != nil {
 		return nil, fmt.Errorf("verify: %w", err)
 	}
@@ -93,21 +94,20 @@ func (s *Service) Login(ctx context.Context, raw LoginInput) (*LoginResult, erro
 	}
 
 	now := s.now().UTC()
-	var hasMFA bool
-	err = tx.QueryRow(ctx, `
-		select exists(select 1 from totp_credentials where user_id = $1 and verified_at is not null)
-		    or exists(select 1 from webauthn_credentials where user_id = $1)
-	`, user.ID).Scan(&hasMFA)
+	hasMFA, err := q.HasMFAEnrolled(ctx, user.ID)
 	if err != nil {
 		return nil, err
 	}
-	if hasMFA {
+	if hasMFA != nil && *hasMFA {
 		challengeID := uuidx.New()
-		if _, err := tx.Exec(ctx, `
-			insert into auth_mfa_challenges
-				(id, user_id, ip, user_agent, created_at, expires_at, webauthn_state)
-			values ($1, $2, $3, $4, $5, $6, $7)
-		`, challengeID, user.ID, ipString(in.IP), in.UserAgent, now, now.Add(s.cfg.MFAChallengeTTL), nil); err != nil {
+		if err := q.InsertMFAChallenge(ctx, dbq.InsertMFAChallengeParams{
+			ID:        challengeID,
+			UserID:    user.ID,
+			Ip:        netIPToAddrVal(in.IP),
+			UserAgent: in.UserAgent,
+			CreatedAt: now,
+			ExpiresAt: now.Add(s.cfg.MFAChallengeTTL),
+		}); err != nil {
 			return nil, fmt.Errorf("insert mfa challenge: %w", err)
 		}
 		if err := writeAuditTx(ctx, tx, user.LastWorkspaceID, &user.ID, "user.login_mfa_challenged", "user", user.ID, nil, nil, in.IP, in.UserAgent); err != nil {
@@ -126,10 +126,14 @@ func (s *Service) Login(ctx context.Context, raw LoginInput) (*LoginResult, erro
 	// Fix #6: invalidate any pre-existing sessions for this user. A session
 	// the attacker stole or set up before the legitimate login no longer
 	// survives a fresh successful login.
-	if _, err := tx.Exec(ctx, `delete from sessions where user_id = $1 and id <> $2`, user.ID, sid); err != nil {
+	if err := q.DeleteOtherSessionsByUser(ctx, dbq.DeleteOtherSessionsByUserParams{
+		UserID: user.ID, ID: sid,
+	}); err != nil {
 		return nil, fmt.Errorf("rotate sessions: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `update users set last_login_at = $1 where id = $2`, now, user.ID); err != nil {
+	if err := q.UpdateUserLastLoginAt(ctx, dbq.UpdateUserLastLoginAtParams{
+		LastLoginAt: &now, ID: user.ID,
+	}); err != nil {
 		return nil, fmt.Errorf("update last_login_at: %w", err)
 	}
 	if err := writeAuditTx(ctx, tx, user.LastWorkspaceID, &user.ID, "user.login_succeeded", "user", user.ID, nil, nil, in.IP, in.UserAgent); err != nil {
@@ -147,11 +151,11 @@ func (s *Service) Login(ctx context.Context, raw LoginInput) (*LoginResult, erro
 func (s *Service) createSessionTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, ip net.IP, ua string, now time.Time) (string, string, error) {
 	plaintext, _ := GenerateSessionToken()
 	sid := SessionIDFromToken(plaintext)
-	_, err := tx.Exec(ctx, `
-		insert into sessions (id, user_id, created_at, expires_at, last_seen_at, user_agent, ip)
-		values ($1,$2,$3,$4,$3,$5,$6)
-	`, sid, userID, now, now.Add(s.cfg.SessionAbsolute), ua, ipString(ip))
-	if err != nil {
+	if err := dbq.New(tx).InsertSession(ctx, dbq.InsertSessionParams{
+		ID: sid, UserID: userID, CreatedAt: now,
+		ExpiresAt: now.Add(s.cfg.SessionAbsolute),
+		UserAgent: &ua, Ip: netIPToAddr(ip),
+	}); err != nil {
 		return "", "", fmt.Errorf("insert session: %w", err)
 	}
 	return plaintext, sid, nil
@@ -159,10 +163,13 @@ func (s *Service) createSessionTx(ctx context.Context, tx pgx.Tx, userID uuid.UU
 
 func (s *Service) logLoginFailed(ctx context.Context, email string, ip net.IP, ua string) {
 	// entity_id is required non-null; we use a fresh uuid as a placeholder for the failed-email event.
-	_, err := s.pool.Exec(ctx, `
-		insert into audit_events (id, workspace_id, actor_user_id, action, entity_type, entity_id, after_jsonb, ip, user_agent)
-		values ($1, null, null, 'user.login_failed', 'email', $2, jsonb_build_object('email', $3::text), $4, $5)
-	`, uuidx.New(), uuidx.New(), email, ipString(ip), ua)
+	err := dbq.New(s.pool).InsertLoginFailedAudit(ctx, dbq.InsertLoginFailedAuditParams{
+		ID:        uuidx.New(),
+		EntityID:  uuidx.New(),
+		Column3:   email,
+		Ip:        netIPToAddr(ip),
+		UserAgent: &ua,
+	})
 	if err != nil {
 		slog.Default().Warn("audit login_failed insert failed", "err", err)
 	}
@@ -173,8 +180,14 @@ func (s *Service) logLoginFailed(ctx context.Context, email string, ip net.IP, u
 // Intentionally omits before_jsonb/after_jsonb to keep these events slim;
 // use writeAuditTx inside a transaction for full-fidelity change audit.
 func (s *Service) logAuditDirect(ctx context.Context, workspaceID *uuid.UUID, actorUserID *uuid.UUID, action, entityType string, entityID uuid.UUID, ip net.IP, ua string) {
-	_, _ = s.pool.Exec(ctx, `
-		insert into audit_events (id, workspace_id, actor_user_id, action, entity_type, entity_id, ip, user_agent)
-		values ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, uuidx.New(), workspaceID, actorUserID, action, entityType, entityID, ipString(ip), ua)
+	_ = dbq.New(s.pool).InsertAuditDirect(ctx, dbq.InsertAuditDirectParams{
+		ID:          uuidx.New(),
+		WorkspaceID: workspaceID,
+		ActorUserID: actorUserID,
+		Action:      action,
+		EntityType:  entityType,
+		EntityID:    entityID,
+		Ip:          netIPToAddr(ip),
+		UserAgent:   &ua,
+	})
 }

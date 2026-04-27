@@ -66,3 +66,12 @@ sql:
               import: "time"
               type: "Time"
               pointer: true
+          # Custom domain types — sqlc cannot infer the underlying type
+          # without an explicit override, so it falls back to interface{}.
+          - db_type: "money_currency"
+            go_type: "string"
+          - db_type: "money_currency"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true

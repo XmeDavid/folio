@@ -15,6 +15,7 @@ import (
 	"github.com/pquerna/otp/totp"
 	"github.com/skip2/go-qrcode"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/identity"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
@@ -46,22 +47,27 @@ var (
 )
 
 func (s *Service) GetUserByID(ctx context.Context, userID uuid.UUID) (identity.User, error) {
-	var user identity.User
-	err := s.pool.QueryRow(ctx, `
-		select id, email, display_name, email_verified_at, is_admin, last_workspace_id, created_at
-		from users where id = $1
-	`, userID).Scan(&user.ID, &user.Email, &user.DisplayName, &user.EmailVerifiedAt, &user.IsAdmin, &user.LastWorkspaceID, &user.CreatedAt)
-	return user, err
+	row, err := dbq.New(s.pool).GetUserByID(ctx, userID)
+	if err != nil {
+		return identity.User{}, err
+	}
+	return identity.User{
+		ID: row.ID, Email: row.Email, DisplayName: row.DisplayName,
+		EmailVerifiedAt: row.EmailVerifiedAt, IsAdmin: row.IsAdmin,
+		LastWorkspaceID: row.LastWorkspaceID, CreatedAt: row.CreatedAt,
+	}, nil
 }
 
 func (s *Service) MFAStatus(ctx context.Context, userID uuid.UUID) (MFAStatus, error) {
-	var st MFAStatus
-	err := s.pool.QueryRow(ctx, `
-		select exists(select 1 from totp_credentials where user_id = $1 and verified_at is not null),
-		       (select count(*) from webauthn_credentials where user_id = $1),
-		       (select count(*) from auth_recovery_codes where user_id = $1 and consumed_at is null)
-	`, userID).Scan(&st.TOTPEnrolled, &st.PasskeyCount, &st.RemainingRecoveryCodes)
-	return st, err
+	row, err := dbq.New(s.pool).GetMFAStatus(ctx, userID)
+	if err != nil {
+		return MFAStatus{}, err
+	}
+	return MFAStatus{
+		TOTPEnrolled:           row.TotpEnrolled,
+		PasskeyCount:           int(row.PasskeyCount),
+		RemainingRecoveryCodes: int(row.RemainingRecoveryCodes),
+	}, nil
 }
 
 func (s *Service) EnrollTOTP(ctx context.Context, userID uuid.UUID) (TOTPSetup, error) {
@@ -69,8 +75,8 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID uuid.UUID) (TOTPSetup, 
 	if err != nil {
 		return TOTPSetup{}, err
 	}
-	var verifiedAt *time.Time
-	err = s.pool.QueryRow(ctx, `select verified_at from totp_credentials where user_id = $1`, userID).Scan(&verifiedAt)
+	q := dbq.New(s.pool)
+	verifiedAt, err := q.GetTOTPVerifiedAt(ctx, userID)
 	if err == nil && verifiedAt != nil {
 		return TOTPSetup{}, ErrTOTPAlreadyEnrolled
 	}
@@ -93,17 +99,16 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID uuid.UUID) (TOTPSetup, 
 	// The `WHERE verified_at IS NULL` on DO UPDATE closes the check-then-act
 	// gap between the select above and this upsert: a row that was verified
 	// by a concurrent ConfirmTOTP will not be silently reset to null here.
-	ct, err := s.pool.Exec(ctx, `
-		insert into totp_credentials (id, user_id, secret_cipher, created_at)
-		values ($1, $2, $3, $4)
-		on conflict (user_id) do update
-		set secret_cipher = excluded.secret_cipher, created_at = excluded.created_at, verified_at = null
-		where totp_credentials.verified_at is null
-	`, uuidx.New(), userID, base64.StdEncoding.EncodeToString(sealed), s.now().UTC())
+	n, err := q.UpsertTOTPCredential(ctx, dbq.UpsertTOTPCredentialParams{
+		ID:           uuidx.New(),
+		UserID:       userID,
+		SecretCipher: base64.StdEncoding.EncodeToString(sealed),
+		CreatedAt:    s.now().UTC(),
+	})
 	if err != nil {
 		return TOTPSetup{}, err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return TOTPSetup{}, ErrTOTPAlreadyEnrolled
 	}
 	png, err := qrcode.Encode(key.URL(), qrcode.Medium, 256)
@@ -123,7 +128,9 @@ func (s *Service) ConfirmTOTP(ctx context.Context, userID uuid.UUID, code string
 	}
 	defer tx.Rollback(ctx)
 	now := s.now().UTC()
-	if _, err := tx.Exec(ctx, `update totp_credentials set verified_at = $2 where user_id = $1`, userID, now); err != nil {
+	if err := dbq.New(tx).ConfirmTOTPCredential(ctx, dbq.ConfirmTOTPCredentialParams{
+		UserID: userID, VerifiedAt: &now,
+	}); err != nil {
 		return nil, err
 	}
 	codes, err := s.generateAndStoreRecoveryCodes(ctx, tx, userID, now)
@@ -140,14 +147,17 @@ func (s *Service) DisableTOTP(ctx context.Context, userID uuid.UUID, currentSess
 		return err
 	}
 	defer tx.Rollback(ctx)
-	ct, err := tx.Exec(ctx, `delete from totp_credentials where user_id = $1`, userID)
+	q := dbq.New(tx)
+	n, err := q.DeleteTOTPCredential(ctx, userID)
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return ErrTOTPNotEnrolled
 	}
-	if _, err := tx.Exec(ctx, `delete from sessions where user_id = $1 and id <> $2`, userID, currentSessionID); err != nil {
+	if err := q.DeleteOtherSessionsByUser(ctx, dbq.DeleteOtherSessionsByUserParams{
+		UserID: userID, ID: currentSessionID,
+	}); err != nil {
 		return err
 	}
 	_ = writeAuditTx(ctx, tx, nil, &userID, "mfa.totp_disabled", "user", userID, nil, nil, nil, "")
@@ -173,15 +183,13 @@ func (s *Service) verifyTOTPCodeWithEnrollment(ctx context.Context, userID uuid.
 	// Replay guard: only accept this code if its time-step is strictly
 	// greater than the last consumed step. The conditional UPDATE makes the
 	// check + commit atomic — concurrent callers cannot both win.
-	ct, err := s.pool.Exec(ctx, `
-		update totp_credentials
-		set last_used_step = $2
-		where user_id = $1 and (last_used_step is null or last_used_step < $2)
-	`, userID, step)
+	n, err := dbq.New(s.pool).BumpTOTPLastUsedStep(ctx, dbq.BumpTOTPLastUsedStepParams{
+		UserID: userID, LastUsedStep: &step,
+	})
 	if err != nil {
 		return fmt.Errorf("totp step bump: %w", err)
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return ErrTOTPReplay
 	}
 	return nil
@@ -215,12 +223,14 @@ func matchTOTPStep(secret, code string, now time.Time) (int64, bool, error) {
 }
 
 func (s *Service) loadTOTPSecret(ctx context.Context, userID uuid.UUID, requireVerified bool) (string, error) {
+	q := dbq.New(s.pool)
 	var encoded string
-	q := `select secret_cipher from totp_credentials where user_id = $1`
+	var err error
 	if requireVerified {
-		q += ` and verified_at is not null`
+		encoded, err = q.GetTOTPSecretCipher(ctx, userID)
+	} else {
+		encoded, err = q.GetTOTPSecretCipherAny(ctx, userID)
 	}
-	err := s.pool.QueryRow(ctx, q, userID).Scan(&encoded)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrTOTPNotEnrolled
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/identity"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
@@ -42,27 +43,22 @@ func (s *Service) loadWebAuthnUser(ctx context.Context, userID uuid.UUID) (webAu
 }
 
 func (s *Service) loadWebAuthnCredentials(ctx context.Context, userID uuid.UUID) ([]webauthn.Credential, error) {
-	rows, err := s.pool.Query(ctx, `
-		select credential_id, public_key, sign_count, coalesce(transports, '{}')
-		from webauthn_credentials where user_id = $1
-	`, userID)
+	rows, err := dbq.New(s.pool).ListWebAuthnCredentials(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var creds []webauthn.Credential
-	for rows.Next() {
+	for _, row := range rows {
 		var c webauthn.Credential
-		var transports []string
-		if err := rows.Scan(&c.ID, &c.PublicKey, &c.Authenticator.SignCount, &transports); err != nil {
-			return nil, err
-		}
-		for _, t := range transports {
+		c.ID = row.CredentialID
+		c.PublicKey = row.PublicKey
+		c.Authenticator.SignCount = uint32(row.SignCount)
+		for _, t := range row.Transports {
 			c.Transport = append(c.Transport, protocol.AuthenticatorTransport(t))
 		}
 		creds = append(creds, c)
 	}
-	return creds, rows.Err()
+	return creds, nil
 }
 
 // BeginPasskeyEnrollment returns a credential-creation challenge and persists
@@ -133,10 +129,16 @@ func (s *Service) FinishPasskeyEnrollment(ctx context.Context, userID uuid.UUID,
 	if err := ConsumeMFAChallenge(ctx, tx, c.ID, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
-		insert into webauthn_credentials (id, user_id, credential_id, public_key, sign_count, transports, label, created_at)
-		values ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, uuidx.New(), userID, cred.ID, cred.PublicKey, cred.Authenticator.SignCount, transports, label, now); err != nil {
+	if err := dbq.New(tx).InsertWebAuthnCredential(ctx, dbq.InsertWebAuthnCredentialParams{
+		ID:           uuidx.New(),
+		UserID:       userID,
+		CredentialID: cred.ID,
+		PublicKey:    cred.PublicKey,
+		SignCount:    int64(cred.Authenticator.SignCount),
+		Transports:   transports,
+		Label:        &label,
+		CreatedAt:    now,
+	}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -180,11 +182,11 @@ func (s *Service) completeWebAuthnAssertion(ctx context.Context, tx pgx.Tx, c MF
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `
-		update webauthn_credentials set sign_count = $2
-		where user_id = $1 and credential_id = $3
-	`, c.UserID, cred.Authenticator.SignCount, cred.ID)
-	return err
+	return dbq.New(tx).UpdateWebAuthnSignCount(ctx, dbq.UpdateWebAuthnSignCountParams{
+		UserID:       c.UserID,
+		SignCount:    int64(cred.Authenticator.SignCount),
+		CredentialID: cred.ID,
+	})
 }
 
 func (s *Service) userForDiscoverableCredential(rawID, userHandle []byte) (webauthn.User, error) {

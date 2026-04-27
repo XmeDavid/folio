@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 )
 
@@ -21,12 +22,9 @@ func (s *Service) RequireSession(next http.Handler) http.Handler {
 		}
 		sid := SessionIDFromToken(c.Value)
 		now := s.now().UTC()
+		q := dbq.New(s.pool)
 
-		var sess Session
-		err = s.pool.QueryRow(r.Context(), `
-			select id, user_id, created_at, expires_at, last_seen_at, reauth_at
-			from sessions where id = $1
-		`, sid).Scan(&sess.ID, &sess.UserID, &sess.CreatedAt, &sess.ExpiresAt, &sess.LastSeenAt, &sess.ReauthAt)
+		row, err := q.GetSessionByID(r.Context(), sid)
 		if err != nil && errors.Is(err, pgx.ErrNoRows) {
 			ClearSessionCookie(w, s.cfg.SecureCookies)
 			httpx.WriteError(w, http.StatusUnauthorized, "session_expired", "sign in again")
@@ -36,19 +34,23 @@ func (s *Service) RequireSession(next http.Handler) http.Handler {
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "session lookup failed")
 			return
 		}
+		sess := Session{
+			ID: row.ID, UserID: row.UserID, CreatedAt: row.CreatedAt,
+			ExpiresAt: row.ExpiresAt, LastSeenAt: row.LastSeenAt, ReauthAt: row.ReauthAt,
+		}
 		if !sess.ExpiresAt.After(now) {
-			_, _ = s.pool.Exec(r.Context(), `delete from sessions where id = $1`, sid)
+			_ = q.DeleteSessionByID(r.Context(), sid)
 			ClearSessionCookie(w, s.cfg.SecureCookies)
 			httpx.WriteError(w, http.StatusUnauthorized, "session_expired", "sign in again")
 			return
 		}
 		if now.Sub(sess.LastSeenAt) > s.cfg.SessionIdle {
-			_, _ = s.pool.Exec(r.Context(), `delete from sessions where id = $1`, sid)
+			_ = q.DeleteSessionByID(r.Context(), sid)
 			ClearSessionCookie(w, s.cfg.SecureCookies)
 			httpx.WriteError(w, http.StatusUnauthorized, "session_idle", "sign in again")
 			return
 		}
-		_, _ = s.pool.Exec(r.Context(), `update sessions set last_seen_at = $1 where id = $2`, now, sid)
+		_ = q.UpdateSessionLastSeen(r.Context(), dbq.UpdateSessionLastSeenParams{LastSeenAt: now, ID: sid})
 
 		user, _, err := s.identity.Me(r.Context(), sess.UserID)
 		if err != nil {

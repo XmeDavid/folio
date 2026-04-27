@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
@@ -53,7 +54,8 @@ func hashRecoveryCode(code string, pepper []byte) string {
 }
 
 func (s *Service) generateAndStoreRecoveryCodes(ctx context.Context, tx pgx.Tx, userID uuid.UUID, now time.Time) ([]string, error) {
-	if _, err := tx.Exec(ctx, `delete from auth_recovery_codes where user_id = $1`, userID); err != nil {
+	q := dbq.New(tx)
+	if err := q.DeleteRecoveryCodesByUser(ctx, userID); err != nil {
 		return nil, err
 	}
 	plain := make([]string, 0, recoveryCodeCount)
@@ -63,10 +65,9 @@ func (s *Service) generateAndStoreRecoveryCodes(ctx context.Context, tx pgx.Tx, 
 			return nil, err
 		}
 		hash := hashRecoveryCode(code, s.cfg.SecretKey)
-		if _, err := tx.Exec(ctx, `
-			insert into auth_recovery_codes (id, user_id, code_hash, created_at)
-			values ($1, $2, $3, $4)
-		`, uuidx.New(), userID, hash, now); err != nil {
+		if err := q.InsertRecoveryCode(ctx, dbq.InsertRecoveryCodeParams{
+			ID: uuidx.New(), UserID: userID, CodeHash: hash, CreatedAt: now,
+		}); err != nil {
 			return nil, err
 		}
 		plain = append(plain, code)
@@ -75,27 +76,18 @@ func (s *Service) generateAndStoreRecoveryCodes(ctx context.Context, tx pgx.Tx, 
 }
 
 func (s *Service) consumeRecoveryCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string, now time.Time) error {
-	rows, err := tx.Query(ctx, `
-		select id, code_hash from auth_recovery_codes
-		where user_id = $1 and consumed_at is null
-		for update
-	`, userID)
+	rows, err := dbq.New(tx).ListUnconsumedRecoveryCodes(ctx, userID)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
 	normalized := normalizeRecoveryCode(code)
 	hmacCandidate := hashRecoveryCode(code, s.cfg.SecretKey)
 	var matchID *uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		var hash string
-		if err := rows.Scan(&id, &hash); err != nil {
-			return err
-		}
-		if strings.HasPrefix(hash, hmacRecoveryPrefix) {
-			if subtle.ConstantTimeCompare([]byte(hash), []byte(hmacCandidate)) == 1 {
+	for _, row := range rows {
+		if strings.HasPrefix(row.CodeHash, hmacRecoveryPrefix) {
+			if subtle.ConstantTimeCompare([]byte(row.CodeHash), []byte(hmacCandidate)) == 1 {
+				id := row.ID
 				matchID = &id
 				break
 			}
@@ -103,20 +95,19 @@ func (s *Service) consumeRecoveryCode(ctx context.Context, tx pgx.Tx, userID uui
 		}
 		// Legacy Argon2id-hashed row — keep verifying so codes stored before
 		// the HMAC switch still work until the user regenerates.
-		ok, _ := VerifyPassword(normalized, hash, s.cfg.SecretKey)
+		ok, _ := VerifyPassword(normalized, row.CodeHash, s.cfg.SecretKey)
 		if ok {
+			id := row.ID
 			matchID = &id
 			break
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
 	if matchID == nil {
 		return ErrRecoveryCodeInvalid
 	}
-	_, err = tx.Exec(ctx, `update auth_recovery_codes set consumed_at = $2 where id = $1`, *matchID, now)
-	return err
+	return dbq.New(tx).ConsumeRecoveryCode(ctx, dbq.ConsumeRecoveryCodeParams{
+		ID: *matchID, ConsumedAt: &now,
+	})
 }
 
 func (s *Service) RegenerateRecoveryCodes(ctx context.Context, userID uuid.UUID) ([]string, error) {
@@ -144,10 +135,6 @@ func (s *Service) RegenerateRecoveryCodes(ctx context.Context, userID uuid.UUID)
 }
 
 func (s *Service) RemainingRecoveryCodes(ctx context.Context, userID uuid.UUID) (int, error) {
-	var n int
-	err := s.pool.QueryRow(ctx, `
-		select count(*) from auth_recovery_codes
-		where user_id = $1 and consumed_at is null
-	`, userID).Scan(&n)
-	return n, err
+	n, err := dbq.New(s.pool).CountUnconsumedRecoveryCodes(ctx, userID)
+	return int(n), err
 }

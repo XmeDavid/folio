@@ -6,15 +6,74 @@ package dbq
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 type Querier interface {
+	AcceptWorkspaceInvite(ctx context.Context, id uuid.UUID) error
+	AcquireFirstRunLock(ctx context.Context, pgAdvisoryXactLock int64) error
+	BumpMFAChallengeAttempts(ctx context.Context, arg BumpMFAChallengeAttemptsParams) (int32, error)
+	BumpTOTPLastUsedStep(ctx context.Context, arg BumpTOTPLastUsedStepParams) (int64, error)
+	CheckEmailExistsExcludingUser(ctx context.Context, arg CheckEmailExistsExcludingUserParams) (bool, error)
+	ConfirmTOTPCredential(ctx context.Context, arg ConfirmTOTPCredentialParams) error
+	ConsumeAuthToken(ctx context.Context, id uuid.UUID) error
+	ConsumeMFAChallenge(ctx context.Context, arg ConsumeMFAChallengeParams) (int64, error)
+	ConsumeOpenMFAChallengesByUser(ctx context.Context, userID uuid.UUID) error
+	ConsumeRecoveryCode(ctx context.Context, arg ConsumeRecoveryCodeParams) error
+	CountUnconsumedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int64, error)
+	DeleteOtherSessionsByUser(ctx context.Context, arg DeleteOtherSessionsByUserParams) error
+	DeleteRecoveryCodesByUser(ctx context.Context, userID uuid.UUID) error
+	DeleteSessionByID(ctx context.Context, id string) error
+	DeleteSessionByIDReturningUserID(ctx context.Context, id string) (uuid.UUID, error)
+	DeleteSessionsByUser(ctx context.Context, userID uuid.UUID) error
+	DeleteTOTPCredential(ctx context.Context, userID uuid.UUID) (int64, error)
+	GetAuthTokenForConsume(ctx context.Context, arg GetAuthTokenForConsumeParams) (GetAuthTokenForConsumeRow, error)
+	GetMFAChallengeByID(ctx context.Context, id uuid.UUID) (GetMFAChallengeByIDRow, error)
+	GetMFAStatus(ctx context.Context, userID uuid.UUID) (GetMFAStatusRow, error)
+	GetSessionByID(ctx context.Context, id string) (GetSessionByIDRow, error)
+	GetTOTPSecretCipher(ctx context.Context, userID uuid.UUID) (string, error)
+	GetTOTPSecretCipherAny(ctx context.Context, userID uuid.UUID) (string, error)
+	GetTOTPVerifiedAt(ctx context.Context, userID uuid.UUID) (*time.Time, error)
+	GetUserByEmailWithPassword(ctx context.Context, email string) (GetUserByEmailWithPasswordRow, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
+	GetUserEmailAndDisplayName(ctx context.Context, id uuid.UUID) (GetUserEmailAndDisplayNameRow, error)
+	GetUserEmailAndName(ctx context.Context, id uuid.UUID) (GetUserEmailAndNameRow, error)
+	GetUserForPasswordReset(ctx context.Context, arg GetUserForPasswordResetParams) (GetUserForPasswordResetRow, error)
+	GetUserIDAndNameByEmail(ctx context.Context, email string) (GetUserIDAndNameByEmailRow, error)
 	GetUserIDByEmail(ctx context.Context, email string) (uuid.UUID, error)
+	GetUserIsAdmin(ctx context.Context, id uuid.UUID) (bool, error)
+	GetUserPasswordHash(ctx context.Context, id uuid.UUID) (string, error)
+	GetWorkspaceInviteByTokenHash(ctx context.Context, tokenHash []byte) (GetWorkspaceInviteByTokenHashRow, error)
+	GetWorkspaceWithMembership(ctx context.Context, arg GetWorkspaceWithMembershipParams) (GetWorkspaceWithMembershipRow, error)
+	GetWorkspaceWithOwnership(ctx context.Context, arg GetWorkspaceWithOwnershipParams) (GetWorkspaceWithOwnershipRow, error)
+	HasMFAEnrolled(ctx context.Context, userID uuid.UUID) (*bool, error)
+	InsertAuditDirect(ctx context.Context, arg InsertAuditDirectParams) error
 	InsertAuditEvent(ctx context.Context, arg InsertAuditEventParams) error
 	InsertAuditEventWithRequest(ctx context.Context, arg InsertAuditEventWithRequestParams) error
+	InsertAuthToken(ctx context.Context, arg InsertAuthTokenParams) error
+	InsertInvitedMembership(ctx context.Context, arg InsertInvitedMembershipParams) error
+	InsertLoginFailedAudit(ctx context.Context, arg InsertLoginFailedAuditParams) error
+	InsertMFAChallenge(ctx context.Context, arg InsertMFAChallengeParams) error
+	InsertRecoveryCode(ctx context.Context, arg InsertRecoveryCodeParams) error
+	InsertSession(ctx context.Context, arg InsertSessionParams) error
+	InsertUserReturning(ctx context.Context, arg InsertUserReturningParams) (InsertUserReturningRow, error)
+	InsertWebAuthnCredential(ctx context.Context, arg InsertWebAuthnCredentialParams) error
 	ListAdminUsers(ctx context.Context) ([]ListAdminUsersRow, error)
+	ListUnconsumedRecoveryCodes(ctx context.Context, userID uuid.UUID) ([]ListUnconsumedRecoveryCodesRow, error)
+	ListWebAuthnCredentials(ctx context.Context, userID uuid.UUID) ([]ListWebAuthnCredentialsRow, error)
+	UpdateMFAChallengeWebAuthnState(ctx context.Context, arg UpdateMFAChallengeWebAuthnStateParams) error
+	UpdateSessionLastSeen(ctx context.Context, arg UpdateSessionLastSeenParams) error
+	UpdateSessionReauthAt(ctx context.Context, arg UpdateSessionReauthAtParams) error
+	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) error
+	UpdateUserLastLoginAt(ctx context.Context, arg UpdateUserLastLoginAtParams) error
+	UpdateUserLastWorkspace(ctx context.Context, arg UpdateUserLastWorkspaceParams) error
+	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
+	UpdateWebAuthnSignCount(ctx context.Context, arg UpdateWebAuthnSignCountParams) error
+	UpsertTOTPCredential(ctx context.Context, arg UpsertTOTPCredentialParams) (int64, error)
+	UserExists(ctx context.Context) (bool, error)
+	VerifyUserEmail(ctx context.Context, arg VerifyUserEmailParams) (int64, error)
 }
 
 var _ Querier = (*Queries)(nil)
