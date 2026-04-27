@@ -82,7 +82,7 @@ func (s *Service) CreateCorporateAction(ctx context.Context, workspaceID uuid.UU
 	}
 
 	id := uuidx.New()
-	row := s.pool.QueryRow(ctx, `
+	if _, err := s.pool.Exec(ctx, `
 		insert into corporate_actions (
 			id, workspace_id, account_id, instrument_id,
 			kind, effective_date, payload
@@ -90,11 +90,20 @@ func (s *Service) CreateCorporateAction(ctx context.Context, workspaceID uuid.UU
 			$1, $2, $3, $4,
 			$5::corporate_action_kind, $6, $7::jsonb
 		)
-		returning `+corpActionCols, id, workspaceID, in.AccountID, in.InstrumentID,
-		in.Kind, in.EffectiveDate, string(payload))
+	`, id, workspaceID, in.AccountID, in.InstrumentID,
+		in.Kind, in.EffectiveDate, string(payload)); err != nil {
+		return nil, mapWriteError(err)
+	}
+	// Read back via the joined SELECT so the symbol column is populated.
+	row := s.pool.QueryRow(ctx, `
+		select `+corpActionCols+`
+		from corporate_actions ca
+		join instruments i on i.id = ca.instrument_id
+		where ca.id = $1
+	`, id)
 	ca, err := scanCorpAction(row)
 	if err != nil {
-		return nil, mapWriteError(err)
+		return nil, fmt.Errorf("read back corporate_action: %w", err)
 	}
 
 	// Replay every position that touched this instrument so the cache reflects

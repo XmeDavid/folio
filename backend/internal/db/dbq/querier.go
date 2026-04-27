@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
@@ -49,6 +50,12 @@ type Querier interface {
 	DeleteAccount(ctx context.Context, arg DeleteAccountParams) (int64, error)
 	DeleteAccountGroup(ctx context.Context, arg DeleteAccountGroupParams) (int64, error)
 	DeleteAccountSourceRefs(ctx context.Context, arg DeleteAccountSourceRefsParams) error
+	DeleteCorporateAction(ctx context.Context, arg DeleteCorporateActionParams) (int64, error)
+	DeleteDividendEvent(ctx context.Context, arg DeleteDividendEventParams) error
+	DeleteInvestmentPosition(ctx context.Context, arg DeleteInvestmentPositionParams) error
+	DeleteInvestmentTrade(ctx context.Context, arg DeleteInvestmentTradeParams) error
+	DeleteLotConsumptionsForPosition(ctx context.Context, arg DeleteLotConsumptionsForPositionParams) error
+	DeleteLotsForPosition(ctx context.Context, arg DeleteLotsForPositionParams) error
 	DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error
 	DeleteOtherSessionsByUser(ctx context.Context, arg DeleteOtherSessionsByUserParams) error
 	DeleteRecoveryCodesByUser(ctx context.Context, userID uuid.UUID) error
@@ -58,8 +65,14 @@ type Querier interface {
 	DeleteTOTPCredential(ctx context.Context, userID uuid.UUID) (int64, error)
 	DeleteTransaction(ctx context.Context, arg DeleteTransactionParams) (int64, error)
 	DeleteTransactionTag(ctx context.Context, arg DeleteTransactionTagParams) error
+	DividendExists(ctx context.Context, arg DividendExistsParams) (bool, error)
+	FindBrokerageAccount(ctx context.Context, arg FindBrokerageAccountParams) (FindBrokerageAccountRow, error)
+	FindInstrumentByISIN(ctx context.Context, isin *string) (FindInstrumentByISINRow, error)
+	FindInstrumentBySymbolAndExchange(ctx context.Context, arg FindInstrumentBySymbolAndExchangeParams) (FindInstrumentBySymbolAndExchangeRow, error)
+	FindInstrumentBySymbolOnly(ctx context.Context, symbol string) (FindInstrumentBySymbolOnlyRow, error)
 	GetAccountCurrency(ctx context.Context, arg GetAccountCurrencyParams) (string, error)
 	GetAccountGroup(ctx context.Context, arg GetAccountGroupParams) (GetAccountGroupRow, error)
+	GetAccountKind(ctx context.Context, arg GetAccountKindParams) (string, error)
 	// Derived balance rule (spec §5.2):
 	//   balance = coalesce(latest_snapshot.balance, opening_balance)
 	//           + sum(transactions.amount where status in ('posted','reconciled')
@@ -70,6 +83,12 @@ type Querier interface {
 	GetAccountWithBalance(ctx context.Context, arg GetAccountWithBalanceParams) (GetAccountWithBalanceRow, error)
 	GetAuthTokenForConsume(ctx context.Context, arg GetAuthTokenForConsumeParams) (GetAuthTokenForConsumeRow, error)
 	GetCategory(ctx context.Context, arg GetCategoryParams) (Category, error)
+	GetCorporateActionForDelete(ctx context.Context, arg GetCorporateActionForDeleteParams) (GetCorporateActionForDeleteRow, error)
+	GetDividendAccountInstrument(ctx context.Context, arg GetDividendAccountInstrumentParams) (GetDividendAccountInstrumentRow, error)
+	GetInstrumentByID(ctx context.Context, id uuid.UUID) (GetInstrumentByIDRow, error)
+	GetInstrumentBySymbol(ctx context.Context, symbol interface{}) (GetInstrumentBySymbolRow, error)
+	GetInstrumentCurrency(ctx context.Context, id uuid.UUID) (string, error)
+	GetInvestmentTrade(ctx context.Context, arg GetInvestmentTradeParams) (GetInvestmentTradeRow, error)
 	GetInviteForAccept(ctx context.Context, tokenHash []byte) (GetInviteForAcceptRow, error)
 	GetInviteForRevoke(ctx context.Context, arg GetInviteForRevokeParams) (GetInviteForRevokeRow, error)
 	GetInvitePreview(ctx context.Context, tokenHash []byte) (GetInvitePreviewRow, error)
@@ -81,6 +100,7 @@ type Querier interface {
 	GetTOTPSecretCipherAny(ctx context.Context, userID uuid.UUID) (string, error)
 	GetTOTPVerifiedAt(ctx context.Context, userID uuid.UUID) (*time.Time, error)
 	GetTag(ctx context.Context, arg GetTagParams) (Tag, error)
+	GetTradeAccountInstrument(ctx context.Context, arg GetTradeAccountInstrumentParams) (GetTradeAccountInstrumentRow, error)
 	GetTransaction(ctx context.Context, arg GetTransactionParams) (GetTransactionRow, error)
 	GetUserByEmailWithPassword(ctx context.Context, email string) (GetUserByEmailWithPasswordRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
@@ -92,6 +112,7 @@ type Querier interface {
 	GetUserIDByEmail(ctx context.Context, email string) (uuid.UUID, error)
 	GetUserIsAdmin(ctx context.Context, id uuid.UUID) (bool, error)
 	GetUserPasswordHash(ctx context.Context, id uuid.UUID) (string, error)
+	GetWorkspaceBaseCurrency(ctx context.Context, id uuid.UUID) (string, error)
 	GetWorkspaceByID(ctx context.Context, id uuid.UUID) (GetWorkspaceByIDRow, error)
 	GetWorkspaceInviteByTokenHash(ctx context.Context, tokenHash []byte) (GetWorkspaceInviteByTokenHashRow, error)
 	GetWorkspaceWithMembership(ctx context.Context, arg GetWorkspaceWithMembershipParams) (GetWorkspaceWithMembershipRow, error)
@@ -103,12 +124,23 @@ type Querier interface {
 	InsertAuditEvent(ctx context.Context, arg InsertAuditEventParams) error
 	InsertAuditEventWithRequest(ctx context.Context, arg InsertAuditEventWithRequestParams) error
 	InsertAuthToken(ctx context.Context, arg InsertAuthTokenParams) error
+	InsertBrokerageAccount(ctx context.Context, arg InsertBrokerageAccountParams) error
+	InsertBrokerageOpeningSnapshot(ctx context.Context, arg InsertBrokerageOpeningSnapshotParams) error
 	InsertCategory(ctx context.Context, arg InsertCategoryParams) (Category, error)
+	InsertCorporateAction(ctx context.Context, arg InsertCorporateActionParams) (InsertCorporateActionRow, error)
+	InsertDividendEvent(ctx context.Context, arg InsertDividendEventParams) (InsertDividendEventRow, error)
+	InsertDividendEventExec(ctx context.Context, arg InsertDividendEventExecParams) error
 	InsertImportAccount(ctx context.Context, arg InsertImportAccountParams) error
 	InsertImportBatch(ctx context.Context, arg InsertImportBatchParams) error
 	InsertImportTransaction(ctx context.Context, arg InsertImportTransactionParams) error
+	InsertInstrument(ctx context.Context, arg InsertInstrumentParams) (InsertInstrumentRow, error)
+	InsertInvestmentAccount(ctx context.Context, arg InsertInvestmentAccountParams) error
+	InsertInvestmentLot(ctx context.Context, arg InsertInvestmentLotParams) error
+	InsertInvestmentTrade(ctx context.Context, arg InsertInvestmentTradeParams) (InsertInvestmentTradeRow, error)
+	InsertInvestmentTradeExec(ctx context.Context, arg InsertInvestmentTradeExecParams) error
 	InsertInvitedMembership(ctx context.Context, arg InsertInvitedMembershipParams) error
 	InsertLoginFailedAudit(ctx context.Context, arg InsertLoginFailedAuditParams) error
+	InsertLotConsumption(ctx context.Context, arg InsertLotConsumptionParams) error
 	InsertMFAChallenge(ctx context.Context, arg InsertMFAChallengeParams) error
 	InsertMembership(ctx context.Context, arg InsertMembershipParams) (InsertMembershipRow, error)
 	InsertOpeningSnapshot(ctx context.Context, arg InsertOpeningSnapshotParams) error
@@ -124,20 +156,27 @@ type Querier interface {
 	InsertWebAuthnCredential(ctx context.Context, arg InsertWebAuthnCredentialParams) error
 	InsertWorkspace(ctx context.Context, arg InsertWorkspaceParams) (InsertWorkspaceRow, error)
 	InsertWorkspaceInvite(ctx context.Context, arg InsertWorkspaceInviteParams) (InsertWorkspaceInviteRow, error)
+	InvestmentAccountExists(ctx context.Context, arg InvestmentAccountExistsParams) (bool, error)
 	ListAccountGroups(ctx context.Context, workspaceID uuid.UUID) ([]ListAccountGroupsRow, error)
 	ListAccountGroupsActive(ctx context.Context, workspaceID uuid.UUID) ([]ListAccountGroupsActiveRow, error)
 	ListAccountsWithBalance(ctx context.Context, workspaceID uuid.UUID) ([]ListAccountsWithBalanceRow, error)
 	ListAccountsWithBalanceActive(ctx context.Context, workspaceID uuid.UUID) ([]ListAccountsWithBalanceActiveRow, error)
 	ListAdminUsers(ctx context.Context) ([]ListAdminUsersRow, error)
+	ListCorporateActions(ctx context.Context, arg ListCorporateActionsParams) ([]ListCorporateActionsRow, error)
 	// Archived accounts are kept in the candidate set so re-importing the
 	// same file matches the account the user already imported into instead
 	// of silently creating a duplicate.
 	ListImportAccountMatches(ctx context.Context, workspaceID uuid.UUID) ([]ListImportAccountMatchesRow, error)
 	ListMembersWithUser(ctx context.Context, workspaceID uuid.UUID) ([]ListMembersWithUserRow, error)
+	ListOpenPositionInstruments(ctx context.Context, workspaceID uuid.UUID) ([]ListOpenPositionInstrumentsRow, error)
+	ListOpenPositionInstrumentsWithPrice(ctx context.Context, workspaceID uuid.UUID) ([]ListOpenPositionInstrumentsWithPriceRow, error)
 	ListPendingInvites(ctx context.Context, workspaceID uuid.UUID) ([]ListPendingInvitesRow, error)
+	ListPositionAccountsForInstrument(ctx context.Context, arg ListPositionAccountsForInstrumentParams) ([]uuid.UUID, error)
 	ListUnconsumedRecoveryCodes(ctx context.Context, userID uuid.UUID) ([]ListUnconsumedRecoveryCodesRow, error)
 	ListWebAuthnCredentials(ctx context.Context, userID uuid.UUID) ([]ListWebAuthnCredentialsRow, error)
 	ListWorkspacesWithRoleByUser(ctx context.Context, userID uuid.UUID) ([]ListWorkspacesWithRoleByUserRow, error)
+	LoadCorporateActionEvents(ctx context.Context, arg LoadCorporateActionEventsParams) ([]LoadCorporateActionEventsRow, error)
+	LoadDividendEvents(ctx context.Context, arg LoadDividendEventsParams) ([]LoadDividendEventsRow, error)
 	LoadEnabledRules(ctx context.Context, workspaceID uuid.UUID) ([]CategorizationRule, error)
 	// Load existing transactions in the date range for duplicate/conflict detection.
 	LoadExistingTransactions(ctx context.Context, arg LoadExistingTransactionsParams) ([]LoadExistingTransactionsRow, error)
@@ -146,16 +185,24 @@ type Querier interface {
 	LoadRealRowsForSynthetic(ctx context.Context, arg LoadRealRowsForSyntheticParams) ([]LoadRealRowsForSyntheticRow, error)
 	// Scan synthetic balance-reconcile rows for potential retirement.
 	LoadSyntheticCandidates(ctx context.Context, arg LoadSyntheticCandidatesParams) ([]LoadSyntheticCandidatesRow, error)
+	LoadTradeEvents(ctx context.Context, arg LoadTradeEventsParams) ([]LoadTradeEventsRow, error)
 	LoadTransactionSnapshot(ctx context.Context, arg LoadTransactionSnapshotParams) (LoadTransactionSnapshotRow, error)
+	LookupCachedFXRate(ctx context.Context, arg LookupCachedFXRateParams) (pgtype.Numeric, error)
+	LookupCachedLatestPrice(ctx context.Context, instrumentID uuid.UUID) (LookupCachedLatestPriceRow, error)
+	LookupCachedPriceRange(ctx context.Context, arg LookupCachedPriceRangeParams) ([]LookupCachedPriceRangeRow, error)
 	MarkInviteAccepted(ctx context.Context, id uuid.UUID) error
 	MarkInviteRevoked(ctx context.Context, id uuid.UUID) error
+	PersistFXRate(ctx context.Context, arg PersistFXRateParams) error
+	PersistInstrumentPrice(ctx context.Context, arg PersistInstrumentPriceParams) error
 	ReorderAccount(ctx context.Context, arg ReorderAccountParams) (int64, error)
 	ReorderAccountGroup(ctx context.Context, arg ReorderAccountGroupParams) (int64, error)
 	RestoreWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
+	SearchInstruments(ctx context.Context, arg SearchInstrumentsParams) ([]SearchInstrumentsRow, error)
 	SoftDeleteWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
 	StampRuleLastMatchedAt(ctx context.Context, arg StampRuleLastMatchedAtParams) error
 	SweepDeletedWorkspaces(ctx context.Context, gracePeriodSeconds float64) ([]string, error)
 	TagExists(ctx context.Context, arg TagExistsParams) (bool, error)
+	TradeExists(ctx context.Context, arg TradeExistsParams) (bool, error)
 	TransactionExists(ctx context.Context, arg TransactionExistsParams) (bool, error)
 	// Opt-in reactivate: clear archived_at when the user explicitly
 	// asked to resurface this account. No-op for non-archived rows.
@@ -170,6 +217,7 @@ type Querier interface {
 	UpdateUserLastWorkspace(ctx context.Context, arg UpdateUserLastWorkspaceParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpdateWebAuthnSignCount(ctx context.Context, arg UpdateWebAuthnSignCountParams) error
+	UpsertInvestmentPosition(ctx context.Context, arg UpsertInvestmentPositionParams) error
 	UpsertMembershipOnInvite(ctx context.Context, arg UpsertMembershipOnInviteParams) error
 	UpsertTOTPCredential(ctx context.Context, arg UpsertTOTPCredentialParams) (int64, error)
 	UserExists(ctx context.Context) (bool, error)
