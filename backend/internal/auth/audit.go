@@ -6,21 +6,37 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
-// nullUUID returns nil for the zero UUID (so pgx writes SQL NULL) or the
-// UUID itself otherwise. Lets WriteAudit support user-scoped events where
+// nullUUID returns nil for the zero UUID (so pgx writes SQL NULL) or a pointer
+// to the UUID otherwise. Lets WriteAudit support user-scoped events where
 // workspace_id is NULL without the caller reaching for a *uuid.UUID.
-func nullUUID(u uuid.UUID) any {
+func nullUUID(u uuid.UUID) *uuid.UUID {
 	if u == uuid.Nil {
 		return nil
 	}
-	return u
+	return &u
+}
+
+// netIPToAddr converts a net.IP to *netip.Addr for nullable inet columns.
+// Returns nil for a nil IP so pgx writes SQL NULL — matching the prior
+// ipString helper behaviour.
+func netIPToAddr(ip net.IP) *netip.Addr {
+	if ip == nil {
+		return nil
+	}
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return nil
+	}
+	return &addr
 }
 
 // WriteAudit is the non-transactional audit-write helper for steady-state
@@ -42,12 +58,16 @@ func (s *Service) WriteAudit(
 	if after != nil {
 		afterJSON, _ = json.Marshal(after)
 	}
-	_, err := s.pool.Exec(ctx, `
-		insert into audit_events (id, workspace_id, actor_user_id, action,
-		                          entity_type, entity_id, before_jsonb, after_jsonb, occurred_at)
-		values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, now())
-	`, uuidx.New(), nullUUID(workspaceID), nullUUID(actorUserID),
-		action, entityType, entityID, beforeJSON, afterJSON)
+	err := dbq.New(s.pool).InsertAuditEvent(ctx, dbq.InsertAuditEventParams{
+		ID:          uuidx.New(),
+		WorkspaceID: nullUUID(workspaceID),
+		ActorUserID: nullUUID(actorUserID),
+		Action:      action,
+		EntityType:  entityType,
+		EntityID:    entityID,
+		BeforeJsonb: beforeJSON,
+		AfterJsonb:  afterJSON,
+	})
 	if err != nil {
 		slog.Default().Warn("audit.write_failed", "action", action, "err", err)
 	}
@@ -68,11 +88,18 @@ func writeAuditTx(ctx context.Context, tx pgx.Tx, workspaceID, actorUserID *uuid
 		b, _ := json.Marshal(after)
 		afterJSON = b
 	}
-	_, err := tx.Exec(ctx, `
-		insert into audit_events (id, workspace_id, actor_user_id, action, entity_type, entity_id, before_jsonb, after_jsonb, ip, user_agent)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, uuidx.New(), workspaceID, actorUserID, action, entityType, entityID, beforeJSON, afterJSON, ipString(ip), ua)
-	if err != nil {
+	if err := dbq.New(tx).InsertAuditEventWithRequest(ctx, dbq.InsertAuditEventWithRequestParams{
+		ID:          uuidx.New(),
+		WorkspaceID: workspaceID,
+		ActorUserID: actorUserID,
+		Action:      action,
+		EntityType:  entityType,
+		EntityID:    entityID,
+		BeforeJsonb: beforeJSON,
+		AfterJsonb:  afterJSON,
+		Ip:          netIPToAddr(ip),
+		UserAgent:   &ua,
+	}); err != nil {
 		return fmt.Errorf("audit insert: %w", err)
 	}
 	return nil

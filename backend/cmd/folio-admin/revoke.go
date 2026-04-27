@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/xmedavid/folio/backend/internal/admin"
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 )
 
 func newRevokeCmd() *cobra.Command {
@@ -26,8 +27,7 @@ func newRevokeCmd() *cobra.Command {
 			defer pool.Close()
 
 			email := strings.ToLower(strings.TrimSpace(args[0]))
-			var userID uuid.UUID
-			err = pool.QueryRow(ctx, `select id from users where email = $1`, email).Scan(&userID)
+			userID, err := dbq.New(pool).GetUserIDByEmail(ctx, email)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return fmt.Errorf("user not found")
 			}

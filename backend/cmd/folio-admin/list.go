@@ -5,8 +5,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 )
 
 func newListCmd() *cobra.Command {
@@ -22,24 +23,14 @@ func newListCmd() *cobra.Command {
 			}
 			defer pool.Close()
 
-			rows, err := pool.Query(ctx, `select email::text, id, updated_at from users where is_admin = true order by email`)
+			admins, err := dbq.New(pool).ListAdminUsers(ctx)
 			if err != nil {
 				return err
 			}
-			defer rows.Close()
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
 			fmt.Fprintln(w, "EMAIL\tUSER_ID\tUPDATED_AT")
-			for rows.Next() {
-				var email string
-				var id uuid.UUID
-				var at time.Time
-				if err := rows.Scan(&email, &id, &at); err != nil {
-					return err
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\n", email, id, at.Format(time.RFC3339))
-			}
-			if err := rows.Err(); err != nil {
-				return err
+			for _, a := range admins {
+				fmt.Fprintf(w, "%s\t%s\t%s\n", a.Email, a.ID, a.UpdatedAt.Format(time.RFC3339))
 			}
 			return w.Flush()
 		},
