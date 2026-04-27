@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"time"
 
-	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/xmedavid/folio/backend/internal/db/dbq"
@@ -200,7 +199,7 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 	if in.InviteToken != "" {
 		inv, err := q.GetWorkspaceInviteByTokenHash(ctx, identity.HashInviteToken(in.InviteToken))
 		if err != nil {
-			if errors.Is(err, identity.ErrInviteNotFound) {
+			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, identity.ErrInviteNotFound
 			}
 			return nil, fmt.Errorf("select invite: %w", err)
@@ -257,7 +256,7 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 // invite_only allows the first-ever user to bootstrap the instance; after
 // that it requires a non-empty token. Token validity is verified later in the
 // same transaction.
-func (s *Service) enforceRegistrationModeTx(ctx context.Context, tx interface{ QueryRow(context.Context, string, ...any) interface{ Scan(...any) error } }, inviteToken string) error {
+func (s *Service) enforceRegistrationModeTx(ctx context.Context, tx dbq.DBTX, inviteToken string) error {
 	switch s.cfg.Registration {
 	case RegistrationOpen:
 		return nil
@@ -286,8 +285,8 @@ func (s *Service) enforceRegistrationModeTx(ctx context.Context, tx interface{ Q
 	}
 }
 
-func (s *Service) userExistsForRegistrationTx(ctx context.Context, tx interface{ QueryRow(context.Context, string, ...any) interface{ Scan(...any) error } }) (bool, error) {
-	q := dbq.New(tx.(dbq.DBTX))
+func (s *Service) userExistsForRegistrationTx(ctx context.Context, tx dbq.DBTX) (bool, error) {
+	q := dbq.New(tx)
 	if err := q.AcquireFirstRunLock(ctx, firstRunSignupLockKey); err != nil {
 		return false, fmt.Errorf("first-run lock: %w", err)
 	}
