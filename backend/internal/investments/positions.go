@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
@@ -22,115 +23,81 @@ import (
 // determinism on inspection).
 func (s *Service) loadEvents(ctx context.Context, workspaceID, accountID, instrumentID uuid.UUID) ([]ReplayEvent, error) {
 	out := make([]ReplayEvent, 0, 64)
+	q := dbq.New(s.pool)
 
-	tradeRows, err := s.pool.Query(ctx, `
-		select id, side::text, trade_date, quantity::text, price::text, fee_amount::text, currency
-		from investment_trades
-		where workspace_id = $1 and account_id = $2 and instrument_id = $3
-		order by trade_date asc, id asc
-	`, workspaceID, accountID, instrumentID)
+	tradeRows, err := q.LoadTradeEvents(ctx, dbq.LoadTradeEventsParams{
+		WorkspaceID:  workspaceID,
+		AccountID:    accountID,
+		InstrumentID: instrumentID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("load trades: %w", err)
 	}
-	for tradeRows.Next() {
-		var (
-			id                 uuid.UUID
-			side, qty, px, fee string
-			tradeDate          time.Time
-			currency           string
-		)
-		if err := tradeRows.Scan(&id, &side, &tradeDate, &qty, &px, &fee, &currency); err != nil {
-			tradeRows.Close()
-			return nil, err
-		}
-		quantity, _ := decimal.NewFromString(qty)
-		price, _ := decimal.NewFromString(px)
-		feeAmt, _ := decimal.NewFromString(fee)
+	for _, r := range tradeRows {
+		quantity, _ := decimal.NewFromString(r.Quantity)
+		price, _ := decimal.NewFromString(r.Price)
+		feeAmt, _ := decimal.NewFromString(r.FeeAmount)
 		kind := EventBuy
-		if side == "sell" {
+		if r.Side == "sell" {
 			kind = EventSell
 		}
 		out = append(out, ReplayEvent{
-			Date:     tradeDate,
+			Date:     r.TradeDate,
 			Kind:     kind,
-			TradeID:  id,
+			TradeID:  r.ID,
 			Quantity: quantity,
 			Price:    price,
 			Fee:      feeAmt,
-			Currency: currency,
+			Currency: r.Currency,
 		})
 	}
-	tradeRows.Close()
 
-	dvRows, err := s.pool.Query(ctx, `
-		select pay_date, total_amount::text, currency
-		from dividend_events
-		where workspace_id = $1 and account_id = $2 and instrument_id = $3
-		order by pay_date asc, id asc
-	`, workspaceID, accountID, instrumentID)
+	dvRows, err := q.LoadDividendEvents(ctx, dbq.LoadDividendEventsParams{
+		WorkspaceID:  workspaceID,
+		AccountID:    accountID,
+		InstrumentID: instrumentID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("load dividends: %w", err)
 	}
-	for dvRows.Next() {
-		var (
-			d             time.Time
-			tot, currency string
-		)
-		if err := dvRows.Scan(&d, &tot, &currency); err != nil {
-			dvRows.Close()
-			return nil, err
-		}
-		amt, _ := decimal.NewFromString(tot)
+	for _, r := range dvRows {
+		amt, _ := decimal.NewFromString(r.TotalAmount)
 		out = append(out, ReplayEvent{
-			Date:     d,
+			Date:     r.PayDate,
 			Kind:     EventDividend,
 			Amount:   amt,
-			Currency: currency,
+			Currency: r.Currency,
 		})
 	}
-	dvRows.Close()
 
-	caRows, err := s.pool.Query(ctx, `
-		select kind::text, effective_date, payload
-		from corporate_actions
-		where (workspace_id is null or workspace_id = $1)
-		  and (account_id is null or account_id = $2)
-		  and instrument_id = $3
-		order by effective_date asc, id asc
-	`, workspaceID, accountID, instrumentID)
+	caRows, err := q.LoadCorporateActionEvents(ctx, dbq.LoadCorporateActionEventsParams{
+		WorkspaceID:  &workspaceID,
+		AccountID:    &accountID,
+		InstrumentID: instrumentID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("load corporate actions: %w", err)
 	}
-	for caRows.Next() {
-		var (
-			kind          string
-			effectiveDate time.Time
-			payload       []byte
-		)
-		if err := caRows.Scan(&kind, &effectiveDate, &payload); err != nil {
-			caRows.Close()
-			return nil, err
-		}
-		ev := ReplayEvent{Date: effectiveDate}
-		switch kind {
+	for _, r := range caRows {
+		ev := ReplayEvent{Date: r.EffectiveDate}
+		switch r.Kind {
 		case "split":
 			ev.Kind = EventStockSplit
-			ev.SplitFactor = parsePayloadDecimal(payload, "factor", decimal.NewFromInt(1))
+			ev.SplitFactor = parsePayloadDecimal(r.Payload, "factor", decimal.NewFromInt(1))
 		case "reverse_split":
 			ev.Kind = EventReverseSplit
-			ev.SplitFactor = parsePayloadDecimal(payload, "factor", decimal.NewFromInt(1))
+			ev.SplitFactor = parsePayloadDecimal(r.Payload, "factor", decimal.NewFromInt(1))
 		case "cash_distribution":
 			ev.Kind = EventCashDistribution
-			ev.Amount = parsePayloadDecimal(payload, "amount", decimal.Zero)
+			ev.Amount = parsePayloadDecimal(r.Payload, "amount", decimal.Zero)
 		case "delisting":
 			ev.Kind = EventDelisting
-			ev.Amount = parsePayloadDecimal(payload, "cash_total", decimal.Zero)
+			ev.Amount = parsePayloadDecimal(r.Payload, "cash_total", decimal.Zero)
 		default:
 			continue
 		}
 		out = append(out, ev)
 	}
-	caRows.Close()
 
 	return out, nil
 }
@@ -178,8 +145,9 @@ func (s *Service) RefreshPosition(ctx context.Context, workspaceID, accountID, i
 	}
 
 	// Determine the instrument's primary currency for the position row.
-	var instCurrency string
-	if err := s.pool.QueryRow(ctx, `select currency from instruments where id = $1`, instrumentID).Scan(&instCurrency); err != nil {
+	q := dbq.New(s.pool)
+	instCurrency, err := q.GetInstrumentCurrency(ctx, instrumentID)
+	if err != nil {
 		return fmt.Errorf("load instrument currency: %w", err)
 	}
 
@@ -187,11 +155,11 @@ func (s *Service) RefreshPosition(ctx context.Context, workspaceID, accountID, i
 
 	if res.Quantity.LessThanOrEqual(decimal.Zero) && len(events) == 0 {
 		// Nothing to cache.
-		_, err := s.pool.Exec(ctx, `
-			delete from investment_positions
-			where workspace_id = $1 and account_id = $2 and instrument_id = $3
-		`, workspaceID, accountID, instrumentID)
-		return err
+		return q.DeleteInvestmentPosition(ctx, dbq.DeleteInvestmentPositionParams{
+			WorkspaceID:  workspaceID,
+			AccountID:    accountID,
+			InstrumentID: instrumentID,
+		})
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -200,37 +168,36 @@ func (s *Service) RefreshPosition(ctx context.Context, workspaceID, accountID, i
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx, `
-		insert into investment_positions (
-			account_id, instrument_id, workspace_id,
-			quantity, average_cost, currency, refreshed_at
-		) values ($1, $2, $3, $4::numeric, $5::numeric, $6, $7)
-		on conflict (account_id, instrument_id) do update set
-			quantity = excluded.quantity,
-			average_cost = excluded.average_cost,
-			currency = excluded.currency,
-			refreshed_at = excluded.refreshed_at
-	`, accountID, instrumentID, workspaceID,
-		res.Quantity.String(), res.AverageCost.String(), instCurrency, s.now().UTC()); err != nil {
+	qtx := dbq.New(tx)
+
+	if err := qtx.UpsertInvestmentPosition(ctx, dbq.UpsertInvestmentPositionParams{
+		AccountID:    accountID,
+		InstrumentID: instrumentID,
+		WorkspaceID:  workspaceID,
+		Quantity:     decimalToNumeric(res.Quantity),
+		AverageCost:  decimalToNumeric(res.AverageCost),
+		Currency:     instCurrency,
+		RefreshedAt:  s.now().UTC(),
+	}); err != nil {
 		return fmt.Errorf("upsert investment_position: %w", err)
 	}
 
 	// Lots/consumptions cache rebuild. Consumptions depend on lots, so clear in
 	// child->parent order and reinsert deterministic rows for both open and
 	// closed lots.
-	if _, err := tx.Exec(ctx, `
-		delete from investment_lot_consumptions
-		where workspace_id = $1
-		  and lot_id in (
-			select id from investment_lots
-			where workspace_id = $1 and account_id = $2 and instrument_id = $3
-		  )
-	`, workspaceID, accountID, instrumentID); err != nil {
+	posParams := dbq.DeleteLotConsumptionsForPositionParams{
+		WorkspaceID:  workspaceID,
+		AccountID:    accountID,
+		InstrumentID: instrumentID,
+	}
+	if err := qtx.DeleteLotConsumptionsForPosition(ctx, posParams); err != nil {
 		return fmt.Errorf("clear lot consumptions: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		delete from investment_lots where workspace_id = $1 and account_id = $2 and instrument_id = $3
-	`, workspaceID, accountID, instrumentID); err != nil {
+	if err := qtx.DeleteLotsForPosition(ctx, dbq.DeleteLotsForPositionParams{
+		WorkspaceID:  workspaceID,
+		AccountID:    accountID,
+		InstrumentID: instrumentID,
+	}); err != nil {
 		return fmt.Errorf("clear lots: %w", err)
 	}
 
@@ -246,16 +213,19 @@ func (s *Service) RefreshPosition(ctx context.Context, workspaceID, accountID, i
 			}
 			closedAt = &t
 		}
-		_, err := tx.Exec(ctx, `
-			insert into investment_lots (
-				id, workspace_id, account_id, instrument_id,
-				acquired_at, quantity_opening, quantity_remaining,
-				cost_basis_per_unit, currency, source_trade_id, closed_at
-			) values ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8::numeric, $9, $10, $11)
-		`, lotID, workspaceID, accountID, instrumentID,
-			lot.AcquiredAt, lot.Opening.String(), lot.Remaining.String(),
-			lot.CostBasis.String(), nilIfZero(lot.Currency, instCurrency), lot.TradeID, closedAt)
-		if err != nil {
+		if err := qtx.InsertInvestmentLot(ctx, dbq.InsertInvestmentLotParams{
+			ID:                lotID,
+			WorkspaceID:       workspaceID,
+			AccountID:         accountID,
+			InstrumentID:      instrumentID,
+			AcquiredAt:        lot.AcquiredAt,
+			QuantityOpening:   decimalToNumeric(lot.Opening),
+			QuantityRemaining: decimalToNumeric(lot.Remaining),
+			CostBasisPerUnit:  decimalToNumeric(lot.CostBasis),
+			Currency:          nilIfZero(lot.Currency, instCurrency),
+			SourceTradeID:     &lot.TradeID,
+			ClosedAt:          closedAt,
+		}); err != nil {
 			return fmt.Errorf("insert lot: %w", err)
 		}
 	}
@@ -271,14 +241,16 @@ func (s *Service) RefreshPosition(ctx context.Context, workspaceID, accountID, i
 			// lots; a dedicated corporate-action consumption cache can follow.
 			continue
 		}
-		_, err := tx.Exec(ctx, `
-			insert into investment_lot_consumptions (
-				id, workspace_id, lot_id, sell_trade_id,
-				quantity_consumed, realised_gain, currency, consumed_at
-			) values ($1, $2, $3, $4, $5::numeric, $6::numeric, $7, $8)
-		`, uuidx.New(), workspaceID, lotID, sellTradeID,
-			c.Quantity.String(), c.RealisedGain.String(), nilIfZero(c.Currency, instCurrency), c.ConsumedAt)
-		if err != nil {
+		if err := qtx.InsertLotConsumption(ctx, dbq.InsertLotConsumptionParams{
+			ID:               uuidx.New(),
+			WorkspaceID:      workspaceID,
+			LotID:            lotID,
+			SellTradeID:      sellTradeID,
+			QuantityConsumed: decimalToNumeric(c.Quantity),
+			RealisedGain:     decimalToNumeric(c.RealisedGain),
+			Currency:         nilIfZero(c.Currency, instCurrency),
+			ConsumedAt:       c.ConsumedAt,
+		}); err != nil {
 			return fmt.Errorf("insert lot consumption: %w", err)
 		}
 	}
@@ -297,6 +269,7 @@ func nilIfZero(s, fallback string) string {
 // has ever traded and refreshes the cache. Used by the manual refresh
 // endpoint and after bulk imports.
 func (s *Service) RefreshAllPositions(ctx context.Context, workspaceID uuid.UUID) (int, error) {
+	// Dynamic SQL: UNION across two tables.
 	rows, err := s.pool.Query(ctx, `
 		select distinct account_id, instrument_id from investment_trades where workspace_id = $1
 		union
@@ -330,32 +303,22 @@ func (s *Service) refreshLatestPrices(ctx context.Context, workspaceID uuid.UUID
 	if s.md == nil || !s.md.HasPriceProvider() {
 		return nil
 	}
-	rows, err := s.pool.Query(ctx, `
-		select distinct i.id, i.symbol
-		from investment_positions p
-		join instruments i on i.id = p.instrument_id
-		where p.workspace_id = $1 and p.quantity > 0
-	`, workspaceID)
+	instruments, err := dbq.New(s.pool).ListOpenPositionInstruments(ctx, workspaceID)
 	if err != nil {
 		return fmt.Errorf("load instruments for price refresh: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var id uuid.UUID
-		var symbol string
-		if err := rows.Scan(&id, &symbol); err != nil {
-			return err
-		}
+	for _, inst := range instruments {
 		// Best-effort: one failing provider call should not block replayed
 		// positions from becoming visible.
-		_, _ = s.md.LatestPrice(ctx, id, symbol)
+		_, _ = s.md.LatestPrice(ctx, inst.ID, inst.Symbol)
 	}
-	return rows.Err()
+	return nil
 }
 
 // ListPositions returns positions for the workspace augmented with instrument
 // metadata. Filter f scopes the result.
 func (s *Service) ListPositions(ctx context.Context, workspaceID uuid.UUID, f PositionFilter) ([]Position, error) {
+	// Dynamic SQL: conditional WHERE with search, open/closed, account, instrument filters.
 	args := []any{workspaceID}
 	clauses := []string{"p.workspace_id = $1"}
 	next := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
@@ -550,26 +513,17 @@ func (s *Service) instrumentValueHistory(ctx context.Context, inst Instrument, i
 			priceMap[dayUTC(d)] = q.Price
 		}
 	} else {
-		rows, err := s.pool.Query(ctx, `
-			select as_of, price
-			from instrument_prices
-			where instrument_id = $1 and as_of >= $2 and as_of <= $3
-			order by as_of asc
-		`, instrumentID, from, to.Add(24*time.Hour))
+		// Cached prices fallback path.
+		priceRows, err := dbq.New(s.pool).LookupCachedPriceRange(ctx, dbq.LookupCachedPriceRangeParams{
+			InstrumentID: instrumentID,
+			FromDate:     from,
+			ToDate:       to.Add(24 * time.Hour),
+		})
 		if err != nil {
 			return nil, fmt.Errorf("load cached historical prices: %w", err)
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var d time.Time
-			var p decimal.Decimal
-			if err := rows.Scan(&d, &p); err != nil {
-				return nil, err
-			}
-			priceMap[dayUTC(d)] = p
-		}
-		if err := rows.Err(); err != nil {
-			return nil, err
+		for _, r := range priceRows {
+			priceMap[dayUTC(r.AsOf)] = numericToDecimal(r.Price)
 		}
 	}
 
@@ -612,18 +566,23 @@ func dayUTC(t time.Time) time.Time {
 // GetTrade fetches a single trade by id (used by API delete to assert
 // existence cleanly).
 func (s *Service) GetTrade(ctx context.Context, workspaceID, tradeID uuid.UUID) (*Trade, error) {
-	row := s.pool.QueryRow(ctx, `
-		select `+tradeCols+`
-		from investment_trades t
-		join instruments i on i.id = t.instrument_id
-		where t.workspace_id = $1 and t.id = $2
-	`, workspaceID, tradeID)
-	tr, err := scanTradeRow(row)
+	row, err := dbq.New(s.pool).GetInvestmentTrade(ctx, dbq.GetInvestmentTradeParams{
+		WorkspaceID: workspaceID,
+		ID:          tradeID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("trade")
 		}
 		return nil, err
 	}
-	return tr, nil
+	return &Trade{
+		ID: row.ID, WorkspaceID: row.WorkspaceID, AccountID: row.AccountID,
+		InstrumentID: row.InstrumentID, Symbol: row.Symbol,
+		Side: row.Side, Quantity: row.Quantity, Price: row.Price,
+		Currency: row.Currency, FeeAmount: row.FeeAmount, FeeCurrency: row.FeeCurrency,
+		TradeDate: row.TradeDate, SettleDate: row.SettleDate,
+		LinkedCashTransactionID: row.LinkedCashTransactionID,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}, nil
 }

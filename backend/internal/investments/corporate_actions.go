@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
@@ -49,9 +50,9 @@ type CorporateActionInput struct {
 	Kind          string
 	EffectiveDate time.Time
 	// Common payload fields. Only the ones the kind cares about are used.
-	Factor   decimal.Decimal // splits / reverse_splits — see comment below
-	Amount   decimal.Decimal // cash distributions / delisting cash total
-	NewSymbol string         // symbol_change
+	Factor    decimal.Decimal // splits / reverse_splits — see comment below
+	Amount    decimal.Decimal // cash distributions / delisting cash total
+	NewSymbol string          // symbol_change
 }
 
 // CreateCorporateAction inserts a row in corporate_actions and replays the
@@ -82,28 +83,34 @@ func (s *Service) CreateCorporateAction(ctx context.Context, workspaceID uuid.UU
 	}
 
 	id := uuidx.New()
-	if _, err := s.pool.Exec(ctx, `
-		insert into corporate_actions (
-			id, workspace_id, account_id, instrument_id,
-			kind, effective_date, payload
-		) values (
-			$1, $2, $3, $4,
-			$5::corporate_action_kind, $6, $7::jsonb
-		)
-	`, id, workspaceID, in.AccountID, in.InstrumentID,
-		in.Kind, in.EffectiveDate, string(payload)); err != nil {
+	q := dbq.New(s.pool)
+	row, err := q.InsertCorporateAction(ctx, dbq.InsertCorporateActionParams{
+		ID:            id,
+		WorkspaceID:   &workspaceID,
+		AccountID:     in.AccountID,
+		InstrumentID:  in.InstrumentID,
+		Kind:          dbq.CorporateActionKind(in.Kind),
+		EffectiveDate: in.EffectiveDate,
+		Payload:       payload,
+	})
+	if err != nil {
 		return nil, mapWriteError(err)
 	}
-	// Read back via the joined SELECT so the symbol column is populated.
-	row := s.pool.QueryRow(ctx, `
-		select `+corpActionCols+`
-		from corporate_actions ca
-		join instruments i on i.id = ca.instrument_id
-		where ca.id = $1
-	`, id)
-	ca, err := scanCorpAction(row)
-	if err != nil {
-		return nil, fmt.Errorf("read back corporate_action: %w", err)
+
+	// Get symbol for the response.
+	instRow, _ := q.GetInstrumentByID(ctx, in.InstrumentID)
+
+	ca := &CorporateAction{
+		ID: row.ID, WorkspaceID: row.WorkspaceID, AccountID: row.AccountID,
+		InstrumentID: row.InstrumentID, Symbol: instRow.Symbol,
+		Kind: row.Kind, EffectiveDate: row.EffectiveDate,
+		AppliedAt: row.AppliedAt, CreatedAt: row.CreatedAt,
+	}
+	if len(row.Payload) > 0 {
+		var v any
+		if err := json.Unmarshal(row.Payload, &v); err == nil {
+			ca.Payload = v
+		}
 	}
 
 	// Replay every position that touched this instrument so the cache reflects
@@ -114,17 +121,13 @@ func (s *Service) CreateCorporateAction(ctx context.Context, workspaceID uuid.UU
 			return ca, fmt.Errorf("refresh position: %w", err)
 		}
 	} else {
-		rows, err := s.pool.Query(ctx, `
-			select distinct account_id from investment_positions
-			where workspace_id = $1 and instrument_id = $2
-		`, workspaceID, in.InstrumentID)
+		aids, err := q.ListPositionAccountsForInstrument(ctx, dbq.ListPositionAccountsForInstrumentParams{
+			WorkspaceID:  workspaceID,
+			InstrumentID: in.InstrumentID,
+		})
 		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var aid uuid.UUID
-				if err := rows.Scan(&aid); err == nil {
-					_ = s.RefreshPosition(ctx, workspaceID, aid, in.InstrumentID)
-				}
+			for _, aid := range aids {
+				_ = s.RefreshPosition(ctx, workspaceID, aid, in.InstrumentID)
 			}
 		}
 	}
@@ -133,14 +136,11 @@ func (s *Service) CreateCorporateAction(ctx context.Context, workspaceID uuid.UU
 
 // DeleteCorporateAction removes a row and replays affected positions.
 func (s *Service) DeleteCorporateAction(ctx context.Context, workspaceID, actionID uuid.UUID) error {
-	var (
-		instrumentID uuid.UUID
-		accountID    *uuid.UUID
-	)
-	err := s.pool.QueryRow(ctx, `
-		select instrument_id, account_id from corporate_actions
-		where id = $1 and (workspace_id = $2 or workspace_id is null)
-	`, actionID, workspaceID).Scan(&instrumentID, &accountID)
+	q := dbq.New(s.pool)
+	row, err := q.GetCorporateActionForDelete(ctx, dbq.GetCorporateActionForDeleteParams{
+		ID:          actionID,
+		WorkspaceID: &workspaceID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NewNotFoundError("corporate action")
@@ -148,30 +148,26 @@ func (s *Service) DeleteCorporateAction(ctx context.Context, workspaceID, action
 		return err
 	}
 	// We only let workspace-scoped users delete workspace-scoped rows.
-	tag, err := s.pool.Exec(ctx, `
-		delete from corporate_actions
-		where id = $1 and workspace_id = $2
-	`, actionID, workspaceID)
+	affected, err := q.DeleteCorporateAction(ctx, dbq.DeleteCorporateActionParams{
+		ID:          actionID,
+		WorkspaceID: &workspaceID,
+	})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if affected == 0 {
 		return httpx.NewNotFoundError("corporate action")
 	}
-	if accountID != nil {
-		return s.RefreshPosition(ctx, workspaceID, *accountID, instrumentID)
+	if row.AccountID != nil {
+		return s.RefreshPosition(ctx, workspaceID, *row.AccountID, row.InstrumentID)
 	}
-	rows, err := s.pool.Query(ctx, `
-		select distinct account_id from investment_positions
-		where workspace_id = $1 and instrument_id = $2
-	`, workspaceID, instrumentID)
+	aids, err := q.ListPositionAccountsForInstrument(ctx, dbq.ListPositionAccountsForInstrumentParams{
+		WorkspaceID:  workspaceID,
+		InstrumentID: row.InstrumentID,
+	})
 	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var aid uuid.UUID
-			if err := rows.Scan(&aid); err == nil {
-				_ = s.RefreshPosition(ctx, workspaceID, aid, instrumentID)
-			}
+		for _, aid := range aids {
+			_ = s.RefreshPosition(ctx, workspaceID, aid, row.InstrumentID)
 		}
 	}
 	return nil
@@ -180,27 +176,30 @@ func (s *Service) DeleteCorporateAction(ctx context.Context, workspaceID, action
 // ListCorporateActions returns workspace-scoped + global corporate-action
 // rows for an instrument.
 func (s *Service) ListCorporateActions(ctx context.Context, workspaceID, instrumentID uuid.UUID) ([]CorporateAction, error) {
-	rows, err := s.pool.Query(ctx, `
-		select `+corpActionCols+`
-		from corporate_actions ca
-		join instruments i on i.id = ca.instrument_id
-		where ca.instrument_id = $1
-		  and (ca.workspace_id is null or ca.workspace_id = $2)
-		order by ca.effective_date desc, ca.created_at desc
-	`, instrumentID, workspaceID)
+	rows, err := dbq.New(s.pool).ListCorporateActions(ctx, dbq.ListCorporateActionsParams{
+		InstrumentID: instrumentID,
+		WorkspaceID:  &workspaceID,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]CorporateAction, 0)
-	for rows.Next() {
-		ca, err := scanCorpAction(rows)
-		if err != nil {
-			return nil, err
+	out := make([]CorporateAction, 0, len(rows))
+	for _, r := range rows {
+		ca := CorporateAction{
+			ID: r.ID, WorkspaceID: r.WorkspaceID, AccountID: r.AccountID,
+			InstrumentID: r.InstrumentID, Symbol: r.Symbol,
+			Kind: r.Kind, EffectiveDate: r.EffectiveDate,
+			AppliedAt: r.AppliedAt, CreatedAt: r.CreatedAt,
 		}
-		out = append(out, *ca)
+		if len(r.Payload) > 0 {
+			var v any
+			if err := json.Unmarshal(r.Payload, &v); err == nil {
+				ca.Payload = v
+			}
+		}
+		out = append(out, ca)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (in CorporateActionInput) normalize() (CorporateActionInput, error) {
@@ -246,29 +245,4 @@ func buildCorporateActionPayload(in CorporateActionInput) ([]byte, error) {
 		body["new_symbol"] = strings.ToUpper(strings.TrimSpace(in.NewSymbol))
 	}
 	return json.Marshal(body)
-}
-
-const corpActionCols = `
-	ca.id, ca.workspace_id, ca.account_id, ca.instrument_id, i.symbol,
-	ca.kind::text, ca.effective_date, ca.payload, ca.applied_at, ca.created_at
-`
-
-func scanCorpAction(row rowScanner) (*CorporateAction, error) {
-	var (
-		ca      CorporateAction
-		payload []byte
-	)
-	if err := row.Scan(
-		&ca.ID, &ca.WorkspaceID, &ca.AccountID, &ca.InstrumentID, &ca.Symbol,
-		&ca.Kind, &ca.EffectiveDate, &payload, &ca.AppliedAt, &ca.CreatedAt,
-	); err != nil {
-		return nil, err
-	}
-	if len(payload) > 0 {
-		var v any
-		if err := json.Unmarshal(payload, &v); err == nil {
-			ca.Payload = v
-		}
-	}
-	return &ca, nil
 }

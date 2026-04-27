@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/investments/importevent"
 	"github.com/xmedavid/folio/backend/internal/providers/ibkr"
 	"github.com/xmedavid/folio/backend/internal/providers/revolut"
@@ -138,33 +139,21 @@ type brokerageAccountSummary struct {
 func (s *Service) findOrCreateBrokerageAccount(ctx context.Context, workspaceID uuid.UUID, source, currency string) (brokerageAccountSummary, bool, error) {
 	displayName := defaultBrokerageName(source)
 
+	q := dbq.New(s.pool)
+
 	// Existing brokerage account with matching currency wins; institution and
 	// nickname are best-effort matched on the source label.
-	var (
-		acct     brokerageAccountSummary
-		existing bool
-	)
-	err := s.pool.QueryRow(ctx, `
-		select a.id, a.name
-		from accounts a
-		where a.workspace_id = $1 and a.kind = 'brokerage'
-		  and a.archived_at is null
-		  and (
-		    a.currency = $2
-		    or coalesce(a.institution, '') ilike '%' || $3 || '%'
-		    or coalesce(a.nickname, '') ilike '%' || $3 || '%'
-		    or a.name ilike '%' || $3 || '%'
-		  )
-		order by case when a.currency = $2 then 0 else 1 end,
-		         a.created_at asc
-		limit 1
-	`, workspaceID, currency, displayName).Scan(&acct.ID, &acct.Name)
+	row, err := q.FindBrokerageAccount(ctx, dbq.FindBrokerageAccountParams{
+		WorkspaceID: workspaceID,
+		Currency:    currency,
+		SourceLabel: &displayName,
+	})
 	if err == nil {
-		existing = true
-		return acct, false, ensureExtension(ctx, s, workspaceID, acct.ID, existing)
+		acct := brokerageAccountSummary{ID: row.ID, Name: row.Name}
+		return acct, false, ensureExtension(ctx, s, workspaceID, acct.ID, true)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return acct, false, fmt.Errorf("find brokerage account: %w", err)
+		return brokerageAccountSummary{}, false, fmt.Errorf("find brokerage account: %w", err)
 	}
 
 	// Create one. Opening balance defaults to zero on the file's earliest
@@ -172,31 +161,28 @@ func (s *Service) findOrCreateBrokerageAccount(ctx context.Context, workspaceID 
 	id := uuidx.New()
 	openDate := s.now().UTC()
 	institution := defaultBrokerageInstitution(source)
-	if _, err := s.pool.Exec(ctx, `
-		insert into accounts (
-			id, workspace_id, name, kind, currency, institution,
-			open_date, opening_balance, opening_balance_date,
-			include_in_networth, include_in_savings_rate
-		) values (
-			$1, $2, $3, 'brokerage'::account_kind, $4, $5,
-			$6, 0, $6,
-			true, false
-		)
-	`, id, workspaceID, displayName, currency, institution, openDate); err != nil {
-		return acct, false, fmt.Errorf("create brokerage account: %w", err)
+	if err := q.InsertBrokerageAccount(ctx, dbq.InsertBrokerageAccountParams{
+		ID:          id,
+		WorkspaceID: workspaceID,
+		Name:        displayName,
+		Currency:    currency,
+		Institution: &institution,
+		OpenDate:    openDate,
+	}); err != nil {
+		return brokerageAccountSummary{}, false, fmt.Errorf("create brokerage account: %w", err)
 	}
 	// Opening snapshot so balance reads work.
-	if _, err := s.pool.Exec(ctx, `
-		insert into account_balance_snapshots (
-			id, workspace_id, account_id, as_of, balance, currency, source
-		) values (
-			$1, $2, $3, $4, 0, $5, 'opening'
-		)
-	`, uuidx.New(), workspaceID, id, openDate, currency); err != nil {
-		return acct, false, fmt.Errorf("insert opening snapshot: %w", err)
+	if err := q.InsertBrokerageOpeningSnapshot(ctx, dbq.InsertBrokerageOpeningSnapshotParams{
+		ID:          uuidx.New(),
+		WorkspaceID: workspaceID,
+		AccountID:   id,
+		AsOf:        openDate,
+		Currency:    currency,
+	}); err != nil {
+		return brokerageAccountSummary{}, false, fmt.Errorf("insert opening snapshot: %w", err)
 	}
 	if err := s.ensureInvestmentAccount(ctx, workspaceID, id); err != nil {
-		return acct, false, err
+		return brokerageAccountSummary{}, false, err
 	}
 	return brokerageAccountSummary{ID: id, Name: displayName}, true, nil
 }
@@ -241,6 +227,7 @@ func (s *Service) IngestImportDedup(ctx context.Context, workspaceID, accountID 
 		return nil, err
 	}
 
+	q := dbq.New(s.pool)
 	summary := &ImportSummary{}
 	touchedInstruments := make(map[uuid.UUID]struct{})
 	touchedPairs := make(map[[2]uuid.UUID]struct{})
@@ -280,7 +267,15 @@ func (s *Service) IngestImportDedup(ctx context.Context, workspaceID, accountID 
 				summary.Skipped++
 				continue
 			}
-			dup, err := s.tradeExists(ctx, workspaceID, accountID, inst.ID, side, ev.Date, ev.Quantity, ev.Price)
+			dup, err := q.TradeExists(ctx, dbq.TradeExistsParams{
+				WorkspaceID:  workspaceID,
+				AccountID:    accountID,
+				InstrumentID: inst.ID,
+				Side:         dbq.TradeSide(side),
+				TradeDate:    dateOnlyUTC(ev.Date),
+				Quantity:     decimalToNumeric(ev.Quantity),
+				Price:        decimalToNumeric(ev.Price),
+			})
 			if err != nil {
 				summary.Skipped++
 				summary.Warnings = append(summary.Warnings, fmt.Sprintf("row %d: dedupe trade %s: %v", i, ev.Symbol, err))
@@ -311,7 +306,13 @@ func (s *Service) IngestImportDedup(ctx context.Context, workspaceID, accountID 
 				summary.Skipped++
 				continue
 			}
-			dup, err := s.dividendExists(ctx, workspaceID, accountID, inst.ID, ev.Date, ev.AmountTotal)
+			dup, err := q.DividendExists(ctx, dbq.DividendExistsParams{
+				WorkspaceID:  workspaceID,
+				AccountID:    accountID,
+				InstrumentID: inst.ID,
+				PayDate:      dateOnlyUTC(ev.Date),
+				TotalAmount:  decimalToNumeric(ev.AmountTotal),
+			})
 			if err != nil {
 				summary.Skipped++
 				summary.Warnings = append(summary.Warnings, fmt.Sprintf("row %d: dedupe dividend %s: %v", i, ev.Symbol, err))
@@ -347,36 +348,6 @@ func (s *Service) IngestImportDedup(ctx context.Context, workspaceID, accountID 
 	}
 	summary.InstrumentsTouched = len(touchedInstruments)
 	return summary, nil
-}
-
-func (s *Service) tradeExists(ctx context.Context, workspaceID, accountID, instrumentID uuid.UUID, side string, tradeDate time.Time, quantity, price decimal.Decimal) (bool, error) {
-	var ok bool
-	err := s.pool.QueryRow(ctx, `
-		select exists(
-			select 1 from investment_trades
-			where workspace_id = $1 and account_id = $2 and instrument_id = $3
-			  and side = $4::trade_side
-			  and trade_date = $5
-			  and quantity = $6::numeric
-			  and price = $7::numeric
-		)
-	`, workspaceID, accountID, instrumentID, side,
-		dateOnlyUTC(tradeDate), quantity.String(), price.String()).Scan(&ok)
-	return ok, err
-}
-
-func (s *Service) dividendExists(ctx context.Context, workspaceID, accountID, instrumentID uuid.UUID, payDate time.Time, totalAmount decimal.Decimal) (bool, error) {
-	var ok bool
-	err := s.pool.QueryRow(ctx, `
-		select exists(
-			select 1 from dividend_events
-			where workspace_id = $1 and account_id = $2 and instrument_id = $3
-			  and pay_date = $4
-			  and total_amount = $5::numeric
-		)
-	`, workspaceID, accountID, instrumentID,
-		dateOnlyUTC(payDate), totalAmount.String()).Scan(&ok)
-	return ok, err
 }
 
 func dateOnlyUTC(t time.Time) time.Time {

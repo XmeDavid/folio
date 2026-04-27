@@ -38,6 +38,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DateInput } from "@/components/ui/date-input";
 import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
 
@@ -139,6 +140,10 @@ export default function InstrumentDetailPage({
           <CorporateActionsCard
             workspaceId={workspaceId!}
             instrumentId={detail.instrument.id}
+            currentQuantity={detail.positions.reduce(
+              (s, p) => s + Number(p.quantity || 0),
+              0
+            )}
             actions={corporateActionsQuery.data ?? []}
             onDelete={(id) =>
               window.confirm(
@@ -155,20 +160,52 @@ export default function InstrumentDetailPage({
 function CorporateActionsCard({
   workspaceId,
   instrumentId,
+  currentQuantity,
   actions,
   onDelete,
 }: {
   workspaceId: string;
   instrumentId: string;
+  currentQuantity: number;
   actions: CorporateAction[];
   onDelete: (id: string) => void;
 }) {
   const queryClient = useQueryClient();
   const [kind, setKind] = React.useState<CorporateActionKind>("reverse_split");
   const [effectiveDate, setEffectiveDate] = React.useState("");
-  const [factor, setFactor] = React.useState("");
+  // Ratio inputs: "ratioNew new shares for every ratioOld old shares".
+  // Default for reverse_split is 1-for-50 (a typical reverse-split shape).
+  const [ratioNew, setRatioNew] = React.useState("1");
+  const [ratioOld, setRatioOld] = React.useState("50");
   const [amount, setAmount] = React.useState("");
   const [newSymbol, setNewSymbol] = React.useState("");
+
+  // When the user toggles between split kinds, pre-fill sensible defaults
+  // so the ratio direction matches the kind.
+  const switchKind = (k: CorporateActionKind) => {
+    setKind(k);
+    if (k === "reverse_split") {
+      setRatioNew("1");
+      setRatioOld("50");
+    } else if (k === "split") {
+      setRatioNew("4");
+      setRatioOld("1");
+    }
+  };
+
+  const ratioNewN = Number(ratioNew);
+  const ratioOldN = Number(ratioOld);
+  const factorComputed =
+    Number.isFinite(ratioNewN) &&
+    Number.isFinite(ratioOldN) &&
+    ratioNewN > 0 &&
+    ratioOldN > 0
+      ? ratioNewN / ratioOldN
+      : null;
+  const projectedQuantity =
+    factorComputed != null && Number.isFinite(currentQuantity)
+      ? currentQuantity * factorComputed
+      : null;
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -176,20 +213,24 @@ function CorporateActionsCard({
         instrumentId,
         kind,
         effectiveDate,
-        factor: factor || undefined,
+        // Send the computed factor (new/old) as a high-precision string so
+        // backend never has to interpret "ratio" semantics.
+        factor:
+          factorComputed != null && (kind === "split" || kind === "reverse_split")
+            ? factorComputed.toString()
+            : undefined,
         amount: amount || undefined,
         newSymbol: newSymbol || undefined,
       }),
     onSuccess: () => {
       setEffectiveDate("");
-      setFactor("");
       setAmount("");
       setNewSymbol("");
       queryClient.invalidateQueries({ queryKey: ["investments"] });
     },
   });
 
-  const needsFactor = kind === "split" || kind === "reverse_split";
+  const needsRatio = kind === "split" || kind === "reverse_split";
   const needsAmount = kind === "cash_distribution" || kind === "delisting";
   const needsSymbol = kind === "symbol_change";
 
@@ -202,9 +243,11 @@ function CorporateActionsCard({
         <div className="rounded-[12px] border border-border bg-surface p-3 text-[13px]">
           <p className="font-medium text-fg">Add a corporate action</p>
           <p className="mt-1 text-[12px] text-fg-muted">
-            Reverse split factor convention: a 1-for-50 reverse split has factor{" "}
-            <code className="font-mono">0.02</code>; a 4-for-1 forward split has{" "}
-            <code className="font-mono">4</code>. Total cost basis is preserved.
+            Total cost basis is preserved. For a 1-for-50 reverse split, enter{" "}
+            <code className="font-mono">1</code> new for every{" "}
+            <code className="font-mono">50</code> old. For a 4-for-1 forward
+            split, enter <code className="font-mono">4</code> new for every{" "}
+            <code className="font-mono">1</code> old.
           </p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
@@ -214,7 +257,7 @@ function CorporateActionsCard({
                 className="rounded-[8px] border border-border bg-page px-3 py-1.5 text-[13px]"
                 value={kind}
                 onChange={(e) =>
-                  setKind(e.target.value as CorporateActionKind)
+                  switchKind(e.target.value as CorporateActionKind)
                 }
               >
                 <option value="reverse_split">Reverse split</option>
@@ -226,25 +269,47 @@ function CorporateActionsCard({
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor="ca-date">Effective date</Label>
-              <Input
+              <DateInput
                 id="ca-date"
-                type="date"
                 value={effectiveDate}
-                onChange={(e) => setEffectiveDate(e.target.value)}
+                onChange={setEffectiveDate}
               />
             </div>
-            {needsFactor ? (
+            {needsRatio ? (
               <div className="flex flex-col gap-1 sm:col-span-2">
-                <Label htmlFor="ca-factor">Factor</Label>
-                <Input
-                  id="ca-factor"
-                  inputMode="decimal"
-                  placeholder={
-                    kind === "reverse_split" ? "0.02" : "4"
-                  }
-                  value={factor}
-                  onChange={(e) => setFactor(e.target.value)}
-                />
+                <Label>Ratio</Label>
+                <div className="flex items-center gap-2 text-[13px]">
+                  <Input
+                    aria-label="New shares"
+                    inputMode="decimal"
+                    className="w-24 text-center font-mono tabular-nums"
+                    value={ratioNew}
+                    onChange={(e) => setRatioNew(e.target.value)}
+                  />
+                  <span className="text-fg-muted">
+                    new share{ratioNewN === 1 ? "" : "s"} for every
+                  </span>
+                  <Input
+                    aria-label="Old shares"
+                    inputMode="decimal"
+                    className="w-24 text-center font-mono tabular-nums"
+                    value={ratioOld}
+                    onChange={(e) => setRatioOld(e.target.value)}
+                  />
+                  <span className="text-fg-muted">old</span>
+                </div>
+                {factorComputed != null && currentQuantity > 0 ? (
+                  <p className="mt-1 text-[12px] text-fg-muted">
+                    Your <strong className="text-fg">{currentQuantity}</strong>{" "}
+                    shares will become{" "}
+                    <strong className="text-fg">
+                      {Number.isInteger(projectedQuantity!)
+                        ? projectedQuantity
+                        : projectedQuantity!.toFixed(8).replace(/\.?0+$/, "")}
+                    </strong>
+                    .
+                  </p>
+                ) : null}
               </div>
             ) : null}
             {needsAmount ? (
@@ -284,7 +349,7 @@ function CorporateActionsCard({
               disabled={
                 createMutation.isPending ||
                 !effectiveDate ||
-                (needsFactor && !factor) ||
+                (needsRatio && factorComputed == null) ||
                 (needsAmount && !amount) ||
                 (needsSymbol && !newSymbol)
               }

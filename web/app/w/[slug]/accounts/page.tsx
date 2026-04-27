@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { CreateAccountForm } from "@/components/accounts/create-account-form";
 import {
   ApiError,
@@ -586,13 +587,12 @@ function ImportGroupRow({
               </option>
             ))}
           </select>
-          <Input
-            type="date"
+          <DateInput
             value={plan.openDate ?? ""}
-            onChange={(e) =>
+            onChange={(iso) =>
               set({
-                openDate: e.target.value,
-                openingBalanceDate: e.target.value,
+                openDate: iso,
+                openingBalanceDate: iso,
               })
             }
           />

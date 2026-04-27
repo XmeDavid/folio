@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/investments/importevent"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
@@ -141,23 +142,20 @@ func (s *Service) insertTradeNoRefresh(ctx context.Context, workspaceID uuid.UUI
 		return err
 	}
 	id := uuidx.New()
-	_, err = s.pool.Exec(ctx, `
-		insert into investment_trades (
-			id, workspace_id, account_id, instrument_id, side,
-			quantity, price, currency, fee_amount, fee_currency,
-			trade_date, settle_date
-		) values (
-			$1, $2, $3, $4, $5::trade_side,
-			$6::numeric, $7::numeric, $8, $9::numeric, $10,
-			$11, $12
-		)
-	`, id, workspaceID, in.AccountID, in.InstrumentID, in.Side,
-		in.Quantity.String(), in.Price.String(), in.Currency,
-		in.FeeAmount.String(), in.Currency, in.TradeDate, in.SettleDate)
-	if err != nil {
-		return mapWriteError(err)
-	}
-	return nil
+	return mapWriteError(dbq.New(s.pool).InsertInvestmentTradeExec(ctx, dbq.InsertInvestmentTradeExecParams{
+		ID:           id,
+		WorkspaceID:  workspaceID,
+		AccountID:    in.AccountID,
+		InstrumentID: in.InstrumentID,
+		Side:         dbq.TradeSide(in.Side),
+		Quantity:     decimalToNumeric(in.Quantity),
+		Price:        decimalToNumeric(in.Price),
+		Currency:     in.Currency,
+		FeeAmount:    decimalToNumeric(in.FeeAmount),
+		FeeCurrency:  in.Currency,
+		TradeDate:    in.TradeDate,
+		SettleDate:   in.SettleDate,
+	}))
 }
 
 // insertDividendNoRefresh persists a dividend without refreshing.
@@ -167,21 +165,18 @@ func (s *Service) insertDividendNoRefresh(ctx context.Context, workspaceID uuid.
 		return err
 	}
 	id := uuidx.New()
-	_, err = s.pool.Exec(ctx, `
-		insert into dividend_events (
-			id, workspace_id, account_id, instrument_id,
-			ex_date, pay_date, amount_per_unit, currency, total_amount, tax_withheld
-		) values (
-			$1, $2, $3, $4,
-			$5, $6, $7::numeric, $8, $9::numeric, $10::numeric
-		)
-	`, id, workspaceID, in.AccountID, in.InstrumentID,
-		in.ExDate, in.PayDate, in.AmountPerUnit.String(), in.Currency,
-		in.TotalAmount.String(), in.TaxWithheld.String())
-	if err != nil {
-		return mapWriteError(err)
-	}
-	return nil
+	return mapWriteError(dbq.New(s.pool).InsertDividendEventExec(ctx, dbq.InsertDividendEventExecParams{
+		ID:            id,
+		WorkspaceID:   workspaceID,
+		AccountID:     in.AccountID,
+		InstrumentID:  in.InstrumentID,
+		ExDate:        in.ExDate,
+		PayDate:       in.PayDate,
+		AmountPerUnit: decimalToNumeric(in.AmountPerUnit),
+		Currency:      in.Currency,
+		TotalAmount:   decimalToNumeric(in.TotalAmount),
+		TaxWithheld:   decimalToNumeric(in.TaxWithheld),
+	}))
 }
 
 func firstNonEmpty(a, b string) string {

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/marketdata"
 )
 
@@ -34,8 +35,7 @@ func (s *Service) BuildDashboardSummary(ctx context.Context, workspaceID uuid.UU
 	report := strings.ToUpper(strings.TrimSpace(f.ReportCurrency))
 	if report == "" {
 		// Fall back to the workspace base currency.
-		var base string
-		if err := s.pool.QueryRow(ctx, `select base_currency from workspaces where id = $1`, workspaceID).Scan(&base); err == nil {
+		if base, err := dbq.New(s.pool).GetWorkspaceBaseCurrency(ctx, workspaceID); err == nil {
 			report = base
 		}
 	}

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 )
 
 // PrefetchPrices fetches the latest quote for every distinct instrument held
@@ -24,34 +26,18 @@ func (s *Service) PrefetchPrices(ctx context.Context, workspaceID uuid.UUID, sta
 		symbol       string
 		lastAsOf     *time.Time
 	}
-	rows, err := s.pool.Query(ctx, `
-		select distinct on (p.instrument_id)
-			p.instrument_id, i.symbol, lp.as_of
-		from investment_positions p
-		join instruments i on i.id = p.instrument_id
-		left join lateral (
-			select as_of from instrument_prices
-			where instrument_id = p.instrument_id
-			order by as_of desc
-			limit 1
-		) lp on true
-		where p.workspace_id = $1 and p.quantity > 0 and i.active
-		order by p.instrument_id
-	`, workspaceID)
+	rows, err := dbq.New(s.pool).ListOpenPositionInstrumentsWithPrice(ctx, workspaceID)
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
-	pairs := make([]pair, 0, 32)
-	for rows.Next() {
-		var p pair
-		if err := rows.Scan(&p.instrumentID, &p.symbol, &p.lastAsOf); err != nil {
-			return 0, err
+	pairs := make([]pair, 0, len(rows))
+	for _, r := range rows {
+		p := pair{instrumentID: r.InstrumentID, symbol: r.Symbol}
+		if !r.LastPriceAsOf.IsZero() {
+			t := r.LastPriceAsOf
+			p.lastAsOf = &t
 		}
 		pairs = append(pairs, p)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
 	}
 
 	now := s.now()

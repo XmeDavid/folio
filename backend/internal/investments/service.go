@@ -10,9 +10,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/marketdata"
 	"github.com/xmedavid/folio/backend/internal/money"
@@ -48,6 +50,32 @@ var validAssetClass = map[string]bool{
 // validSide mirrors the trade_side enum.
 var validSide = map[string]bool{"buy": true, "sell": true}
 
+// decimalToNumeric converts a decimal.Decimal to pgtype.Numeric for sqlc params.
+func decimalToNumeric(d decimal.Decimal) pgtype.Numeric {
+	var n pgtype.Numeric
+	_ = n.Scan(d.String())
+	return n
+}
+
+// stringToNumeric converts a decimal string to pgtype.Numeric for sqlc params.
+func stringToNumeric(s string) pgtype.Numeric {
+	var n pgtype.Numeric
+	_ = n.Scan(s)
+	return n
+}
+
+// numericToDecimal converts a pgtype.Numeric to decimal.Decimal.
+func numericToDecimal(n pgtype.Numeric) decimal.Decimal {
+	if !n.Valid {
+		return decimal.Zero
+	}
+	d, _ := decimal.NewFromString(n.Int.String())
+	if n.Exp != 0 {
+		d = d.Shift(int32(n.Exp))
+	}
+	return d
+}
+
 // ---------------------------------------------------------------------------
 // Instruments
 // ---------------------------------------------------------------------------
@@ -72,9 +100,11 @@ func (s *Service) UpsertInstrument(ctx context.Context, raw InstrumentInput) (*I
 		return nil, err
 	}
 
+	q := dbq.New(s.pool)
+
 	// Lookup by ISIN first when present.
 	if in.ISIN != nil && *in.ISIN != "" {
-		inst, err := s.findInstrumentByISIN(ctx, *in.ISIN)
+		inst, err := s.findInstrumentByISIN(ctx, q, *in.ISIN)
 		if err != nil {
 			return nil, err
 		}
@@ -82,7 +112,7 @@ func (s *Service) UpsertInstrument(ctx context.Context, raw InstrumentInput) (*I
 			return inst, nil
 		}
 	} else {
-		inst, err := s.findInstrumentBySymbol(ctx, in.Symbol, in.Exchange)
+		inst, err := s.findInstrumentBySymbol(ctx, q, in.Symbol, in.Exchange)
 		if err != nil {
 			return nil, err
 		}
@@ -92,86 +122,90 @@ func (s *Service) UpsertInstrument(ctx context.Context, raw InstrumentInput) (*I
 	}
 
 	id := uuidx.New()
-	row := s.pool.QueryRow(ctx, `
-		insert into instruments (id, symbol, isin, name, asset_class, currency, exchange)
-		values ($1, $2, $3, $4, $5::asset_class, $6, $7)
-		on conflict do nothing
-		returning id, symbol, isin, name, asset_class::text, currency, exchange, active, created_at, updated_at
-	`, id, in.Symbol, in.ISIN, in.Name, in.AssetClass, in.Currency, in.Exchange)
-	var inst Instrument
-	if err := scanInstrument(row, &inst); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			// Race: someone else inserted between our SELECT and INSERT.
-			if in.ISIN != nil && *in.ISIN != "" {
-				if got, _ := s.findInstrumentByISIN(ctx, *in.ISIN); got != nil {
-					return got, nil
-				}
-			}
-			if got, _ := s.findInstrumentBySymbol(ctx, in.Symbol, in.Exchange); got != nil {
-				return got, nil
-			}
-			return nil, fmt.Errorf("upsert instrument: race lost")
-		}
+	row, err := q.InsertInstrument(ctx, dbq.InsertInstrumentParams{
+		ID:         id,
+		Symbol:     in.Symbol,
+		Isin:       in.ISIN,
+		Name:       in.Name,
+		AssetClass: dbq.AssetClass(in.AssetClass),
+		Currency:   in.Currency,
+		Exchange:   in.Exchange,
+	})
+	if err != nil {
 		return nil, fmt.Errorf("upsert instrument: %w", err)
 	}
+	// ON CONFLICT DO NOTHING returns no rows when a conflict occurs; sqlc
+	// surfaces that as pgx.ErrNoRows.
+	inst := instrumentFromRow(row)
 	return &inst, nil
 }
 
-func (s *Service) findInstrumentByISIN(ctx context.Context, isin string) (*Instrument, error) {
-	var inst Instrument
-	err := scanInstrument(s.pool.QueryRow(ctx, `
-		select id, symbol, isin, name, asset_class::text, currency, exchange, active, created_at, updated_at
-		from instruments where isin = $1
-	`, isin), &inst)
+// findInstrumentByISIN wraps the sqlc query with nil-on-not-found semantics.
+func (s *Service) findInstrumentByISIN(ctx context.Context, q *dbq.Queries, isin string) (*Instrument, error) {
+	row, err := q.FindInstrumentByISIN(ctx, &isin)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
+	inst := Instrument{
+		ID: row.ID, Symbol: row.Symbol, ISIN: row.Isin, Name: row.Name,
+		AssetClass: row.AssetClass, Currency: row.Currency, Exchange: row.Exchange,
+		Active: row.Active, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}
 	return &inst, nil
 }
 
-func (s *Service) findInstrumentBySymbol(ctx context.Context, symbol string, exchange *string) (*Instrument, error) {
-	var inst Instrument
-	var err error
+func (s *Service) findInstrumentBySymbol(ctx context.Context, q *dbq.Queries, symbol string, exchange *string) (*Instrument, error) {
 	if exchange != nil {
-		err = scanInstrument(s.pool.QueryRow(ctx, `
-			select id, symbol, isin, name, asset_class::text, currency, exchange, active, created_at, updated_at
-			from instruments where symbol = $1 and exchange = $2 and isin is null
-		`, symbol, *exchange), &inst)
-	} else {
-		err = scanInstrument(s.pool.QueryRow(ctx, `
-			select id, symbol, isin, name, asset_class::text, currency, exchange, active, created_at, updated_at
-			from instruments where symbol = $1 and exchange is null and isin is null
-			limit 1
-		`, symbol), &inst)
+		row, err := q.FindInstrumentBySymbolAndExchange(ctx, dbq.FindInstrumentBySymbolAndExchangeParams{
+			Symbol:   symbol,
+			Exchange: exchange,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				// Fallback: if no exchange-specific row, try a symbol-only match.
+				return s.findInstrumentBySymbol(ctx, q, symbol, nil)
+			}
+			return nil, err
+		}
+		inst := Instrument{
+			ID: row.ID, Symbol: row.Symbol, ISIN: row.Isin, Name: row.Name,
+			AssetClass: row.AssetClass, Currency: row.Currency, Exchange: row.Exchange,
+			Active: row.Active, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		}
+		return &inst, nil
 	}
+
+	row, err := q.FindInstrumentBySymbolOnly(ctx, symbol)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Fallback: if no exchange-specific row, try a symbol-only match.
-			if exchange != nil {
-				return s.findInstrumentBySymbol(ctx, symbol, nil)
-			}
 			return nil, nil
 		}
 		return nil, err
+	}
+	inst := Instrument{
+		ID: row.ID, Symbol: row.Symbol, ISIN: row.Isin, Name: row.Name,
+		AssetClass: row.AssetClass, Currency: row.Currency, Exchange: row.Exchange,
+		Active: row.Active, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 	return &inst, nil
 }
 
 // GetInstrument returns an instrument by id.
 func (s *Service) GetInstrument(ctx context.Context, id uuid.UUID) (*Instrument, error) {
-	var inst Instrument
-	err := scanInstrument(s.pool.QueryRow(ctx, `
-		select id, symbol, isin, name, asset_class::text, currency, exchange, active, created_at, updated_at
-		from instruments where id = $1
-	`, id), &inst)
+	row, err := dbq.New(s.pool).GetInstrumentByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("instrument")
 		}
 		return nil, err
+	}
+	inst := Instrument{
+		ID: row.ID, Symbol: row.Symbol, ISIN: row.Isin, Name: row.Name,
+		AssetClass: row.AssetClass, Currency: row.Currency, Exchange: row.Exchange,
+		Active: row.Active, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 	return &inst, nil
 }
@@ -179,52 +213,47 @@ func (s *Service) GetInstrument(ctx context.Context, id uuid.UUID) (*Instrument,
 // GetInstrumentBySymbol returns an instrument by symbol (case-insensitive),
 // preferring an active row. Returns NotFoundError when no match exists.
 func (s *Service) GetInstrumentBySymbol(ctx context.Context, symbol string) (*Instrument, error) {
-	var inst Instrument
-	err := scanInstrument(s.pool.QueryRow(ctx, `
-		select id, symbol, isin, name, asset_class::text, currency, exchange, active, created_at, updated_at
-		from instruments where upper(symbol) = upper($1)
-		order by active desc, updated_at desc
-		limit 1
-	`, symbol), &inst)
+	row, err := dbq.New(s.pool).GetInstrumentBySymbol(ctx, symbol)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("instrument")
 		}
 		return nil, err
 	}
+	inst := Instrument{
+		ID: row.ID, Symbol: row.Symbol, ISIN: row.Isin, Name: row.Name,
+		AssetClass: row.AssetClass, Currency: row.Currency, Exchange: row.Exchange,
+		Active: row.Active, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}
 	return &inst, nil
 }
 
 // SearchInstruments returns instruments matching q (prefix on symbol or name).
 // Used by the trade-creation autocomplete.
-func (s *Service) SearchInstruments(ctx context.Context, q string, limit int) ([]Instrument, error) {
+func (s *Service) SearchInstruments(ctx context.Context, query string, limit int) ([]Instrument, error) {
 	if limit <= 0 {
 		limit = 25
 	}
-	q = strings.TrimSpace(q)
-	if q == "" {
+	query = strings.TrimSpace(query)
+	if query == "" {
 		return []Instrument{}, nil
 	}
-	rows, err := s.pool.Query(ctx, `
-		select id, symbol, isin, name, asset_class::text, currency, exchange, active, created_at, updated_at
-		from instruments
-		where active and (symbol ilike $1 || '%' or name ilike '%' || $1 || '%' or isin ilike $1 || '%')
-		order by case when upper(symbol) = upper($1) then 0 else 1 end, symbol
-		limit $2
-	`, q, limit)
+	rows, err := dbq.New(s.pool).SearchInstruments(ctx, dbq.SearchInstrumentsParams{
+		Query:      &query,
+		MaxResults: int32(limit),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Instrument, 0)
-	for rows.Next() {
-		var inst Instrument
-		if err := scanInstrument(rows, &inst); err != nil {
-			return nil, err
-		}
-		out = append(out, inst)
+	out := make([]Instrument, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Instrument{
+			ID: r.ID, Symbol: r.Symbol, ISIN: r.Isin, Name: r.Name,
+			AssetClass: r.AssetClass, Currency: r.Currency, Exchange: r.Exchange,
+			Active: r.Active, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -285,22 +314,38 @@ func (s *Service) CreateTrade(ctx context.Context, workspaceID uuid.UUID, raw Tr
 	}
 
 	id := uuidx.New()
-	row := s.pool.QueryRow(ctx, `
-		insert into investment_trades (
-			id, workspace_id, account_id, instrument_id, side,
-			quantity, price, currency, fee_amount, fee_currency,
-			trade_date, settle_date
-		) values (
-			$1, $2, $3, $4, $5::trade_side,
-			$6::numeric, $7::numeric, $8, $9::numeric, $10,
-			$11, $12
-		)
-		returning `+tradeCols, id, workspaceID, in.AccountID, in.InstrumentID, in.Side,
-		in.Quantity.String(), in.Price.String(), in.Currency,
-		in.FeeAmount.String(), in.Currency, in.TradeDate, in.SettleDate)
-	tr, err := scanTradeRow(row)
+	q := dbq.New(s.pool)
+	row, err := q.InsertInvestmentTrade(ctx, dbq.InsertInvestmentTradeParams{
+		ID:           id,
+		WorkspaceID:  workspaceID,
+		AccountID:    in.AccountID,
+		InstrumentID: in.InstrumentID,
+		Side:         dbq.TradeSide(in.Side),
+		Quantity:     decimalToNumeric(in.Quantity),
+		Price:        decimalToNumeric(in.Price),
+		Currency:     in.Currency,
+		FeeAmount:    decimalToNumeric(in.FeeAmount),
+		FeeCurrency:  in.Currency,
+		TradeDate:    in.TradeDate,
+		SettleDate:   in.SettleDate,
+	})
 	if err != nil {
 		return nil, mapWriteError(err)
+	}
+
+	// Fetch the symbol from the instrument for the response.
+	instCurrency, _ := q.GetInstrumentCurrency(ctx, in.InstrumentID)
+	_ = instCurrency // used only for position refresh below
+	instRow, _ := q.GetInstrumentByID(ctx, in.InstrumentID)
+
+	tr := &Trade{
+		ID: row.ID, WorkspaceID: row.WorkspaceID, AccountID: row.AccountID,
+		InstrumentID: row.InstrumentID, Symbol: instRow.Symbol,
+		Side: row.Side, Quantity: row.Quantity, Price: row.Price,
+		Currency: row.Currency, FeeAmount: row.FeeAmount, FeeCurrency: row.FeeCurrency,
+		TradeDate: row.TradeDate, SettleDate: row.SettleDate,
+		LinkedCashTransactionID: row.LinkedCashTransactionID,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 	if err := s.RefreshPosition(ctx, workspaceID, in.AccountID, in.InstrumentID); err != nil {
 		// Replay failure is recoverable on next read; surface as 500.
@@ -311,23 +356,24 @@ func (s *Service) CreateTrade(ctx context.Context, workspaceID uuid.UUID, raw Tr
 
 // DeleteTrade removes a trade and refreshes the affected position cache.
 func (s *Service) DeleteTrade(ctx context.Context, workspaceID, tradeID uuid.UUID) error {
-	var accountID, instrumentID uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		select account_id, instrument_id from investment_trades
-		where workspace_id = $1 and id = $2
-	`, workspaceID, tradeID).Scan(&accountID, &instrumentID)
+	q := dbq.New(s.pool)
+	ids, err := q.GetTradeAccountInstrument(ctx, dbq.GetTradeAccountInstrumentParams{
+		WorkspaceID: workspaceID,
+		ID:          tradeID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NewNotFoundError("trade")
 		}
 		return err
 	}
-	if _, err := s.pool.Exec(ctx, `
-		delete from investment_trades where workspace_id = $1 and id = $2
-	`, workspaceID, tradeID); err != nil {
+	if err := q.DeleteInvestmentTrade(ctx, dbq.DeleteInvestmentTradeParams{
+		WorkspaceID: workspaceID,
+		ID:          tradeID,
+	}); err != nil {
 		return fmt.Errorf("delete trade: %w", err)
 	}
-	if err := s.RefreshPosition(ctx, workspaceID, accountID, instrumentID); err != nil {
+	if err := s.RefreshPosition(ctx, workspaceID, ids.AccountID, ids.InstrumentID); err != nil {
 		return fmt.Errorf("refresh position: %w", err)
 	}
 	return nil
@@ -336,6 +382,7 @@ func (s *Service) DeleteTrade(ctx context.Context, workspaceID, tradeID uuid.UUI
 // ListTrades returns trades for the workspace, optionally filtered by account
 // and/or instrument. Ordered by trade_date desc.
 func (s *Service) ListTrades(ctx context.Context, workspaceID uuid.UUID, accountID, instrumentID *uuid.UUID) ([]Trade, error) {
+	// Dynamic SQL: conditional WHERE clauses based on optional filters.
 	args := []any{workspaceID}
 	clauses := []string{"t.workspace_id = $1"}
 	next := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
@@ -423,20 +470,32 @@ func (s *Service) CreateDividend(ctx context.Context, workspaceID uuid.UUID, raw
 	}
 
 	id := uuidx.New()
-	row := s.pool.QueryRow(ctx, `
-		insert into dividend_events (
-			id, workspace_id, account_id, instrument_id,
-			ex_date, pay_date, amount_per_unit, currency, total_amount, tax_withheld
-		) values (
-			$1, $2, $3, $4,
-			$5, $6, $7::numeric, $8, $9::numeric, $10::numeric
-		)
-		returning `+dividendCols, id, workspaceID, in.AccountID, in.InstrumentID,
-		in.ExDate, in.PayDate, in.AmountPerUnit.String(), in.Currency,
-		in.TotalAmount.String(), in.TaxWithheld.String())
-	dv, err := scanDividendRow(row)
+	q := dbq.New(s.pool)
+	row, err := q.InsertDividendEvent(ctx, dbq.InsertDividendEventParams{
+		ID:            id,
+		WorkspaceID:   workspaceID,
+		AccountID:     in.AccountID,
+		InstrumentID:  in.InstrumentID,
+		ExDate:        in.ExDate,
+		PayDate:       in.PayDate,
+		AmountPerUnit: decimalToNumeric(in.AmountPerUnit),
+		Currency:      in.Currency,
+		TotalAmount:   decimalToNumeric(in.TotalAmount),
+		TaxWithheld:   decimalToNumeric(in.TaxWithheld),
+	})
 	if err != nil {
 		return nil, mapWriteError(err)
+	}
+
+	// Fetch the symbol for the response.
+	instRow, _ := q.GetInstrumentByID(ctx, in.InstrumentID)
+
+	dv := &DividendEvent{
+		ID: row.ID, WorkspaceID: row.WorkspaceID, AccountID: row.AccountID,
+		InstrumentID: row.InstrumentID, Symbol: instRow.Symbol,
+		ExDate: row.ExDate, PayDate: row.PayDate, AmountPerUnit: row.AmountPerUnit,
+		Currency: row.Currency, TotalAmount: row.TotalAmount, TaxWithheld: row.TaxWithheld,
+		LinkedCashTransactionID: row.LinkedCashTransactionID, CreatedAt: row.CreatedAt,
 	}
 	if err := s.RefreshPosition(ctx, workspaceID, in.AccountID, in.InstrumentID); err != nil {
 		return dv, fmt.Errorf("refresh position: %w", err)
@@ -446,28 +505,30 @@ func (s *Service) CreateDividend(ctx context.Context, workspaceID uuid.UUID, raw
 
 // DeleteDividend removes a dividend and refreshes the affected position.
 func (s *Service) DeleteDividend(ctx context.Context, workspaceID, dividendID uuid.UUID) error {
-	var accountID, instrumentID uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		select account_id, instrument_id from dividend_events
-		where workspace_id = $1 and id = $2
-	`, workspaceID, dividendID).Scan(&accountID, &instrumentID)
+	q := dbq.New(s.pool)
+	ids, err := q.GetDividendAccountInstrument(ctx, dbq.GetDividendAccountInstrumentParams{
+		WorkspaceID: workspaceID,
+		ID:          dividendID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NewNotFoundError("dividend")
 		}
 		return err
 	}
-	if _, err := s.pool.Exec(ctx, `
-		delete from dividend_events where workspace_id = $1 and id = $2
-	`, workspaceID, dividendID); err != nil {
+	if err := q.DeleteDividendEvent(ctx, dbq.DeleteDividendEventParams{
+		WorkspaceID: workspaceID,
+		ID:          dividendID,
+	}); err != nil {
 		return err
 	}
-	return s.RefreshPosition(ctx, workspaceID, accountID, instrumentID)
+	return s.RefreshPosition(ctx, workspaceID, ids.AccountID, ids.InstrumentID)
 }
 
 // ListDividends returns dividend events for the workspace, optionally
 // filtered by account and/or instrument. Ordered by pay_date desc.
 func (s *Service) ListDividends(ctx context.Context, workspaceID uuid.UUID, accountID, instrumentID *uuid.UUID) ([]DividendEvent, error) {
+	// Dynamic SQL: conditional WHERE clauses based on optional filters.
 	args := []any{workspaceID}
 	clauses := []string{"d.workspace_id = $1"}
 	next := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
@@ -505,10 +566,11 @@ func (s *Service) ListDividends(ctx context.Context, workspaceID uuid.UUID, acco
 // the underlying account exists in the workspace and the extension row is
 // missing. Idempotent.
 func (s *Service) ensureInvestmentAccount(ctx context.Context, workspaceID, accountID uuid.UUID) error {
-	var exists bool
-	err := s.pool.QueryRow(ctx, `
-		select exists(select 1 from investment_accounts where workspace_id = $1 and account_id = $2)
-	`, workspaceID, accountID).Scan(&exists)
+	q := dbq.New(s.pool)
+	exists, err := q.InvestmentAccountExists(ctx, dbq.InvestmentAccountExistsParams{
+		WorkspaceID: workspaceID,
+		AccountID:   accountID,
+	})
 	if err != nil {
 		return err
 	}
@@ -516,10 +578,10 @@ func (s *Service) ensureInvestmentAccount(ctx context.Context, workspaceID, acco
 		return nil
 	}
 	// Confirm the parent account exists and is workspace-scoped.
-	var kind string
-	err = s.pool.QueryRow(ctx, `
-		select kind::text from accounts where workspace_id = $1 and id = $2
-	`, workspaceID, accountID).Scan(&kind)
+	kind, err := q.GetAccountKind(ctx, dbq.GetAccountKindParams{
+		WorkspaceID: workspaceID,
+		ID:          accountID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NewNotFoundError("account")
@@ -529,18 +591,17 @@ func (s *Service) ensureInvestmentAccount(ctx context.Context, workspaceID, acco
 	if kind != "brokerage" && kind != "crypto_wallet" {
 		return httpx.NewValidationError("investment trades require a brokerage or crypto_wallet account")
 	}
-	if _, err := s.pool.Exec(ctx, `
-		insert into investment_accounts (account_id, workspace_id)
-		values ($1, $2)
-		on conflict do nothing
-	`, accountID, workspaceID); err != nil {
+	if err := q.InsertInvestmentAccount(ctx, dbq.InsertInvestmentAccountParams{
+		AccountID:   accountID,
+		WorkspaceID: workspaceID,
+	}); err != nil {
 		return fmt.Errorf("ensure investment_account: %w", err)
 	}
 	return nil
 }
 
 // ---------------------------------------------------------------------------
-// SQL column lists & scanners
+// SQL column lists & scanners (kept for dynamic queries)
 // ---------------------------------------------------------------------------
 
 const tradeCols = `
@@ -556,13 +617,6 @@ const dividendCols = `
 	d.total_amount::text, d.tax_withheld::text,
 	d.linked_cash_transaction_id, d.created_at
 `
-
-func scanInstrument(row interface{ Scan(...any) error }, inst *Instrument) error {
-	return row.Scan(
-		&inst.ID, &inst.Symbol, &inst.ISIN, &inst.Name, &inst.AssetClass,
-		&inst.Currency, &inst.Exchange, &inst.Active, &inst.CreatedAt, &inst.UpdatedAt,
-	)
-}
 
 type rowScanner interface{ Scan(...any) error }
 
@@ -590,6 +644,14 @@ func scanDividendRow(row rowScanner) (*DividendEvent, error) {
 		return nil, err
 	}
 	return &d, nil
+}
+
+func instrumentFromRow(r dbq.InsertInstrumentRow) Instrument {
+	return Instrument{
+		ID: r.ID, Symbol: r.Symbol, ISIN: r.Isin, Name: r.Name,
+		AssetClass: r.AssetClass, Currency: r.Currency, Exchange: r.Exchange,
+		Active: r.Active, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+	}
 }
 
 func normalizeInstrument(in InstrumentInput) (InstrumentInput, error) {

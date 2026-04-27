@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CreateTransactionForm } from "@/components/transactions/create-transaction-form";
@@ -623,18 +624,16 @@ function TransactionFiltersPanel({
       <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-[minmax(120px,140px)_minmax(120px,140px)_minmax(120px,140px)_minmax(120px,140px)_minmax(120px,140px)_minmax(180px,1fr)]">
         <label className="text-fg-muted flex flex-col gap-1.5 text-[12px] font-medium">
           From
-          <Input
-            type="date"
+          <DateInput
             value={filters.from}
-            onChange={(event) => onFilterChange({ from: event.target.value })}
+            onChange={(iso) => onFilterChange({ from: iso })}
           />
         </label>
         <label className="text-fg-muted flex flex-col gap-1.5 text-[12px] font-medium">
           To
-          <Input
-            type="date"
+          <DateInput
             value={filters.to}
-            onChange={(event) => onFilterChange({ to: event.target.value })}
+            onChange={(iso) => onFilterChange({ to: iso })}
           />
         </label>
         <label className="text-fg-muted flex flex-col gap-1.5 text-[12px] font-medium">

@@ -10,9 +10,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
@@ -49,6 +51,25 @@ func (s *Service) HasPriceProvider() bool { return s.prices != nil }
 
 // HasFXProvider reports whether an FX provider is configured.
 func (s *Service) HasFXProvider() bool { return s.fx != nil }
+
+// decimalToNumeric converts a decimal.Decimal to pgtype.Numeric for sqlc params.
+func decimalToNumeric(d decimal.Decimal) pgtype.Numeric {
+	var n pgtype.Numeric
+	_ = n.Scan(d.String())
+	return n
+}
+
+// numericToDecimal converts a pgtype.Numeric to decimal.Decimal.
+func numericToDecimal(n pgtype.Numeric) decimal.Decimal {
+	if !n.Valid {
+		return decimal.Zero
+	}
+	d, _ := decimal.NewFromString(n.Int.String())
+	if n.Exp != 0 {
+		d = d.Shift(int32(n.Exp))
+	}
+	return d
+}
 
 // FXRate returns the rate for converting base -> quote on asOf. It first
 // looks up the exact-date cache, then the most recent prior-business-day
@@ -209,21 +230,18 @@ func rangeNeedsFetch(cached map[time.Time]PriceQuote, from, to time.Time) bool {
 }
 
 func (s *Service) lookupCachedFX(ctx context.Context, base, quote string, day time.Time) (decimal.Decimal, bool, error) {
-	var rate decimal.Decimal
-	err := s.pool.QueryRow(ctx, `
-		select rate
-		from fx_rates
-		where base_currency = $1 and quote_currency = $2 and as_of <= $3
-		order by as_of desc
-		limit 1
-	`, base, quote, day).Scan(&rate)
+	rateNum, err := dbq.New(s.pool).LookupCachedFXRate(ctx, dbq.LookupCachedFXRateParams{
+		BaseCurrency:  base,
+		QuoteCurrency: quote,
+		AsOf:          day,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return decimal.Zero, false, nil
 		}
 		return decimal.Zero, false, fmt.Errorf("query fx_rates: %w", err)
 	}
-	return rate, true, nil
+	return numericToDecimal(rateNum), true, nil
 }
 
 func (s *Service) persistFX(ctx context.Context, obs FXObservation) error {
@@ -231,11 +249,14 @@ func (s *Service) persistFX(ctx context.Context, obs FXObservation) error {
 	if src == "" {
 		src = "manual"
 	}
-	_, err := s.pool.Exec(ctx, `
-		insert into fx_rates (id, base_currency, quote_currency, as_of, rate, source)
-		values ($1, $2, $3, $4, $5::numeric, $6::fx_source)
-		on conflict (base_currency, quote_currency, as_of, source) do nothing
-	`, uuidx.New(), strings.ToUpper(obs.Base), strings.ToUpper(obs.Quote), asOfDate(obs.AsOf), obs.Rate.String(), src)
+	err := dbq.New(s.pool).PersistFXRate(ctx, dbq.PersistFXRateParams{
+		ID:            uuidx.New(),
+		BaseCurrency:  strings.ToUpper(obs.Base),
+		QuoteCurrency: strings.ToUpper(obs.Quote),
+		AsOf:          asOfDate(obs.AsOf),
+		Rate:          decimalToNumeric(obs.Rate),
+		Source:        dbq.FxSource(src),
+	})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23514" {
@@ -248,51 +269,45 @@ func (s *Service) persistFX(ctx context.Context, obs FXObservation) error {
 }
 
 func (s *Service) lookupCachedLatestPrice(ctx context.Context, instrumentID uuid.UUID) (PriceQuote, bool, error) {
-	var q PriceQuote
-	var price decimal.Decimal
-	err := s.pool.QueryRow(ctx, `
-		select as_of, price, currency, source::text
-		from instrument_prices
-		where instrument_id = $1
-		order by as_of desc
-		limit 1
-	`, instrumentID).Scan(&q.AsOf, &price, &q.Currency, &q.Source)
+	row, err := dbq.New(s.pool).LookupCachedLatestPrice(ctx, instrumentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PriceQuote{}, false, nil
 		}
 		return PriceQuote{}, false, fmt.Errorf("query instrument_prices: %w", err)
 	}
-	q.Price = price
-	return q, true, nil
+	return PriceQuote{
+		AsOf:     row.AsOf,
+		Price:    numericToDecimal(row.Price),
+		Currency: row.Currency,
+		Source:   row.Source,
+	}, true, nil
 }
 
 func (s *Service) lookupCachedRange(ctx context.Context, instrumentID uuid.UUID, from, to time.Time) (map[time.Time]PriceQuote, error) {
-	rows, err := s.pool.Query(ctx, `
-		select as_of, price, currency, source::text
-		from instrument_prices
-		where instrument_id = $1 and as_of >= $2 and as_of <= $3
-		order by as_of asc
-	`, instrumentID, from, to.Add(24*time.Hour))
+	rows, err := dbq.New(s.pool).LookupCachedPriceRange(ctx, dbq.LookupCachedPriceRangeParams{
+		InstrumentID: instrumentID,
+		FromDate:     from,
+		ToDate:       to.Add(24 * time.Hour),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("query instrument_prices range: %w", err)
 	}
-	defer rows.Close()
 	out := make(map[time.Time]PriceQuote)
-	for rows.Next() {
-		var q PriceQuote
-		var price decimal.Decimal
-		if err := rows.Scan(&q.AsOf, &price, &q.Currency, &q.Source); err != nil {
-			return nil, err
+	for _, r := range rows {
+		q := PriceQuote{
+			AsOf:     r.AsOf,
+			Price:    numericToDecimal(r.Price),
+			Currency: r.Currency,
+			Source:   r.Source,
 		}
-		q.Price = price
 		// Bucket on UTC date; if a day already has a primary row, don't overwrite.
 		key := dayKey(q.AsOf)
 		if _, exists := out[key]; !exists {
 			out[key] = q
 		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Service) persistPrice(ctx context.Context, instrumentID uuid.UUID, q PriceQuote) error {
@@ -301,15 +316,14 @@ func (s *Service) persistPrice(ctx context.Context, instrumentID uuid.UUID, q Pr
 		src = "provider_primary"
 	}
 	cur := strings.ToUpper(q.Currency)
-	_, err := s.pool.Exec(ctx, `
-		insert into instrument_prices (id, instrument_id, as_of, price, currency, source)
-		values ($1, $2, $3, $4::numeric, $5, $6::price_source)
-		on conflict (instrument_id, as_of, source) do nothing
-	`, uuidx.New(), instrumentID, q.AsOf, q.Price.String(), cur, src)
-	if err != nil {
-		return fmt.Errorf("persist instrument_price: %w", err)
-	}
-	return nil
+	return dbq.New(s.pool).PersistInstrumentPrice(ctx, dbq.PersistInstrumentPriceParams{
+		ID:           uuidx.New(),
+		InstrumentID: instrumentID,
+		AsOf:         q.AsOf,
+		Price:        decimalToNumeric(q.Price),
+		Currency:     cur,
+		Source:       dbq.PriceSource(src),
+	})
 }
 
 // asOfDate normalises a timestamp to UTC midnight of its date.
