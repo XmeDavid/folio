@@ -305,7 +305,8 @@ func (q *Queries) ListOpenPositionInstruments(ctx context.Context, workspaceID u
 
 const listOpenPositionInstrumentsWithPrice = `-- name: ListOpenPositionInstrumentsWithPrice :many
 SELECT DISTINCT ON (p.instrument_id)
-  p.instrument_id, i.symbol, lp.as_of::timestamptz AS last_price_as_of
+  p.instrument_id, i.symbol,
+  coalesce(lp.as_of, '0001-01-01 00:00:00+00'::timestamptz) AS last_price_as_of
 FROM investment_positions p
 JOIN instruments i ON i.id = p.instrument_id
 LEFT JOIN LATERAL (
