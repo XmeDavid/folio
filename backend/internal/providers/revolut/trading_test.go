@@ -258,6 +258,199 @@ func TestParseTradingCSV_CashTransferSkipped(t *testing.T) {
 	}
 }
 
+// TestParseTradingCSV_Merger_StockForStock_TransfersCostBasis covers the
+// canonical paired MERGER - STOCK rows from a stock-for-stock deal: the
+// old ticker (PARAA) is closed at average cost so realized P&L on the
+// merger is zero, and the new ticker (PSKY) opens with the prior cost
+// basis carried over.
+func TestParseTradingCSV_Merger_StockForStock_TransfersCostBasis(t *testing.T) {
+	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
+2025-01-10T10:00:00.000Z,PARAA,BUY - MARKET,7,USD 10.00,USD 70.00,USD,1.0
+2025-08-08T13:52:54.198654Z,PSKY,MERGER - STOCK,10.733331,,USD 0,USD,1.1676
+2025-08-08T13:52:54.296206Z,PARAA,MERGER - STOCK,-7,,USD 0,USD,1.1676
+`
+	res, err := ParseTradingCSV([]byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 3 {
+		t.Fatalf("want 3 events, got %d: %+v", len(res.Events), res.Events)
+	}
+
+	var paraaSell, pskyBuy bool
+	for _, ev := range res.Events {
+		if ev.Symbol == "PARAA" && ev.TradeSide == "sell" {
+			paraaSell = true
+			if ev.Quantity.String() != "7" {
+				t.Fatalf("PARAA sell qty = %s, want 7", ev.Quantity.String())
+			}
+			// Average cost = 70 / 7 = 10
+			want := decimal.NewFromInt(10)
+			if ev.Price.Sub(want).Abs().GreaterThan(decimal.New(1, -6)) {
+				t.Fatalf("PARAA sell price = %s, want 10", ev.Price.String())
+			}
+		}
+		if ev.Symbol == "PSKY" && ev.TradeSide == "buy" {
+			pskyBuy = true
+			if ev.Quantity.String() != "10.733331" {
+				t.Fatalf("PSKY buy qty = %s", ev.Quantity.String())
+			}
+			// Cost transferred = 70; per-unit = 70 / 10.733331
+			want := decimal.NewFromInt(70).Div(decimal.NewFromFloat(10.733331))
+			if ev.Price.Sub(want).Abs().GreaterThan(decimal.New(1, -6)) {
+				t.Fatalf("PSKY buy price = %s, want %s", ev.Price.String(), want.String())
+			}
+		}
+	}
+	if !paraaSell || !pskyBuy {
+		t.Fatalf("expected paired sell+buy, got %+v", res.Events)
+	}
+}
+
+// TestParseTradingCSV_Merger_PairOrderIndependent verifies that the merger
+// pair is recognised regardless of which side appears first in the file.
+func TestParseTradingCSV_Merger_PairOrderIndependent(t *testing.T) {
+	// Negative side first.
+	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
+2025-01-10T10:00:00.000Z,PARAA,BUY - MARKET,7,USD 10.00,USD 70.00,USD,1.0
+2025-08-08T13:52:54.100Z,PARAA,MERGER - STOCK,-7,,USD 0,USD,1.1676
+2025-08-08T13:52:54.200Z,PSKY,MERGER - STOCK,10.733331,,USD 0,USD,1.1676
+`
+	res, err := ParseTradingCSV([]byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 3 {
+		t.Fatalf("want 3 events, got %d", len(res.Events))
+	}
+	var sawSell, sawBuy bool
+	for _, ev := range res.Events {
+		if ev.Symbol == "PARAA" && ev.TradeSide == "sell" && !ev.Price.IsZero() {
+			sawSell = true
+		}
+		if ev.Symbol == "PSKY" && ev.TradeSide == "buy" && !ev.Price.IsZero() {
+			sawBuy = true
+		}
+	}
+	if !sawSell || !sawBuy {
+		t.Fatalf("pairing should be order-independent: %+v", res.Events)
+	}
+}
+
+// TestParseTradingCSV_Merger_NoPriorPosition handles a partial-CSV import
+// where the old ticker was never bought in this file. The pair still
+// matches but transfers no cost basis — both legs price at 0 so quantity
+// at least tracks.
+func TestParseTradingCSV_Merger_NoPriorPosition(t *testing.T) {
+	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
+2025-08-08T13:52:54.198654Z,PSKY,MERGER - STOCK,10.733331,,USD 0,USD,1.1676
+2025-08-08T13:52:54.296206Z,PARAA,MERGER - STOCK,-7,,USD 0,USD,1.1676
+`
+	res, err := ParseTradingCSV([]byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 2 {
+		t.Fatalf("want 2 events, got %d", len(res.Events))
+	}
+	for _, ev := range res.Events {
+		if !ev.Price.IsZero() {
+			t.Fatalf("no prior cost basis -> price 0, got %+v", ev)
+		}
+	}
+}
+
+// TestParseTradingCSV_Merger_TimestampsTooFarApart guards the pairing
+// window: rows on different days do not pair, even if they have opposite
+// signs and look like a deal. Each falls back to a price-0 synthetic
+// trade.
+func TestParseTradingCSV_Merger_TimestampsTooFarApart(t *testing.T) {
+	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
+2025-01-10T10:00:00.000Z,PARAA,BUY - MARKET,7,USD 10.00,USD 70.00,USD,1.0
+2025-08-08T13:52:54.198654Z,PSKY,MERGER - STOCK,10.733331,,USD 0,USD,1.1676
+2025-08-09T13:52:54.296206Z,PARAA,MERGER - STOCK,-7,,USD 0,USD,1.1676
+`
+	res, err := ParseTradingCSV([]byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Initial buy + two unpaired fallback trades.
+	if len(res.Events) != 3 {
+		t.Fatalf("want 3 events, got %d", len(res.Events))
+	}
+	for _, ev := range res.Events {
+		if ev.Symbol == "PSKY" && !ev.Price.IsZero() {
+			t.Fatalf("unpaired PSKY merger should price at 0, got %s", ev.Price.String())
+		}
+		if ev.Symbol == "PARAA" && ev.TradeSide == "sell" && !ev.Price.IsZero() {
+			t.Fatalf("unpaired PARAA merger should price at 0, got %s", ev.Price.String())
+		}
+	}
+}
+
+// TestParseTradingCSV_Merger_OrphanPositive emits a price-0 BUY when only
+// the new ticker side is in the file (e.g. spinoff reported as a single
+// row). Quantity tracks but cost basis cannot be reconstructed.
+func TestParseTradingCSV_Merger_OrphanPositive(t *testing.T) {
+	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
+2025-08-08T13:52:54.198654Z,PSKY,MERGER - STOCK,10.733331,,USD 0,USD,1.1676
+`
+	res, err := ParseTradingCSV([]byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(res.Events))
+	}
+	ev := res.Events[0]
+	if ev.TradeSide != "buy" || !ev.Price.IsZero() || ev.Quantity.String() != "10.733331" {
+		t.Fatalf("orphan +merger: %+v", ev)
+	}
+}
+
+// TestParseTradingCSV_Merger_OrphanNegative is the matching case for the
+// negative-only side: emit a price-0 SELL of the disappearing ticker.
+// Without this the old position would stay open forever.
+func TestParseTradingCSV_Merger_OrphanNegative(t *testing.T) {
+	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
+2025-01-10T10:00:00.000Z,PARAA,BUY - MARKET,7,USD 10.00,USD 70.00,USD,1.0
+2025-08-08T13:52:54.296206Z,PARAA,MERGER - STOCK,-7,,USD 0,USD,1.1676
+`
+	res, err := ParseTradingCSV([]byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 2 {
+		t.Fatalf("want 2 events, got %d", len(res.Events))
+	}
+	merger := res.Events[1]
+	if merger.TradeSide != "sell" || merger.Symbol != "PARAA" || !merger.Price.IsZero() {
+		t.Fatalf("orphan -merger: %+v", merger)
+	}
+}
+
+// TestParseTradingCSV_Merger_SameSignNotPaired guards against pairing two
+// merger rows that happen to land in the same window with the same sign
+// (e.g. two spinoff legs from one parent). Each emits independently.
+func TestParseTradingCSV_Merger_SameSignNotPaired(t *testing.T) {
+	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
+2025-08-08T13:52:54.100Z,SPIN1,MERGER - STOCK,5,,USD 0,USD,1.0
+2025-08-08T13:52:54.200Z,SPIN2,MERGER - STOCK,3,,USD 0,USD,1.0
+`
+	res, err := ParseTradingCSV([]byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 2 {
+		t.Fatalf("want 2 events, got %d", len(res.Events))
+	}
+	for _, ev := range res.Events {
+		if ev.TradeSide != "buy" || !ev.Price.IsZero() {
+			t.Fatalf("same-sign rows should not pair: %+v", ev)
+		}
+	}
+}
+
 func TestParseTradingCSV_SkipsCashEvents(t *testing.T) {
 	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
 2025-08-01T10:30:00.000Z,,DEPOSIT,,,USD 5000.00,USD,
