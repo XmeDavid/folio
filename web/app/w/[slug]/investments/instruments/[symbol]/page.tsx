@@ -446,10 +446,12 @@ function InstrumentSummary({ detail }: { detail: InstrumentDetail }) {
     0
   );
   const totalMarketValue = openPositions.reduce(
-    (s, p) => s + (p.marketValue != null ? Number(p.marketValue) : 0),
+    (s, p) => s + (positionMarketValue(p, detail) ?? 0),
     0
   );
-  const haveAnyMarketValue = openPositions.some((p) => p.marketValue != null);
+  const haveAnyMarketValue = openPositions.some(
+    (p) => positionMarketValue(p, detail) !== null
+  );
   const realised = detail.positions.reduce(
     (s, p) => s + Number(p.realisedPnL || 0),
     0
@@ -548,6 +550,22 @@ function InstrumentSummary({ detail }: { detail: InstrumentDetail }) {
       </CardContent>
     </Card>
   );
+}
+
+function positionMarketValue(
+  position: InstrumentDetail["positions"][number],
+  detail: InstrumentDetail
+): number | null {
+  if (position.marketValue != null) {
+    return Number(position.marketValue);
+  }
+  if (
+    !detail.lastQuote ||
+    detail.lastQuote.currency !== detail.instrument.currency
+  ) {
+    return null;
+  }
+  return Number(position.quantity || 0) * Number(detail.lastQuote.price || 0);
 }
 
 function Stat({
