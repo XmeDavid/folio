@@ -131,7 +131,7 @@ func ParseTradingCSV(content []byte) (*ParseResult, error) {
 			emit(sellEv)
 			emit(buyEv)
 		case strings.HasPrefix(typ, "TRANSFER FROM "):
-			ev, ok := mapTransferRow(row, idx)
+			ev, ok := mapTransferRow(row, idx, runningQty)
 			if !ok {
 				continue
 			}
@@ -313,10 +313,22 @@ func mapPositionClosureRow(row []string, idx map[string]int, runningQty map[stri
 // Revolut Securities Europe UAB). Cash-only transfers have an empty ticker
 // and never reach this path. Sign of Quantity drives direction: positive for
 // the receiving side (synthetic BUY), negative for the sending side
-// (synthetic SELL). Price is 0 since the row carries no consideration; the
-// original cost basis cannot be reconstructed from a single-account export
-// and stays for the user to reconcile if both sides are imported.
-func mapTransferRow(row []string, idx map[string]int) (importevent.Event, bool) {
+// (synthetic SELL). Price is 0 since the row carries no consideration.
+//
+// In practice Revolut's 2023 EU migration emits a single consolidated CSV
+// per user that contains both the pre-migration buys/sells (in the old
+// entity) and the inbound TRANSFER row marking the move into the new
+// entity. The prior rows already built up the running position, so adding
+// another synthetic BUY for the same shares would double-count them. When
+// the row's positive quantity is already covered by the running position
+// for that ticker, the transfer is treated as a no-op — the shares simply
+// continue in the new entity. A positive transfer beyond the running
+// position (e.g. importing only the receiving entity's CSV with no prior
+// history) still emits the BUY so quantity tracks. The negative-quantity
+// SELL path is unchanged since Revolut's actual exports don't use it for
+// the migration and the symmetric removal isn't subject to the same
+// double-count.
+func mapTransferRow(row []string, idx map[string]int, runningQty map[string]decimal.Decimal) (importevent.Event, bool) {
 	t, err := parseRevolutDate(get(row, idx["Date"]))
 	if err != nil {
 		return importevent.Event{}, false
@@ -328,6 +340,11 @@ func mapTransferRow(row []string, idx map[string]int) (importevent.Event, bool) 
 	qty, err := decimal.NewFromString(strings.TrimSpace(get(row, idx["Quantity"])))
 	if err != nil || qty.IsZero() {
 		return importevent.Event{}, false
+	}
+	if !qty.IsNegative() {
+		if prior, ok := runningQty[ticker]; ok && prior.GreaterThanOrEqual(qty) {
+			return importevent.Event{}, false
+		}
 	}
 	currency := strings.ToUpper(strings.TrimSpace(get(row, idx["Currency"])))
 	if currency == "" {

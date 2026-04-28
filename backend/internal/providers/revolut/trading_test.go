@@ -223,6 +223,33 @@ func TestParseTradingCSV_TransferIn_AddsShares(t *testing.T) {
 	}
 }
 
+// TestParseTradingCSV_TransferIn_NoOpWhenPriorPositionCovers reproduces the
+// Revolut Trading Ltd → Revolut Securities Europe UAB entity migration that
+// every EU customer received in 2023-09: the consolidated CSV contains both
+// the pre-migration buys (which already built up the position) and the
+// TRANSFER row marking the migration. The transfer is the *same* shares
+// continuing in the new entity, so it must not emit another synthetic BUY
+// or the holding doubles.
+func TestParseTradingCSV_TransferIn_NoOpWhenPriorPositionCovers(t *testing.T) {
+	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
+2023-01-15T10:00:00.000Z,GME,BUY - MARKET,20,USD 20.00,USD 400.00,USD,1.05
+2023-06-01T10:00:00.000Z,GME,BUY - MARKET,12.5,USD 22.00,USD 275.00,USD,1.07
+2023-09-09T09:51:59.189976Z,GME,TRANSFER FROM REVOLUT TRADING LTD TO REVOLUT SECURITIES EUROPE UAB,32.5,,USD 0,USD,1.0719
+`
+	res, err := ParseTradingCSV([]byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 2 {
+		t.Fatalf("transfer should be skipped when prior buys cover it; want 2 events, got %d: %+v", len(res.Events), res.Events)
+	}
+	for _, ev := range res.Events {
+		if ev.Date.Year() == 2023 && ev.Date.Month() == 9 {
+			t.Fatalf("no event should originate from the transfer row, got %+v", ev)
+		}
+	}
+}
+
 // TestParseTradingCSV_TransferOut_RemovesShares mirrors the sending side of
 // a between-entity move: a negative quantity becomes a synthetic SELL at
 // price 0 so the source account's position drops.
