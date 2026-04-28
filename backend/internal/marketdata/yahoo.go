@@ -53,6 +53,14 @@ type yahooChartResp struct {
 	} `json:"chart"`
 }
 
+var yahooSymbolAliases = map[string][]string{
+	"SPYW": {"SPYW.DE"},
+	"VUAA": {"VUAA.DE", "VUAA.MI"},
+	"VGEU": {"VGEU.DE"},
+}
+
+var yahooEuropeanSuffixes = []string{".DE", ".MI", ".AS", ".PA", ".L", ".SW"}
+
 func (p *YahooProvider) fetch(ctx context.Context, symbol, range_, interval string, period1, period2 int64) (*yahooChartResp, error) {
 	q := url.Values{}
 	if range_ != "" {
@@ -89,9 +97,53 @@ func (p *YahooProvider) fetch(ctx context.Context, symbol, range_, interval stri
 	return &body, nil
 }
 
+func (p *YahooProvider) fetchWithFallback(ctx context.Context, symbol, range_, interval string, period1, period2 int64) (*yahooChartResp, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	body, err := p.fetch(ctx, symbol, range_, interval, period1, period2)
+	if err == nil {
+		return body, nil
+	}
+	firstErr := err
+	for _, candidate := range yahooFallbackSymbols(symbol) {
+		body, err = p.fetch(ctx, candidate, range_, interval, period1, period2)
+		if err == nil {
+			return body, nil
+		}
+	}
+	return nil, firstErr
+}
+
+func yahooFallbackSymbols(symbol string) []string {
+	if symbol == "" || strings.Contains(symbol, ".") {
+		return nil
+	}
+	out := make([]string, 0, len(yahooEuropeanSuffixes)+len(yahooSymbolAliases[symbol]))
+	seen := map[string]struct{}{}
+	for _, candidate := range yahooSymbolAliases[symbol] {
+		candidate = strings.ToUpper(strings.TrimSpace(candidate))
+		if candidate == "" || candidate == symbol {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	for _, suffix := range yahooEuropeanSuffixes {
+		candidate := symbol + suffix
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	return out
+}
+
 // LatestQuote implements PriceProvider.
 func (p *YahooProvider) LatestQuote(ctx context.Context, symbol string) (PriceQuote, error) {
-	body, err := p.fetch(ctx, strings.ToUpper(symbol), "1d", "1m", 0, 0)
+	body, err := p.fetchWithFallback(ctx, symbol, "1d", "1m", 0, 0)
 	if err != nil {
 		return PriceQuote{}, err
 	}
@@ -114,7 +166,7 @@ func (p *YahooProvider) LatestQuote(ctx context.Context, symbol string) (PriceQu
 
 // HistoricalRange implements PriceProvider.
 func (p *YahooProvider) HistoricalRange(ctx context.Context, symbol string, from, to time.Time) ([]PriceQuote, error) {
-	body, err := p.fetch(ctx, strings.ToUpper(symbol), "", "1d", from.Unix(), to.Add(24*time.Hour).Unix())
+	body, err := p.fetchWithFallback(ctx, symbol, "", "1d", from.Unix(), to.Add(24*time.Hour).Unix())
 	if err != nil {
 		return nil, err
 	}
