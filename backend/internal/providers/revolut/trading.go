@@ -17,6 +17,15 @@
 // ticker has no prior position but another ticker's running quantity is
 // approximately wiped out by the delta, prior events for that other ticker
 // are renamed to the split ticker so the resulting position lines up.
+//
+// POSITION CLOSURE rows arrive when the broker force-resolves a delisted /
+// dead instrument and credits residual cash. Quantity is usually blank, so
+// the closure is emitted as a synthetic SELL of the running held quantity at
+// a per-unit price derived from the cash credit. Cash-only "TRANSFER FROM
+// ... TO ..." rows (no ticker) are skipped, but ticker-bearing transfers
+// between Revolut entities are emitted as synthetic trades at price 0 with
+// the side driven by the sign of Quantity, so the held position follows the
+// shares across the move.
 package revolut
 
 import (
@@ -68,21 +77,36 @@ func ParseTradingCSV(content []byte) (*ParseResult, error) {
 			return nil, err
 		}
 		typ := strings.ToUpper(strings.TrimSpace(get(row, idx["Type"])))
-		if typ == "STOCK SPLIT" {
+		switch {
+		case typ == "STOCK SPLIT":
 			ev, ok := mapStockSplitRow(row, idx, out, running)
 			if !ok {
 				continue
 			}
 			out = append(out, ev)
 			updateRunning(running, ev)
-			continue
+		case typ == "POSITION CLOSURE":
+			ev, ok := mapPositionClosureRow(row, idx, running)
+			if !ok {
+				continue
+			}
+			out = append(out, ev)
+			updateRunning(running, ev)
+		case strings.HasPrefix(typ, "TRANSFER FROM "):
+			ev, ok := mapTransferRow(row, idx)
+			if !ok {
+				continue
+			}
+			out = append(out, ev)
+			updateRunning(running, ev)
+		default:
+			ev, ok := mapTradingRow(row, idx)
+			if !ok {
+				continue
+			}
+			out = append(out, ev)
+			updateRunning(running, ev)
 		}
-		ev, ok := mapTradingRow(row, idx)
-		if !ok {
-			continue
-		}
-		out = append(out, ev)
-		updateRunning(running, ev)
 	}
 	return &ParseResult{Events: out}, nil
 }
@@ -171,6 +195,91 @@ func mapStockSplitRow(row []string, idx map[string]int, out []importevent.Event,
 		Symbol:    ticker,
 		Date:      t,
 		Quantity:  delta.Abs(),
+		Price:     decimal.Zero,
+		Fee:       decimal.Zero,
+		Currency:  currency,
+	}, true
+}
+
+// mapPositionClosureRow handles a Revolut "POSITION CLOSURE" row, which the
+// broker emits when a delisted/dead instrument is force-resolved and the
+// residual cash credited. Quantity is typically blank, so the closure is
+// expressed as a synthetic SELL of the running held quantity at a per-unit
+// price derived from the cash credit. Rows with no held quantity are skipped
+// — there is nothing to close out — to avoid inserting a phantom sell.
+func mapPositionClosureRow(row []string, idx map[string]int, running map[string]decimal.Decimal) (importevent.Event, bool) {
+	t, err := parseRevolutDate(get(row, idx["Date"]))
+	if err != nil {
+		return importevent.Event{}, false
+	}
+	ticker := strings.ToUpper(strings.TrimSpace(get(row, idx["Ticker"])))
+	if ticker == "" {
+		return importevent.Event{}, false
+	}
+	currency := strings.ToUpper(strings.TrimSpace(get(row, idx["Currency"])))
+	if currency == "" {
+		currency = "USD"
+	}
+	totalAmount := parseRevolutAmount(get(row, idx["Total Amount"])).Abs()
+	qty, _ := decimal.NewFromString(strings.TrimSpace(get(row, idx["Quantity"])))
+	qty = qty.Abs()
+	if qty.IsZero() {
+		qty = running[ticker]
+	}
+	if qty.LessThanOrEqual(decimal.Zero) {
+		return importevent.Event{}, false
+	}
+	perUnit := decimal.Zero
+	if !totalAmount.IsZero() {
+		perUnit = totalAmount.Div(qty)
+	}
+	return importevent.Event{
+		Kind:      importevent.Trade,
+		TradeSide: "sell",
+		Symbol:    ticker,
+		Date:      t,
+		Quantity:  qty,
+		Price:     perUnit,
+		Fee:       decimal.Zero,
+		Currency:  currency,
+	}, true
+}
+
+// mapTransferRow handles ticker-bearing "TRANSFER FROM ... TO ..." rows that
+// move shares between Revolut entities (e.g. Revolut Trading Ltd ->
+// Revolut Securities Europe UAB). Cash-only transfers have an empty ticker
+// and never reach this path. Sign of Quantity drives direction: positive for
+// the receiving side (synthetic BUY), negative for the sending side
+// (synthetic SELL). Price is 0 since the row carries no consideration; the
+// original cost basis cannot be reconstructed from a single-account export
+// and stays for the user to reconcile if both sides are imported.
+func mapTransferRow(row []string, idx map[string]int) (importevent.Event, bool) {
+	t, err := parseRevolutDate(get(row, idx["Date"]))
+	if err != nil {
+		return importevent.Event{}, false
+	}
+	ticker := strings.ToUpper(strings.TrimSpace(get(row, idx["Ticker"])))
+	if ticker == "" {
+		return importevent.Event{}, false
+	}
+	qty, err := decimal.NewFromString(strings.TrimSpace(get(row, idx["Quantity"])))
+	if err != nil || qty.IsZero() {
+		return importevent.Event{}, false
+	}
+	currency := strings.ToUpper(strings.TrimSpace(get(row, idx["Currency"])))
+	if currency == "" {
+		currency = "USD"
+	}
+	side := "buy"
+	if qty.IsNegative() {
+		side = "sell"
+	}
+	return importevent.Event{
+		Kind:      importevent.Trade,
+		TradeSide: side,
+		Symbol:    ticker,
+		Date:      t,
+		Quantity:  qty.Abs(),
 		Price:     decimal.Zero,
 		Fee:       decimal.Zero,
 		Currency:  currency,
@@ -318,7 +427,7 @@ func isBuyType(t string) bool {
 
 func isSellType(t string) bool {
 	switch t {
-	case "SELL", "SELL - MARKET", "SELL - LIMIT", "POSITION CLOSURE":
+	case "SELL", "SELL - MARKET", "SELL - LIMIT":
 		return true
 	}
 	return false

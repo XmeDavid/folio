@@ -154,6 +154,110 @@ func TestParseTradingCSV_StockSplit_NoFalseRename(t *testing.T) {
 	}
 }
 
+// TestParseTradingCSV_PositionClosure_ClosesRunningQty verifies that a
+// POSITION CLOSURE row with empty quantity but a cash credit is materialised
+// as a synthetic SELL of the held quantity, with a per-unit price derived
+// from the credit.
+func TestParseTradingCSV_PositionClosure_ClosesRunningQty(t *testing.T) {
+	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
+2025-01-10T10:00:00.000Z,GME.WS,BUY - MARKET,4,USD 1.00,USD 4.00,USD,1.0
+2025-10-16T12:43:17.077719Z,GME.WS,POSITION CLOSURE,,,USD 8.63,USD,1.1680
+`
+	res, err := ParseTradingCSV([]byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 2 {
+		t.Fatalf("want 2 events, got %d: %+v", len(res.Events), res.Events)
+	}
+	closure := res.Events[1]
+	if closure.TradeSide != "sell" || closure.Symbol != "GME.WS" {
+		t.Fatalf("closure: %+v", closure)
+	}
+	if closure.Quantity.String() != "4" {
+		t.Fatalf("closure qty = %s, want 4", closure.Quantity.String())
+	}
+	wantPrice := decimal.NewFromFloat(2.1575) // 8.63 / 4
+	if closure.Price.Sub(wantPrice).Abs().GreaterThan(decimal.New(1, -6)) {
+		t.Fatalf("closure price = %s, want %s", closure.Price.String(), wantPrice.String())
+	}
+}
+
+// TestParseTradingCSV_PositionClosure_NoHoldingsSkipped guards the case
+// where the broker emits a closure for a ticker the parser has never seen
+// (partial CSV import). Without a held quantity to consume, we skip the row
+// rather than insert a phantom sell.
+func TestParseTradingCSV_PositionClosure_NoHoldingsSkipped(t *testing.T) {
+	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
+2025-10-16T12:43:17.077719Z,GME.WS,POSITION CLOSURE,,,USD 8.63,USD,1.1680
+`
+	res, err := ParseTradingCSV([]byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 0 {
+		t.Fatalf("want 0 events, got %d: %+v", len(res.Events), res.Events)
+	}
+}
+
+// TestParseTradingCSV_TransferIn_AddsShares confirms that a ticker-bearing
+// TRANSFER FROM ... row with positive quantity emits a synthetic BUY at
+// price 0, so the receiving account picks up the moved shares.
+func TestParseTradingCSV_TransferIn_AddsShares(t *testing.T) {
+	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
+2023-09-09T09:51:59.189976Z,GME,TRANSFER FROM REVOLUT TRADING LTD TO REVOLUT SECURITIES EUROPE UAB,32.5,,USD 0,USD,1.0719
+`
+	res, err := ParseTradingCSV([]byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(res.Events))
+	}
+	ev := res.Events[0]
+	if ev.TradeSide != "buy" || ev.Symbol != "GME" || ev.Quantity.String() != "32.5" {
+		t.Fatalf("transfer: %+v", ev)
+	}
+	if !ev.Price.IsZero() {
+		t.Fatalf("transfer price should be 0, got %s", ev.Price.String())
+	}
+}
+
+// TestParseTradingCSV_TransferOut_RemovesShares mirrors the sending side of
+// a between-entity move: a negative quantity becomes a synthetic SELL at
+// price 0 so the source account's position drops.
+func TestParseTradingCSV_TransferOut_RemovesShares(t *testing.T) {
+	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
+2023-09-09T09:51:59.189976Z,GME,TRANSFER FROM REVOLUT TRADING LTD TO REVOLUT SECURITIES EUROPE UAB,-32.5,,USD 0,USD,1.0719
+`
+	res, err := ParseTradingCSV([]byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(res.Events))
+	}
+	ev := res.Events[0]
+	if ev.TradeSide != "sell" || ev.Symbol != "GME" || ev.Quantity.String() != "32.5" {
+		t.Fatalf("transfer: %+v", ev)
+	}
+}
+
+// TestParseTradingCSV_CashTransferSkipped keeps the existing behaviour of
+// dropping no-ticker cash-transfer rows now that the type prefix is matched.
+func TestParseTradingCSV_CashTransferSkipped(t *testing.T) {
+	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
+2023-09-09T08:13:21.886316Z,,TRANSFER FROM REVOLUT BANK UAB TO REVOLUT SECURITIES EUROPE UAB,,,USD 4.27,USD,1.0719
+`
+	res, err := ParseTradingCSV([]byte(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 0 {
+		t.Fatalf("cash transfer must not emit events, got %+v", res.Events)
+	}
+}
+
 func TestParseTradingCSV_SkipsCashEvents(t *testing.T) {
 	csv := `Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate
 2025-08-01T10:30:00.000Z,,DEPOSIT,,,USD 5000.00,USD,
