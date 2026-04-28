@@ -7,6 +7,16 @@
 // the trade-shaped rows into ImportEvents and computes implicit commissions
 // from `(quantity*price - totalAmount)` since Revolut bakes regulatory fees
 // into Total Amount instead of breaking them out.
+//
+// STOCK SPLIT rows in this export carry a quantity *delta* (e.g. -198 for a
+// reverse split that consolidates 200 shares into 2) with no cash movement
+// (Total Amount = USD 0). They are emitted as synthetic trades at price 0 so
+// the held quantity tracks the adjustment. Revolut frequently switches the
+// ticker on the split row when the issuer is renamed at the same time
+// (CHK → CHKAQ during bankruptcy is the canonical example): when the split
+// ticker has no prior position but another ticker's running quantity is
+// approximately wiped out by the delta, prior events for that other ticker
+// are renamed to the split ticker so the resulting position lines up.
 package revolut
 
 import (
@@ -45,6 +55,7 @@ func ParseTradingCSV(content []byte) (*ParseResult, error) {
 	}
 
 	out := make([]importevent.Event, 0, 64)
+	running := make(map[string]decimal.Decimal)
 	for {
 		row, err := r.Read()
 		if err == io.EOF {
@@ -56,13 +67,114 @@ func ParseTradingCSV(content []byte) (*ParseResult, error) {
 			}
 			return nil, err
 		}
+		typ := strings.ToUpper(strings.TrimSpace(get(row, idx["Type"])))
+		if typ == "STOCK SPLIT" {
+			ev, ok := mapStockSplitRow(row, idx, out, running)
+			if !ok {
+				continue
+			}
+			out = append(out, ev)
+			updateRunning(running, ev)
+			continue
+		}
 		ev, ok := mapTradingRow(row, idx)
 		if !ok {
 			continue
 		}
 		out = append(out, ev)
+		updateRunning(running, ev)
 	}
 	return &ParseResult{Events: out}, nil
+}
+
+// updateRunning keeps a per-ticker running quantity so STOCK SPLIT rows that
+// reference a renamed ticker can locate the original position.
+func updateRunning(running map[string]decimal.Decimal, ev importevent.Event) {
+	if ev.Kind != importevent.Trade || ev.Symbol == "" {
+		return
+	}
+	cur := running[ev.Symbol]
+	switch ev.TradeSide {
+	case "buy":
+		running[ev.Symbol] = cur.Add(ev.Quantity)
+	case "sell":
+		running[ev.Symbol] = cur.Sub(ev.Quantity)
+	}
+}
+
+// mapStockSplitRow converts a STOCK SPLIT row into a synthetic adjustment
+// trade and, when the split row's ticker has no prior position, attempts to
+// detect a same-event symbol rename by matching the delta against running
+// quantities of previously-seen tickers. Returns false when the row carries
+// no usable quantity.
+func mapStockSplitRow(row []string, idx map[string]int, out []importevent.Event, running map[string]decimal.Decimal) (importevent.Event, bool) {
+	t, err := parseRevolutDate(get(row, idx["Date"]))
+	if err != nil {
+		return importevent.Event{}, false
+	}
+	ticker := strings.ToUpper(strings.TrimSpace(get(row, idx["Ticker"])))
+	if ticker == "" {
+		return importevent.Event{}, false
+	}
+	delta, err := decimal.NewFromString(strings.TrimSpace(get(row, idx["Quantity"])))
+	if err != nil || delta.IsZero() {
+		return importevent.Event{}, false
+	}
+	currency := strings.ToUpper(strings.TrimSpace(get(row, idx["Currency"])))
+	if currency == "" {
+		currency = "USD"
+	}
+
+	// Rename detection: only when the split ticker is unseen, the delta is
+	// negative (reverse-split shape), and exactly one prior ticker's running
+	// quantity is approximately wiped out by the delta. Matching prior trades
+	// are reassigned to the split ticker so the synthetic adjustment lands on
+	// the position it is actually consolidating.
+	if cur, ok := running[ticker]; (!ok || cur.IsZero()) && delta.IsNegative() {
+		absDelta := delta.Abs()
+		var bestSym string
+		var bestQty decimal.Decimal
+		bestRemainderRatio := decimal.NewFromFloat(0.10) // ≤10% leftover
+		for sym, qty := range running {
+			if sym == ticker || qty.LessThanOrEqual(decimal.Zero) {
+				continue
+			}
+			if qty.LessThan(absDelta) {
+				continue
+			}
+			leftover := qty.Add(delta).Abs()
+			ratio := leftover.Div(qty)
+			if ratio.LessThanOrEqual(bestRemainderRatio) {
+				bestSym = sym
+				bestQty = qty
+				bestRemainderRatio = ratio
+			}
+		}
+		if bestSym != "" {
+			for i := range out {
+				if out[i].Symbol == bestSym {
+					out[i].Symbol = ticker
+				}
+			}
+			delete(running, bestSym)
+			running[ticker] = bestQty
+		}
+	}
+
+	side := "buy"
+	if delta.IsNegative() {
+		side = "sell"
+	}
+	return importevent.Event{
+		Kind:      importevent.Trade,
+		TradeSide: side,
+		Symbol:    ticker,
+		Date:      t,
+		Quantity:  delta.Abs(),
+		Price:     decimal.Zero,
+		Fee:       decimal.Zero,
+		Currency:  currency,
+	}, true
 }
 
 func mapTradingRow(row []string, idx map[string]int) (importevent.Event, bool) {
