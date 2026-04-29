@@ -91,6 +91,35 @@ export async function logout(): Promise<void> {
   return request<void>("/api/v1/auth/logout", { method: "POST" });
 }
 
+export type CreateWorkspaceInput = {
+  name: string;
+  baseCurrency: string;
+  cycleAnchorDay: number;
+  locale: string;
+  timezone: string;
+};
+
+export type CreateWorkspaceResult = {
+  workspace: {
+    id: string;
+    name: string;
+    slug: string;
+    baseCurrency: string;
+    cycleAnchorDay: number;
+    locale: string;
+    timezone: string;
+    createdAt: string;
+  };
+  membership: { workspaceId: string; userId: string; role: string; joinedAt: string };
+};
+
+export async function createWorkspace(input: CreateWorkspaceInput): Promise<CreateWorkspaceResult> {
+  return request<CreateWorkspaceResult>("/api/v1/workspaces", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export type MFAStatus = {
   totpEnrolled: boolean;
   passkeyCount: number;
@@ -151,10 +180,57 @@ export async function regenerateRecoveryCodes(): Promise<{
   });
 }
 
+export async function disableTOTP(): Promise<void> {
+  return request<void>("/api/v1/me/mfa/totp", { method: "DELETE" });
+}
+
+export type Passkey = {
+  id: string;
+  label: string;
+  createdAt: string;
+};
+
+export async function listPasskeys(): Promise<Passkey[]> {
+  return request<Passkey[]>("/api/v1/me/mfa/passkeys", { method: "GET" });
+}
+
+export async function deletePasskey(id: string): Promise<void> {
+  return request<void>(`/api/v1/me/mfa/passkeys/${id}`, { method: "DELETE" });
+}
+
 export async function reauth(password: string, code?: string): Promise<void> {
   return request<void>("/api/v1/auth/reauth", {
     method: "POST",
     json: { password, code },
+  });
+}
+
+export async function changePassword(input: {
+  current: string;
+  next: string;
+}): Promise<void> {
+  return request<void>("/api/v1/me/password", {
+    method: "POST",
+    json: input,
+  });
+}
+
+export async function updateProfile(input: { displayName?: string }): Promise<void> {
+  return request<void>("/api/v1/me", {
+    method: "PATCH",
+    json: input,
+  });
+}
+
+/**
+ * updateLastWorkspace records the user's most recently used workspace so the
+ * next /login lands them back where they left off. Throws on failure; the
+ * workspace switcher catches and swallows so navigation isn't blocked.
+ */
+export async function updateLastWorkspace(workspaceId: string): Promise<void> {
+  return request<void>("/api/v1/me/last-workspace", {
+    method: "PATCH",
+    json: { workspaceId },
   });
 }
 
@@ -269,14 +345,19 @@ export type InviteCreateInput = {
   role: MemberRole;
 };
 
+export type WorkspaceInviteCreated = {
+  invite: PendingInvite;
+  acceptUrl: string;
+};
+
 export async function createInvite(
   workspaceId: string,
   body: InviteCreateInput
-): Promise<PendingInvite> {
-  return request<PendingInvite>(`/api/v1/t/${workspaceId}/invites`, {
-    method: "POST",
-    json: body,
-  });
+): Promise<WorkspaceInviteCreated> {
+  return request<WorkspaceInviteCreated>(
+    `/api/v1/t/${workspaceId}/invites`,
+    { method: "POST", json: body }
+  );
 }
 
 export async function revokeInvite(
@@ -286,6 +367,16 @@ export async function revokeInvite(
   return request<void>(`/api/v1/t/${workspaceId}/invites/${inviteId}`, {
     method: "DELETE",
   });
+}
+
+export async function resendInvite(
+  workspaceId: string,
+  inviteId: string
+): Promise<WorkspaceInviteCreated> {
+  return request<WorkspaceInviteCreated>(
+    `/api/v1/t/${workspaceId}/invites/${inviteId}/resend`,
+    { method: "POST" }
+  );
 }
 
 export type InvitePreview = {
@@ -308,6 +399,20 @@ export type InviteAcceptResponse = {
 export async function previewInvite(token: string): Promise<InvitePreview> {
   return request<InvitePreview>(
     `/api/v1/auth/invites/${encodeURIComponent(token)}`,
+    { method: "GET" }
+  );
+}
+
+export type PlatformInvitePreview = {
+  email: string | null;
+  expiresAt: string;
+};
+
+export async function previewPlatformInvite(
+  token: string
+): Promise<PlatformInvitePreview> {
+  return request<PlatformInvitePreview>(
+    `/api/v1/auth/platform-invites/${encodeURIComponent(token)}`,
     { method: "GET" }
   );
 }

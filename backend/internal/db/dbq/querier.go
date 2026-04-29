@@ -75,6 +75,7 @@ type Querier interface {
 	DeleteLotsForPosition(ctx context.Context, arg DeleteLotsForPositionParams) error
 	DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error
 	DeleteOtherSessionsByUser(ctx context.Context, arg DeleteOtherSessionsByUserParams) error
+	DeletePasskeyForUser(ctx context.Context, arg DeletePasskeyForUserParams) error
 	DeleteRecoveryCodesByUser(ctx context.Context, userID uuid.UUID) error
 	DeleteSessionByID(ctx context.Context, id string) error
 	DeleteSessionByIDReturningUserID(ctx context.Context, id string) (uuid.UUID, error)
@@ -107,11 +108,15 @@ type Querier interface {
 	GetInstrumentCurrency(ctx context.Context, id uuid.UUID) (string, error)
 	GetInvestmentTrade(ctx context.Context, arg GetInvestmentTradeParams) (GetInvestmentTradeRow, error)
 	GetInviteForAccept(ctx context.Context, tokenHash []byte) (GetInviteForAcceptRow, error)
+	GetInviteForResend(ctx context.Context, arg GetInviteForResendParams) (GetInviteForResendRow, error)
 	GetInviteForRevoke(ctx context.Context, arg GetInviteForRevokeParams) (GetInviteForRevokeRow, error)
 	GetInvitePreview(ctx context.Context, tokenHash []byte) (GetInvitePreviewRow, error)
 	GetMFAChallengeByID(ctx context.Context, id uuid.UUID) (GetMFAChallengeByIDRow, error)
 	GetMFAStatus(ctx context.Context, userID uuid.UUID) (GetMFAStatusRow, error)
 	GetMembershipRoleForUpdate(ctx context.Context, arg GetMembershipRoleForUpdateParams) (WorkspaceRole, error)
+	GetPlatformInviteByTokenHash(ctx context.Context, tokenHash []byte) (PlatformInvite, error)
+	GetPlatformInviteForAccept(ctx context.Context, tokenHash []byte) (GetPlatformInviteForAcceptRow, error)
+	GetPlatformInviteForRevoke(ctx context.Context, id uuid.UUID) (GetPlatformInviteForRevokeRow, error)
 	GetSessionByID(ctx context.Context, id string) (GetSessionByIDRow, error)
 	GetTOTPSecretCipher(ctx context.Context, userID uuid.UUID) (string, error)
 	GetTOTPSecretCipherAny(ctx context.Context, userID uuid.UUID) (string, error)
@@ -161,6 +166,7 @@ type Querier interface {
 	InsertMFAChallenge(ctx context.Context, arg InsertMFAChallengeParams) error
 	InsertMembership(ctx context.Context, arg InsertMembershipParams) (InsertMembershipRow, error)
 	InsertOpeningSnapshot(ctx context.Context, arg InsertOpeningSnapshotParams) error
+	InsertPlatformInvite(ctx context.Context, arg InsertPlatformInviteParams) (PlatformInvite, error)
 	InsertRecoveryCode(ctx context.Context, arg InsertRecoveryCodeParams) error
 	InsertSession(ctx context.Context, arg InsertSessionParams) error
 	InsertSourceRef(ctx context.Context, arg InsertSourceRefParams) error
@@ -193,7 +199,10 @@ type Querier interface {
 	ListMembersWithUser(ctx context.Context, workspaceID uuid.UUID) ([]ListMembersWithUserRow, error)
 	ListOpenPositionInstruments(ctx context.Context, workspaceID uuid.UUID) ([]ListOpenPositionInstrumentsRow, error)
 	ListOpenPositionInstrumentsWithPrice(ctx context.Context, workspaceID uuid.UUID) ([]ListOpenPositionInstrumentsWithPriceRow, error)
+	ListPasskeysForUser(ctx context.Context, userID uuid.UUID) ([]ListPasskeysForUserRow, error)
 	ListPendingInvites(ctx context.Context, workspaceID uuid.UUID) ([]ListPendingInvitesRow, error)
+	ListPlatformInvitesActive(ctx context.Context) ([]PlatformInvite, error)
+	ListPlatformInvitesAll(ctx context.Context, arg ListPlatformInvitesAllParams) ([]PlatformInvite, error)
 	ListPositionAccountsForInstrument(ctx context.Context, arg ListPositionAccountsForInstrumentParams) ([]uuid.UUID, error)
 	ListTouchedInvestmentPairs(ctx context.Context, workspaceID uuid.UUID) ([]ListTouchedInvestmentPairsRow, error)
 	ListUnconsumedRecoveryCodes(ctx context.Context, userID uuid.UUID) ([]ListUnconsumedRecoveryCodesRow, error)
@@ -235,11 +244,14 @@ type Querier interface {
 	LookupCachedPriceRange(ctx context.Context, arg LookupCachedPriceRangeParams) ([]LookupCachedPriceRangeRow, error)
 	MarkInviteAccepted(ctx context.Context, id uuid.UUID) error
 	MarkInviteRevoked(ctx context.Context, id uuid.UUID) error
+	MarkPlatformInviteAccepted(ctx context.Context, arg MarkPlatformInviteAcceptedParams) error
+	MarkPlatformInviteRevoked(ctx context.Context, arg MarkPlatformInviteRevokedParams) error
 	PersistFXRate(ctx context.Context, arg PersistFXRateParams) error
 	PersistInstrumentPrice(ctx context.Context, arg PersistInstrumentPriceParams) error
 	ReorderAccount(ctx context.Context, arg ReorderAccountParams) (int64, error)
 	ReorderAccountGroup(ctx context.Context, arg ReorderAccountGroupParams) (int64, error)
 	RestoreWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
+	RotateWorkspaceInviteToken(ctx context.Context, arg RotateWorkspaceInviteTokenParams) (RotateWorkspaceInviteTokenRow, error)
 	SearchInstruments(ctx context.Context, arg SearchInstrumentsParams) ([]SearchInstrumentsRow, error)
 	SoftDeleteWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
 	StampRuleLastMatchedAt(ctx context.Context, arg StampRuleLastMatchedAtParams) error
@@ -255,6 +267,7 @@ type Querier interface {
 	UpdateSessionLastSeen(ctx context.Context, arg UpdateSessionLastSeenParams) error
 	UpdateSessionReauthAt(ctx context.Context, arg UpdateSessionReauthAtParams) error
 	UpdateSessionReauthByID(ctx context.Context, arg UpdateSessionReauthByIDParams) error
+	UpdateUserDisplayName(ctx context.Context, arg UpdateUserDisplayNameParams) error
 	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) error
 	UpdateUserLastLoginAt(ctx context.Context, arg UpdateUserLastLoginAtParams) error
 	UpdateUserLastWorkspace(ctx context.Context, arg UpdateUserLastWorkspaceParams) error

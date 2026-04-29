@@ -24,7 +24,7 @@ func TestSignupHTTP_createsUserWorkspaceMembershipAndCookie(t *testing.T) {
 		t.Fatalf("truncate: %v", err)
 	}
 
-	svc := NewService(pool, identity.NewService(pool), Config{Registration: RegistrationOpen})
+	svc := NewService(pool, identity.NewService(pool), identity.NewPlatformInviteService(pool), Config{Registration: RegistrationOpen})
 	h := NewHandler(svc)
 
 	body, _ := json.Marshal(signupReq{
@@ -73,7 +73,7 @@ func TestLogoutHTTP_writesAuditEventAndDeletesSession(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
-	svc := NewService(pool, identity.NewService(pool), Config{Registration: RegistrationOpen})
+	svc := NewService(pool, identity.NewService(pool), identity.NewPlatformInviteService(pool), Config{Registration: RegistrationOpen})
 	h := NewHandler(svc)
 
 	// Seed: signup to get a valid session cookie + user_id.

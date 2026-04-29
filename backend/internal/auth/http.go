@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -45,6 +46,8 @@ func (h *Handler) MountPublic(r chi.Router) {
 // MountAuthed mounts authenticated, non-workspace-scoped routes (session required).
 func (h *Handler) MountAuthed(r chi.Router) {
 	r.Get("/me", h.me)
+	r.Patch("/me", h.patchMe)
+	r.Patch("/me/last-workspace", h.updateLastWorkspace)
 	r.Get("/me/mfa", h.mfaStatus)
 	// Enroll/disable/regenerate all pin a new factor to the account, so they
 	// all require a fresh reauth. Otherwise a stolen session cookie could pin
@@ -56,6 +59,11 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.With(reauth).Post("/me/mfa/recovery-codes", h.regenerateRecoveryCodes)
 	r.With(reauth).Post("/me/mfa/passkeys/begin", h.beginPasskeyEnrollment)
 	r.With(reauth).Post("/me/mfa/passkeys/complete", h.completePasskeyEnrollment)
+	r.Get("/me/mfa/passkeys", h.listPasskeys)                       // read-only, no fresh reauth
+	r.With(reauth).Delete("/me/mfa/passkeys/{id}", h.deletePasskey) // mutation, fresh reauth required
+	// Changing the password while signed in: a stolen cookie shouldn't be able
+	// to silently rotate credentials, so gate behind a fresh re-auth.
+	r.With(reauth).Post("/me/password", h.changePassword)
 	// Reauth is a password/passkey gate — brute-force protection parallels /login.
 	r.With(RateLimitByIP(10, 10*time.Minute)).Post("/auth/reauth", h.reauth)
 	r.With(RateLimitByIP(10, 10*time.Minute)).Post("/auth/reauth/webauthn/begin", h.beginReauthWebauthn)
@@ -73,7 +81,7 @@ type signupReq struct {
 	Email          string `json:"email"`
 	Password       string `json:"password"`
 	DisplayName    string `json:"displayName"`
-	WorkspaceName     string `json:"workspaceName,omitempty"`
+	WorkspaceName  string `json:"workspaceName,omitempty"`
 	BaseCurrency   string `json:"baseCurrency,omitempty"`
 	CycleAnchorDay int    `json:"cycleAnchorDay,omitempty"`
 	Locale         string `json:"locale,omitempty"`
@@ -102,7 +110,7 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 	SetSessionCookie(w, out.SessionToken, h.svc.cfg.SecureCookies)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"user":        out.User,
-		"workspace":      out.Workspace,
+		"workspace":   out.Workspace,
 		"membership":  out.Membership,
 		"mfaRequired": false,
 	})
@@ -214,9 +222,42 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"user":    user,
+		"user":       user,
 		"workspaces": workspaces,
 	})
+}
+
+type patchMeReq struct {
+	DisplayName *string `json:"displayName,omitempty"`
+}
+
+func (h *Handler) patchMe(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var body patchMeReq
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
+		return
+	}
+	user := MustUser(r)
+
+	if body.DisplayName != nil {
+		name := strings.TrimSpace(*body.DisplayName)
+		if len(name) < 1 || len(name) > 80 {
+			httpx.WriteError(w, http.StatusUnprocessableEntity, "invalid_display_name", "displayName must be 1-80 characters")
+			return
+		}
+		if err := dbq.New(h.svc.pool).UpdateUserDisplayName(r.Context(), dbq.UpdateUserDisplayNameParams{
+			ID: user.ID, DisplayName: name,
+		}); err != nil {
+			httpx.WriteServiceError(w, err)
+			return
+		}
+		h.svc.WriteAudit(r.Context(), uuid.Nil, user.ID,
+			"user.profile_updated", "user", user.ID,
+			map[string]any{"displayName": user.DisplayName},
+			map[string]any{"displayName": name})
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type createWorkspaceReq struct {
@@ -243,8 +284,17 @@ func (h *Handler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteServiceError(w, err)
 		return
 	}
+	// Land the user on the workspace they just created. Best-effort: a failure
+	// here is logged but doesn't poison the create response — the user will
+	// still be routed to the new workspace by the FE, and a subsequent switch
+	// will re-set last_workspace_id.
+	if err := dbq.New(h.svc.pool).UpdateUserLastWorkspace(r.Context(), dbq.UpdateUserLastWorkspaceParams{
+		LastWorkspaceID: &t.ID, ID: user.ID,
+	}); err != nil {
+		slog.Default().Warn("set last_workspace_id after create", "err", err, "user_id", user.ID, "workspace_id", t.ID)
+	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
-		"workspace":     t,
+		"workspace":  t,
 		"membership": m,
 	})
 }
@@ -257,6 +307,61 @@ func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+type updateLastWorkspaceReq struct {
+	WorkspaceID string `json:"workspaceId"`
+}
+
+// updateLastWorkspace records the user's most recently used workspace so the
+// next /login lands them back where they left off. It is a personal
+// preference write — no audit, no fresh-reauth gate.
+func (h *Handler) updateLastWorkspace(w http.ResponseWriter, r *http.Request) {
+	user := MustUser(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var body updateLastWorkspaceReq
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
+		return
+	}
+	wsID, err := uuid.Parse(body.WorkspaceID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "workspaceId must be a UUID")
+		return
+	}
+	q := dbq.New(h.svc.pool)
+
+	// First confirm the workspace exists (and isn't soft-deleted) so the
+	// caller can distinguish "no such workspace" (404) from "you can't touch
+	// it" (403). Both queries gate on deleted_at IS NULL.
+	if _, err := q.GetWorkspaceByID(r.Context(), wsID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			httpx.WriteError(w, http.StatusNotFound, "workspace_not_found", "workspace not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "lookup failed")
+		return
+	}
+
+	// Membership check (mirrors RequireMembership: active workspace + active membership).
+	if _, err := q.GetWorkspaceWithMembership(r.Context(), dbq.GetWorkspaceWithMembershipParams{
+		ID: wsID, UserID: user.ID,
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			httpx.WriteError(w, http.StatusForbidden, "not_a_member", "not a member of this workspace")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "membership lookup failed")
+		return
+	}
+
+	if err := q.UpdateUserLastWorkspace(r.Context(), dbq.UpdateUserLastWorkspaceParams{
+		LastWorkspaceID: &wsID, ID: user.ID,
+	}); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "update failed")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // parseIPForStorage parses a string IP to net.IP. Returns nil on parse failure.

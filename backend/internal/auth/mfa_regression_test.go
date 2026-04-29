@@ -32,9 +32,9 @@ func testMFAService(t *testing.T) (*Service, context.Context) {
 			         totp_credentials, user_preferences, users, workspaces cascade
 		`)
 	})
-	return NewService(pool, identity.NewService(pool), Config{
+	return NewService(pool, identity.NewService(pool), identity.NewPlatformInviteService(pool), Config{
 		Registration:  RegistrationOpen,
-		SecretKey:     []byte("0123456789abcdef0123456789abcdef"),
+		SecretKey:     []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
 		SecureCookies: false,
 	}), ctx
 }

@@ -3412,6 +3412,19 @@ type PlannedEventMatch struct {
 	CreatedAt       time.Time       `json:"created_at"`
 }
 
+type PlatformInvite struct {
+	ID         uuid.UUID  `json:"id"`
+	Email      *string    `json:"email"`
+	TokenHash  []byte     `json:"token_hash"`
+	CreatedBy  uuid.UUID  `json:"created_by"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	AcceptedAt *time.Time `json:"accepted_at"`
+	AcceptedBy *uuid.UUID `json:"accepted_by"`
+	RevokedAt  *time.Time `json:"revoked_at"`
+	RevokedBy  *uuid.UUID `json:"revoked_by"`
+}
+
 type PositionBucketAllocation struct {
 	AccountID       uuid.UUID      `json:"account_id"`
 	InstrumentID    uuid.UUID      `json:"instrument_id"`

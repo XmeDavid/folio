@@ -6,9 +6,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 )
 
@@ -205,5 +208,57 @@ func (h *Handler) completeReauthWebauthn(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, http.StatusUnauthorized, "reauth_failed", "re-authentication failed")
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// passkeyOut is the public shape of a passkey row returned from listPasskeys.
+type passkeyOut struct {
+	ID        uuid.UUID `json:"id"`
+	Label     string    `json:"label"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// listPasskeys returns the user's passkey credentials with metadata for the
+// management UI. Read-only — no fresh-reauth gate.
+func (h *Handler) listPasskeys(w http.ResponseWriter, r *http.Request) {
+	user := MustUser(r)
+	rows, err := dbq.New(h.svc.pool).ListPasskeysForUser(r.Context(), user.ID)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	out := make([]passkeyOut, 0, len(rows))
+	for _, row := range rows {
+		label := ""
+		if row.Label != nil {
+			label = *row.Label
+		}
+		out = append(out, passkeyOut{
+			ID:        row.ID,
+			Label:     label,
+			CreatedAt: row.CreatedAt,
+		})
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// deletePasskey removes the user's own passkey. Scoped on (id, user_id) so a
+// user can never delete a credential that isn't theirs. DELETE on a missing
+// id is a silent 204 — best-effort idempotent.
+func (h *Handler) deletePasskey(w http.ResponseWriter, r *http.Request) {
+	user := MustUser(r)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "id must be a UUID")
+		return
+	}
+	if err := dbq.New(h.svc.pool).DeletePasskeyForUser(r.Context(), dbq.DeletePasskeyForUserParams{
+		ID: id, UserID: user.ID,
+	}); err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	h.svc.WriteAudit(r.Context(), uuid.Nil, user.ID,
+		"passkey.removed", "passkey", id, nil, nil)
 	w.WriteHeader(http.StatusNoContent)
 }

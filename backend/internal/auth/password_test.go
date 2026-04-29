@@ -44,7 +44,7 @@ func TestHashPassword_empty(t *testing.T) {
 }
 
 func TestHashAndVerifyPassword_pepper(t *testing.T) {
-	pepper := []byte("0123456789abcdef0123456789abcdef")
+	pepper := []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	hash, err := HashPassword("hunter2", pepper)
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)

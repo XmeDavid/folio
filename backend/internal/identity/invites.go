@@ -231,6 +231,81 @@ func (s *InviteService) Accept(ctx context.Context, plaintext string, userID uui
 	}, nil
 }
 
+// Resend rotates the invite's token and extends the expiry, returning the
+// fresh row + the new plaintext token so the caller can re-send the email
+// and surface a copy link in the UI. Resending DOES NOT reject expired
+// invites — the whole point is to extend a stale-but-not-yet-revoked
+// invite by issuing a new token + expiry. Returns:
+//   - ErrInviteNotFound if the invite doesn't exist or doesn't belong to
+//     the route workspace.
+//   - ErrInviteRevoked if revoked_at is set.
+//   - ErrInviteAlreadyUsed if accepted_at is set.
+func (s *InviteService) Resend(
+	ctx context.Context, workspaceID, inviteID uuid.UUID,
+) (*Invite, string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	q := dbq.New(tx)
+	row, err := q.GetInviteForResend(ctx, dbq.GetInviteForResendParams{
+		ID:          inviteID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", ErrInviteNotFound
+		}
+		return nil, "", err
+	}
+	if row.RevokedAt != nil {
+		return nil, "", ErrInviteRevoked
+	}
+	if row.AcceptedAt != nil {
+		return nil, "", ErrInviteAlreadyUsed
+	}
+
+	plaintext, err := generateInviteToken()
+	if err != nil {
+		return nil, "", fmt.Errorf("rand: %w", err)
+	}
+	expiresAt := s.now().Add(InviteLifetime)
+
+	updated, err := q.RotateWorkspaceInviteToken(ctx, dbq.RotateWorkspaceInviteTokenParams{
+		ID:        inviteID,
+		TokenHash: HashInviteToken(plaintext),
+		ExpiresAt: expiresAt,
+	})
+	if err != nil {
+		// The WHERE clause includes revoked_at/accepted_at IS NULL, so a
+		// concurrent revoke/accept between the SELECT FOR UPDATE and the
+		// UPDATE would surface as ErrNoRows. Treat as the appropriate
+		// already-consumed sentinel by re-reading state — but since we hold
+		// the row lock for the duration of the tx, this should never fire.
+		// Surface as ErrInviteNotFound so callers see a stable shape.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", ErrInviteNotFound
+		}
+		return nil, "", fmt.Errorf("rotate invite token: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, "", err
+	}
+
+	return &Invite{
+		ID:              updated.ID,
+		WorkspaceID:     updated.WorkspaceID,
+		Email:           updated.Email,
+		Role:            Role(updated.Role),
+		InvitedByUserID: updated.InvitedByUserID,
+		CreatedAt:       updated.CreatedAt,
+		ExpiresAt:       updated.ExpiresAt,
+	}, plaintext, nil
+}
+
 // Revoke marks an invite revoked. Authorised for the original inviter or any
 // owner of the route workspace. Idempotent — revoking an already-revoked or
 // accepted invite is a no-op (no error).
