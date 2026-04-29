@@ -103,5 +103,30 @@ func TestAttachByRaw_ArchivedIgnored(t *testing.T) {
 }
 
 func TestAttachByRaw_ResolvesViaAlias(t *testing.T) {
-	t.Skip("alias resolution covered in Task 3.1 once AddAlias exists")
+	ctx := context.Background()
+	pool := testdb.Open(t)
+	svc := classification.NewService(pool)
+	wsID, _ := testdb.CreateTestWorkspace(t, pool, "ws-attach-alias")
+
+	m, err := svc.CreateMerchant(ctx, wsID, classification.MerchantCreateInput{CanonicalName: "Coop"})
+	if err != nil {
+		t.Fatalf("CreateMerchant: %v", err)
+	}
+	if _, err := svc.AddAlias(ctx, wsID, m.ID, "COOP-4382 ZUR"); err != nil {
+		t.Fatalf("AddAlias: %v", err)
+	}
+
+	got, err := svc.AttachByRaw(ctx, wsID, "COOP-4382 ZUR")
+	if err != nil {
+		t.Fatalf("AttachByRaw: %v", err)
+	}
+	if got == nil {
+		t.Fatal("want merchant via alias, got nil")
+	}
+	if got.ID != m.ID {
+		t.Errorf("alias should resolve to merchant %v, got %v", m.ID, got.ID)
+	}
+	if got.CanonicalName != "Coop" {
+		t.Errorf("CanonicalName = %q, want Coop", got.CanonicalName)
+	}
 }
