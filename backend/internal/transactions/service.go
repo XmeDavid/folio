@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/classification"
 	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/money"
@@ -343,11 +344,16 @@ func (in PatchInput) normalize() (patchNormalized, error) {
 
 // Service is the transactions service.
 type Service struct {
-	pool *pgxpool.Pool
+	pool     *pgxpool.Pool
+	classSvc *classification.Service
 }
 
-// NewService returns a Service backed by pool.
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+// NewService returns a Service backed by pool. The classification service is
+// used by Create/Update to resolve a counterparty_raw to a merchant and to
+// inherit a merchant's default category when the caller did not pass one.
+func NewService(pool *pgxpool.Pool, classSvc *classification.Service) *Service {
+	return &Service{pool: pool, classSvc: classSvc}
+}
 
 // Create inserts a new transaction. Returns 400 (ValidationError) when the
 // transaction currency does not match the account currency and 404 when the
@@ -377,43 +383,71 @@ func (s *Service) Create(ctx context.Context, workspaceID uuid.UUID, raw CreateI
 			"currency %s does not match account currency %s", in.Currency, accountCurrency))
 	}
 
+	// Resolve merchant from counterparty_raw when caller didn't pass one.
+	// Manual override wins: if caller passed a merchantId we don't second-
+	// guess them. If we resolve a merchant whose default_category_id is set
+	// AND the caller also did not pass a categoryId, inherit the merchant's
+	// default category as part of the same insert (avoids a second UPDATE).
+	if s.classSvc != nil && in.MerchantID == nil && in.CounterpartyRaw != nil && strings.TrimSpace(*in.CounterpartyRaw) != "" {
+		m, err := s.classSvc.AttachByRaw(ctx, workspaceID, *in.CounterpartyRaw)
+		if err != nil {
+			return nil, fmt.Errorf("attach merchant: %w", err)
+		}
+		if m != nil {
+			mid := m.ID
+			in.MerchantID = &mid
+			if in.CategoryID == nil && m.DefaultCategoryID != nil {
+				cid := *m.DefaultCategoryID
+				in.CategoryID = &cid
+			}
+		}
+	}
+
 	id := uuidx.New()
-	row, err := q.InsertTransaction(ctx, dbq.InsertTransactionParams{
-		ID:              id,
-		WorkspaceID:     workspaceID,
-		AccountID:       in.AccountID,
-		Status:          dbq.TransactionStatus(in.Status),
-		BookedAt:        in.BookedAt,
-		ValueAt:         in.ValueAt,
-		PostedAt:        in.PostedAt,
-		Amount:          decimalToNumeric(in.Amount),
-		Currency:        in.Currency,
-		MerchantID:      in.MerchantID,
-		CategoryID:      in.CategoryID,
-		CounterpartyRaw: in.CounterpartyRaw,
-		Description:     in.Description,
-		Notes:           in.Notes,
-		CountAsExpense:  in.CountAsExpense,
-	})
+	// We deliberately do not use q.InsertTransaction here because its
+	// generated RETURNING row models original_amount/original_currency as
+	// non-nullable strings, which fails to scan when those columns are NULL
+	// (the common case for non-FX transactions). scanRow uses *string and
+	// matches the same canonical transactionCols projection as Update/Get.
+	insertSQL := `
+		insert into transactions (
+			id, workspace_id, account_id, status, booked_at, value_at, posted_at,
+			amount, currency, merchant_id, category_id,
+			counterparty_raw, description, notes, count_as_expense
+		) values (
+			$1, $2, $3, $4::transaction_status, $5, $6, $7,
+			$8::numeric, $9, $10, $11,
+			$12, $13, $14, $15
+		)
+		returning ` + transactionCols
+	t, err := s.scanTransaction(ctx, s.pool, insertSQL,
+		id, workspaceID, in.AccountID, in.Status, in.BookedAt, in.ValueAt, in.PostedAt,
+		in.Amount.String(), in.Currency, in.MerchantID, in.CategoryID,
+		in.CounterpartyRaw, in.Description, in.Notes, in.CountAsExpense,
+	)
 	if err != nil {
 		return nil, mapInsertError(err)
 	}
-	return insertRowToTransaction(row), nil
+	return t, nil
 }
 
 // Get returns a single transaction by id, scoped to workspaceID.
+//
+// We use a hand-rolled SELECT instead of dbq.GetTransaction because the
+// generated row models original_amount/original_currency as non-nullable
+// strings, which fails to scan when those columns are NULL.
 func (s *Service) Get(ctx context.Context, workspaceID, id uuid.UUID) (*Transaction, error) {
-	row, err := dbq.New(s.pool).GetTransaction(ctx, dbq.GetTransactionParams{
-		WorkspaceID: workspaceID,
-		ID:          id,
-	})
+	t, err := s.scanTransaction(ctx, s.pool,
+		`select `+transactionCols+` from transactions where workspace_id = $1 and id = $2`,
+		workspaceID, id,
+	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("transaction")
 		}
 		return nil, err
 	}
-	return getRowToTransaction(row), nil
+	return t, nil
 }
 
 // ListFilter bounds the GET /transactions listing.
@@ -556,6 +590,26 @@ func (s *Service) Update(ctx context.Context, workspaceID, id uuid.UUID, raw Pat
 		}
 	}
 
+	// If the patch is setting a non-null merchant_id and not also setting a
+	// category, fetch the merchant's default category and apply it when the
+	// existing transaction has no category. This mirrors the import path's
+	// "manual override wins" semantics: if the caller explicitly passed a
+	// categoryId (even null) we don't auto-apply.
+	var inheritedCategoryID *uuid.UUID
+	if p.merchantIDSet && !p.merchantIDNull && !p.categoryIDSet && existing.CategoryID == nil {
+		var defaultCategoryID *uuid.UUID
+		err := s.pool.QueryRow(ctx,
+			`select default_category_id from merchants where workspace_id = $1 and id = $2`,
+			workspaceID, p.merchantID,
+		).Scan(&defaultCategoryID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("read merchant default category: %w", err)
+		}
+		if defaultCategoryID != nil {
+			inheritedCategoryID = defaultCategoryID
+		}
+	}
+
 	sets := make([]string, 0, 12)
 	args := []any{workspaceID, id}
 	next := func(v any) string {
@@ -601,6 +655,9 @@ func (s *Service) Update(ctx context.Context, workspaceID, id uuid.UUID, raw Pat
 			sets = append(sets, "merchant_id = null")
 		} else {
 			sets = append(sets, "merchant_id = "+next(p.merchantID))
+			if inheritedCategoryID != nil {
+				sets = append(sets, "category_id = "+next(*inheritedCategoryID))
+			}
 		}
 	}
 	if p.counterpartySet {
@@ -723,52 +780,3 @@ func mapInsertError(err error) error {
 	return fmt.Errorf("transaction write: %w", err)
 }
 
-// getRowToTransaction converts a sqlc GetTransactionRow to the API Transaction.
-func getRowToTransaction(r dbq.GetTransactionRow) *Transaction {
-	return &Transaction{
-		ID:               r.ID,
-		WorkspaceID:      r.WorkspaceID,
-		AccountID:        r.AccountID,
-		Status:           r.Status,
-		BookedAt:         r.BookedAt,
-		ValueAt:          r.ValueAt,
-		PostedAt:         r.PostedAt,
-		Amount:           r.Amount,
-		Currency:         r.Currency,
-		OriginalAmount:   nilableString(r.OriginalAmount),
-		OriginalCurrency: nilableString(r.OriginalCurrency),
-		MerchantID:       r.MerchantID,
-		CategoryID:       r.CategoryID,
-		CounterpartyRaw:  r.CounterpartyRaw,
-		Description:      r.Description,
-		Notes:            r.Notes,
-		CountAsExpense:   r.CountAsExpense,
-		CreatedAt:        r.CreatedAt,
-		UpdatedAt:        r.UpdatedAt,
-	}
-}
-
-// insertRowToTransaction converts a sqlc InsertTransactionRow to the API Transaction.
-func insertRowToTransaction(r dbq.InsertTransactionRow) *Transaction {
-	return &Transaction{
-		ID:               r.ID,
-		WorkspaceID:      r.WorkspaceID,
-		AccountID:        r.AccountID,
-		Status:           r.Status,
-		BookedAt:         r.BookedAt,
-		ValueAt:          r.ValueAt,
-		PostedAt:         r.PostedAt,
-		Amount:           r.Amount,
-		Currency:         r.Currency,
-		OriginalAmount:   nilableString(r.OriginalAmount),
-		OriginalCurrency: nilableString(r.OriginalCurrency),
-		MerchantID:       r.MerchantID,
-		CategoryID:       r.CategoryID,
-		CounterpartyRaw:  r.CounterpartyRaw,
-		Description:      r.Description,
-		Notes:            r.Notes,
-		CountAsExpense:   r.CountAsExpense,
-		CreatedAt:        r.CreatedAt,
-		UpdatedAt:        r.UpdatedAt,
-	}
-}

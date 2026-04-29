@@ -83,7 +83,7 @@ func NewRouter(d Deps) http.Handler {
 	classificationH := classification.NewHandler(classificationSvc)
 	importSvc := bankimport.NewService(d.DB, classificationSvc)
 	importH := bankimport.NewHandler(importSvc)
-	transactionsSvc := transactions.NewService(d.DB)
+	transactionsSvc := transactions.NewService(d.DB, classificationSvc)
 	transactionsH := transactions.NewHandler(transactionsSvc)
 
 	// Investments use a marketdata service (FX + price cache + providers).
