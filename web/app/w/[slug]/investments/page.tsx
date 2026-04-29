@@ -157,24 +157,20 @@ export default function InvestmentsDashboardPage({
               reportCcy={reportCcy}
               summary={data}
             />
-            <AllocationOverview summary={data} reportCcy={reportCcy} />
+            <MoversCard movers={data.topMovers} />
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-            <HoldingsCard
-              holdings={data.holdings}
-              slug={slug}
-              filter={holdingFilter}
-              onFilterChange={setHoldingFilter}
-            />
-            <div className="grid gap-4">
-              <MoversCard movers={data.topMovers} />
-              <RecentActivityCard
-                trades={tradesQuery.data ?? []}
-                dividends={dividendsQuery.data ?? []}
-              />
-            </div>
-          </div>
+          <HoldingsCard
+            holdings={data.holdings}
+            slug={slug}
+            filter={holdingFilter}
+            onFilterChange={setHoldingFilter}
+          />
+
+          <RecentActivityCard
+            trades={tradesQuery.data ?? []}
+            dividends={dividendsQuery.data ?? []}
+          />
         </>
       )}
     </div>
@@ -364,77 +360,6 @@ function PerformanceCard({
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function AllocationOverview({
-  summary,
-  reportCcy,
-}: {
-  summary: DashboardSummary;
-  reportCcy: string;
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Allocation</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-5">
-        <AllocationList
-          title="Asset class"
-          slices={summary.allocationByAssetClass}
-          reportCcy={reportCcy}
-        />
-        <AllocationList
-          title="Currency"
-          slices={summary.allocationByCurrency}
-          reportCcy={reportCcy}
-        />
-      </CardContent>
-    </Card>
-  );
-}
-
-function AllocationList({
-  title,
-  slices,
-  reportCcy,
-}: {
-  title: string;
-  slices: { key: string; label: string; value: string; pct: string }[];
-  reportCcy: string;
-}) {
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="text-fg-faint text-[11px] font-medium tracking-wide uppercase">
-        {title}
-      </div>
-      {slices.length === 0 ? (
-        <p className="text-fg-muted text-[13px]">No exposure to show yet.</p>
-      ) : (
-        slices.slice(0, 6).map((s) => (
-          <div key={`${title}:${s.key}`} className="flex flex-col gap-1">
-            <div className="flex items-center justify-between gap-3 text-[13px]">
-              <span className="text-fg truncate font-medium">
-                {formatAssetClass(s.label)}
-              </span>
-              <span className="text-fg-muted shrink-0 tabular-nums">
-                {s.pct}%
-              </span>
-            </div>
-            <div className="bg-border h-2 w-full overflow-hidden rounded-full">
-              <div
-                className="bg-accent h-full rounded-full"
-                style={{ width: `${Math.min(100, Number(s.pct))}%` }}
-              />
-            </div>
-            <div className="text-fg-muted text-[12px] tabular-nums">
-              {formatAmount(s.value, reportCcy)}
-            </div>
-          </div>
-        ))
-      )}
-    </div>
   );
 }
 
