@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,15 +19,17 @@ import (
 // throttle or return empty payloads, in which case errors propagate up to
 // the cache service which falls back to last-known cached rows.
 type YahooProvider struct {
-	baseURL string
-	client  *http.Client
+	baseURL       string
+	searchBaseURL string
+	client        *http.Client
 }
 
 // NewYahooProvider constructs a provider with sensible defaults.
 func NewYahooProvider() *YahooProvider {
 	return &YahooProvider{
-		baseURL: "https://query1.finance.yahoo.com/v8/finance/chart",
-		client:  &http.Client{Timeout: 12 * time.Second},
+		baseURL:       "https://query1.finance.yahoo.com/v8/finance/chart",
+		searchBaseURL: "https://query2.finance.yahoo.com/v1/finance/search",
+		client:        &http.Client{Timeout: 12 * time.Second},
 	}
 }
 
@@ -53,14 +56,15 @@ type yahooChartResp struct {
 	} `json:"chart"`
 }
 
-var yahooSymbolAliases = map[string][]string{
-	"SPYW": {"SPYW.DE"},
-	"VUAA": {"VUAA.DE", "VUAA.MI"},
-	"VGEU": {"VGEU.DE"},
-	"VUSA": {"VUSA.DE", "VUSA.AS", "VUSA.MI"},
-}
-
 var yahooEuropeanSuffixes = []string{".DE", ".MI", ".AS", ".PA", ".L", ".SW"}
+
+type yahooSearchResp struct {
+	Quotes []struct {
+		Symbol    string `json:"symbol"`
+		QuoteType string `json:"quoteType"`
+		Exchange  string `json:"exchange"`
+	} `json:"quotes"`
+}
 
 func (p *YahooProvider) fetch(ctx context.Context, symbol, range_, interval string, period1, period2 int64) (*yahooChartResp, error) {
 	q := url.Values{}
@@ -100,7 +104,7 @@ func (p *YahooProvider) fetch(ctx context.Context, symbol, range_, interval stri
 
 func (p *YahooProvider) fetchWithFallback(ctx context.Context, symbol, range_, interval string, period1, period2 int64) (*yahooChartResp, error) {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
-	candidates := yahooLookupSymbols(symbol)
+	candidates := p.lookupSymbols(ctx, symbol)
 	var firstErr error
 	for _, candidate := range candidates {
 		body, err := p.fetch(ctx, candidate, range_, interval, period1, period2)
@@ -114,27 +118,24 @@ func (p *YahooProvider) fetchWithFallback(ctx context.Context, symbol, range_, i
 	return nil, firstErr
 }
 
-func yahooLookupSymbols(symbol string) []string {
+func (p *YahooProvider) lookupSymbols(ctx context.Context, symbol string) []string {
 	if symbol == "" {
 		return nil
 	}
-	candidates := []string{symbol}
-	if _, ok := yahooSymbolAliases[symbol]; ok {
-		candidates = append(yahooFallbackSymbols(symbol), symbol)
+	if strings.Contains(symbol, ".") {
+		return []string{symbol}
 	}
+	candidates := p.searchSymbols(ctx, symbol)
+	candidates = append(candidates, yahooFallbackSymbols(symbol)...)
+	candidates = append(candidates, symbol)
+
 	out := make([]string, 0, len(candidates))
 	seen := map[string]struct{}{}
 	for _, candidate := range candidates {
-		if _, ok := seen[candidate]; ok {
+		candidate = strings.ToUpper(strings.TrimSpace(candidate))
+		if candidate == "" {
 			continue
 		}
-		seen[candidate] = struct{}{}
-		out = append(out, candidate)
-	}
-	if _, ok := yahooSymbolAliases[symbol]; ok {
-		return out
-	}
-	for _, candidate := range yahooFallbackSymbols(symbol) {
 		if _, ok := seen[candidate]; ok {
 			continue
 		}
@@ -144,30 +145,96 @@ func yahooLookupSymbols(symbol string) []string {
 	return out
 }
 
+func (p *YahooProvider) searchSymbols(ctx context.Context, symbol string) []string {
+	if p.searchBaseURL == "" {
+		return nil
+	}
+	q := url.Values{}
+	q.Set("q", symbol)
+	q.Set("quotesCount", "12")
+	q.Set("newsCount", "0")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.searchBaseURL+"?"+q.Encode(), nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("User-Agent", "FolioBot/1.0 (+https://folio.local)")
+	res, err := p.client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil
+	}
+	var body yahooSearchResp
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		return nil
+	}
+
+	matches := make([]struct {
+		symbol string
+		score  int
+	}, 0, len(body.Quotes))
+	for _, q := range body.Quotes {
+		candidate := strings.ToUpper(strings.TrimSpace(q.Symbol))
+		if candidate != symbol && !strings.HasPrefix(candidate, symbol+".") {
+			continue
+		}
+		score := yahooQuoteTypeScore(q.QuoteType)*100 + yahooExchangeScore(q.Exchange)
+		if candidate == symbol {
+			score -= 20
+		}
+		matches = append(matches, struct {
+			symbol string
+			score  int
+		}{symbol: candidate, score: score})
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].score == matches[j].score {
+			return matches[i].symbol < matches[j].symbol
+		}
+		return matches[i].score < matches[j].score
+	})
+	out := make([]string, 0, len(matches))
+	for _, match := range matches {
+		out = append(out, match.symbol)
+	}
+	return out
+}
+
+func yahooQuoteTypeScore(quoteType string) int {
+	switch strings.ToUpper(strings.TrimSpace(quoteType)) {
+	case "ETF", "EQUITY":
+		return 0
+	case "MUTUALFUND":
+		return 2
+	default:
+		return 1
+	}
+}
+
+func yahooExchangeScore(exchange string) int {
+	switch strings.ToUpper(strings.TrimSpace(exchange)) {
+	case "NMS", "NYQ", "NGM", "PCX":
+		return 0
+	case "GER", "MIL", "AMS", "EBS":
+		return 1
+	case "LSE":
+		return 2
+	case "MUN", "DUS", "STU", "HAM", "HAN":
+		return 3
+	default:
+		return 5
+	}
+}
+
 func yahooFallbackSymbols(symbol string) []string {
 	if symbol == "" || strings.Contains(symbol, ".") {
 		return nil
 	}
-	out := make([]string, 0, len(yahooEuropeanSuffixes)+len(yahooSymbolAliases[symbol]))
-	seen := map[string]struct{}{}
-	for _, candidate := range yahooSymbolAliases[symbol] {
-		candidate = strings.ToUpper(strings.TrimSpace(candidate))
-		if candidate == "" || candidate == symbol {
-			continue
-		}
-		if _, ok := seen[candidate]; ok {
-			continue
-		}
-		seen[candidate] = struct{}{}
-		out = append(out, candidate)
-	}
+	out := make([]string, 0, len(yahooEuropeanSuffixes))
 	for _, suffix := range yahooEuropeanSuffixes {
-		candidate := symbol + suffix
-		if _, ok := seen[candidate]; ok {
-			continue
-		}
-		seen[candidate] = struct{}{}
-		out = append(out, candidate)
+		out = append(out, symbol+suffix)
 	}
 	return out
 }
