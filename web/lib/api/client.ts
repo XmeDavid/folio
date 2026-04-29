@@ -333,6 +333,16 @@ export async function revokeInvite(
   });
 }
 
+export async function resendInvite(
+  workspaceId: string,
+  inviteId: string
+): Promise<WorkspaceInviteCreated> {
+  return request<WorkspaceInviteCreated>(
+    `/api/v1/t/${workspaceId}/invites/${inviteId}/resend`,
+    { method: "POST" }
+  );
+}
+
 export type InvitePreview = {
   workspaceId: string;
   workspaceName: string;
