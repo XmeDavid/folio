@@ -19,6 +19,7 @@ import { FormError } from "@/components/ui/form-error";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { MerchantDefaultCategoryDialog } from "@/components/classification/merchant-default-category-dialog";
 import {
   ApiError,
   archiveMerchant,
@@ -26,6 +27,7 @@ import {
   updateMerchant,
   type Category,
   type Merchant,
+  type MerchantPatchResult,
 } from "@/lib/api/client";
 
 export function MerchantsTable({
@@ -104,6 +106,12 @@ function MerchantRow({
           workspaceId={workspaceId}
           leafCategories={leafCategories}
           merchant={merchant}
+          // The list view doesn't have a transaction count; pass 0 so we
+          // never prompt the cascade dialog from here. Default-category
+          // changes that should re-categorise existing transactions are
+          // expected to happen on the merchant detail page where the count
+          // is known.
+          transactionCount={0}
           onDone={() => setEditing(false)}
           onCancel={() => setEditing(false)}
         />
@@ -203,12 +211,18 @@ export function MerchantForm({
   workspaceId,
   leafCategories,
   merchant,
+  transactionCount,
   onDone,
   onCancel,
 }: {
   workspaceId: string;
   leafCategories: Category[];
   merchant?: Merchant;
+  /** How many transactions this merchant has. Used to decide whether to
+   *  prompt the cascade dialog when the user changes `defaultCategoryId`.
+   *  Pass 0 (the default) to never prompt — appropriate when the count is
+   *  unknown in the calling view. */
+  transactionCount?: number;
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -223,11 +237,19 @@ export function MerchantForm({
   const [industry, setIndustry] = React.useState(merchant?.industry ?? "");
   const [logoUrl, setLogoUrl] = React.useState(merchant?.logoUrl ?? "");
   const [notes, setNotes] = React.useState(merchant?.notes ?? "");
+  const [cascadeDialogOpen, setCascadeDialogOpen] = React.useState(false);
 
   const idSuffix = merchant?.id ?? "new";
+  const knownTransactionCount = transactionCount ?? 0;
 
-  const mutation = useMutation({
-    mutationFn: async () => {
+  const categoryNameById = React.useMemo(() => {
+    const map = new Map<string, string>();
+    for (const category of leafCategories) map.set(category.id, category.name);
+    return map;
+  }, [leafCategories]);
+
+  const mutation = useMutation<MerchantPatchResult | Merchant, Error, boolean>({
+    mutationFn: async (cascade: boolean) => {
       const trimmedName = canonicalName.trim();
       const normalizedCategory = defaultCategoryId || null;
       const normalizedWebsite = website.trim() || null;
@@ -236,9 +258,6 @@ export function MerchantForm({
       const normalizedNotes = notes.trim() || null;
 
       if (merchant) {
-        // TODO: hook up cascade dialog (Task 9.1). For now we always send
-        // `cascade: false` so changing the default category does NOT
-        // re-categorise existing transactions.
         return updateMerchant(workspaceId, merchant.id, {
           canonicalName: trimmedName,
           defaultCategoryId: normalizedCategory,
@@ -246,7 +265,7 @@ export function MerchantForm({
           industry: normalizedIndustry,
           logoUrl: normalizedLogoUrl,
           notes: normalizedNotes,
-          cascade: false,
+          cascade,
         });
       }
       return createMerchant(workspaceId, {
@@ -258,10 +277,24 @@ export function MerchantForm({
         notes: normalizedNotes,
       });
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, cascade) => {
+      setCascadeDialogOpen(false);
       await queryClient.invalidateQueries({
         queryKey: ["merchants", workspaceId],
       });
+      if (merchant) {
+        await queryClient.invalidateQueries({
+          queryKey: ["merchant", workspaceId, merchant.id],
+        });
+        if (cascade) {
+          // The cascade-true path may have re-categorised transactions on
+          // the server; refresh any transaction queries so the new category
+          // is reflected immediately.
+          await queryClient.invalidateQueries({
+            queryKey: ["transactions", workspaceId],
+          });
+        }
+      }
       onDone();
     },
   });
@@ -269,13 +302,49 @@ export function MerchantForm({
   const error =
     mutation.error instanceof ApiError ? mutation.error.message : null;
 
+  const cascadeResult: MerchantPatchResult | null =
+    merchant &&
+    mutation.data &&
+    typeof mutation.data === "object" &&
+    "merchant" in mutation.data
+      ? (mutation.data as MerchantPatchResult)
+      : null;
+  const cascadedCount = cascadeResult?.cascadedTransactionCount ?? 0;
+
+  const oldCategoryName = merchant?.defaultCategoryId
+    ? (categoryNameById.get(merchant.defaultCategoryId) ?? null)
+    : null;
+  const newCategoryName = defaultCategoryId
+    ? (categoryNameById.get(defaultCategoryId) ?? null)
+    : null;
+
+  const submitForm = () => {
+    if (!canonicalName.trim()) return;
+    const isEdit = !!merchant;
+    if (!isEdit) {
+      mutation.mutate(false);
+      return;
+    }
+    const defaultChanged =
+      (merchant?.defaultCategoryId ?? "") !== (defaultCategoryId ?? "");
+    if (!defaultChanged) {
+      mutation.mutate(false);
+      return;
+    }
+    if (knownTransactionCount <= 0) {
+      // No existing transactions — cascade is a no-op, so don't prompt.
+      mutation.mutate(false);
+      return;
+    }
+    setCascadeDialogOpen(true);
+  };
+
   return (
     <form
       className="flex flex-col gap-4"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!canonicalName.trim()) return;
-        mutation.mutate();
+        submitForm();
       }}
     >
       <div className="grid gap-4 md:grid-cols-2">
@@ -352,6 +421,16 @@ export function MerchantForm({
 
       {error ? <FormError>{error}</FormError> : null}
 
+      {cascadedCount > 0 ? (
+        <div className="rounded-[8px] border border-border bg-surface-subtle px-3 py-2 text-[12px] text-fg-muted">
+          Re-categorised{" "}
+          <span className="font-medium text-fg tabular-nums">
+            {cascadedCount}
+          </span>{" "}
+          existing transaction{cascadedCount === 1 ? "" : "s"}.
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-end gap-2">
         <Button type="button" variant="secondary" onClick={onCancel}>
           <X className="h-4 w-4" />
@@ -365,6 +444,22 @@ export function MerchantForm({
           {merchant ? "Save changes" : "Create merchant"}
         </Button>
       </div>
+
+      {merchant ? (
+        <MerchantDefaultCategoryDialog
+          open={cascadeDialogOpen}
+          merchantName={merchant.canonicalName}
+          oldCategoryName={oldCategoryName}
+          newCategoryName={newCategoryName}
+          busy={mutation.isPending}
+          onApply={() => mutation.mutate(true)}
+          onSkip={() => mutation.mutate(false)}
+          onCancel={() => {
+            if (mutation.isPending) return;
+            setCascadeDialogOpen(false);
+          }}
+        />
+      ) : null}
     </form>
   );
 }

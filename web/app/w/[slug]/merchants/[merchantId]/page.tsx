@@ -156,6 +156,7 @@ export default function MerchantDetailPage({
           merchant={merchant}
           categoryById={categoryById}
           leafCategories={leafCategories}
+          transactionCount={transactions.length}
         />
         <MerchantTransactionsPanel
           transactions={transactions}
@@ -195,11 +196,13 @@ function MerchantDetailSidebar({
   merchant,
   categoryById,
   leafCategories,
+  transactionCount,
 }: {
   workspaceId: string;
   merchant: Merchant;
   categoryById: Map<string, Category>;
   leafCategories: Category[];
+  transactionCount: number;
 }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = React.useState(false);
@@ -252,6 +255,7 @@ function MerchantDetailSidebar({
             workspaceId={workspaceId}
             leafCategories={leafCategories}
             merchant={merchant}
+            transactionCount={transactionCount}
             onDone={() => setEditing(false)}
             onCancel={() => setEditing(false)}
           />
