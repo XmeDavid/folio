@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import { use } from "react";
+import Link from "next/link";
+import type { Route } from "next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
@@ -193,6 +195,7 @@ export default function TransactionsPage({
           categories={categories}
           merchants={merchants}
           locale={locale}
+          slug={slug}
           workspaceId={workspaceId!}
           selectedId={selected?.id ?? null}
           appliedFilters={filters}
@@ -262,6 +265,7 @@ function TransactionTable({
   categories,
   merchants,
   locale,
+  slug,
   workspaceId,
   selectedId,
   appliedFilters,
@@ -283,6 +287,7 @@ function TransactionTable({
   categories: Category[];
   merchants: Merchant[];
   locale?: string;
+  slug: string;
   workspaceId: string;
   selectedId: string | null;
   appliedFilters: TransactionFilters;
@@ -301,6 +306,7 @@ function TransactionTable({
 }) {
   const accountById = new Map(accounts.map((a) => [a.id, a]));
   const categoryById = new Map(categories.map((c) => [c.id, c]));
+  const merchantById = new Map(merchants.map((m) => [m.id, m]));
   const categoryOptions = categoryLeafOptions(categories);
   const hasFilters = activeFilterCount(appliedFilters) > 0;
   const selected =
@@ -407,6 +413,20 @@ function TransactionTable({
                             {t.counterpartyRaw}
                           </span>
                         ) : null}
+                        {(() => {
+                          if (!t.merchantId) return null;
+                          const m = merchantById.get(t.merchantId);
+                          if (!m) return null;
+                          return (
+                            <Link
+                              href={`/w/${slug}/merchants/${m.id}` as Route}
+                              className="text-fg-faint hover:text-accent truncate text-[12px]"
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              → {m.canonicalName}
+                            </Link>
+                          );
+                        })()}
                       </div>
                       <ChevronRight className="text-fg-faint mt-0.5 h-4 w-4 shrink-0 lg:hidden" />
                     </div>
@@ -469,6 +489,8 @@ function TransactionTable({
           category={
             selected.categoryId ? categoryById.get(selected.categoryId) : null
           }
+          merchantById={merchantById}
+          slug={slug}
           categoryOptions={categoryOptions}
           workspaceId={workspaceId}
           locale={locale}
@@ -750,6 +772,8 @@ function TransactionDetail({
   transaction,
   account,
   category,
+  merchantById,
+  slug,
   categoryOptions,
   workspaceId,
   locale,
@@ -757,6 +781,8 @@ function TransactionDetail({
   transaction: Transaction;
   account?: Account;
   category?: Category | null;
+  merchantById: Map<string, Merchant>;
+  slug: string;
   categoryOptions: { id: string; label: string }[];
   workspaceId: string;
   locale?: string;
@@ -811,6 +837,22 @@ function TransactionDetail({
           <DetailTerm
             label="Category"
             value={category?.name ?? "Uncategorized"}
+          />
+          <DetailTerm
+            label="Merchant"
+            value={(() => {
+              if (!transaction.merchantId) return "-";
+              const m = merchantById.get(transaction.merchantId);
+              if (!m) return "-";
+              return (
+                <Link
+                  href={`/w/${slug}/merchants/${m.id}` as Route}
+                  className="text-fg hover:text-accent"
+                >
+                  {m.canonicalName}
+                </Link>
+              );
+            })()}
           />
           <DetailTerm
             label="Raw counterparty"
