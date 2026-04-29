@@ -45,6 +45,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 // MountAuthed mounts authenticated, non-workspace-scoped routes (session required).
 func (h *Handler) MountAuthed(r chi.Router) {
 	r.Get("/me", h.me)
+	r.Patch("/me/last-workspace", h.updateLastWorkspace)
 	r.Get("/me/mfa", h.mfaStatus)
 	// Enroll/disable/regenerate all pin a new factor to the account, so they
 	// all require a fresh reauth. Otherwise a stolen session cookie could pin
@@ -257,6 +258,61 @@ func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+type updateLastWorkspaceReq struct {
+	WorkspaceID string `json:"workspaceId"`
+}
+
+// updateLastWorkspace records the user's most recently used workspace so the
+// next /login lands them back where they left off. It is a personal
+// preference write — no audit, no fresh-reauth gate.
+func (h *Handler) updateLastWorkspace(w http.ResponseWriter, r *http.Request) {
+	user := MustUser(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var body updateLastWorkspaceReq
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
+		return
+	}
+	wsID, err := uuid.Parse(body.WorkspaceID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "workspaceId must be a UUID")
+		return
+	}
+	q := dbq.New(h.svc.pool)
+
+	// First confirm the workspace exists (and isn't soft-deleted) so the
+	// caller can distinguish "no such workspace" (404) from "you can't touch
+	// it" (403). Both queries gate on deleted_at IS NULL.
+	if _, err := q.GetWorkspaceByID(r.Context(), wsID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			httpx.WriteError(w, http.StatusNotFound, "workspace_not_found", "workspace not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "lookup failed")
+		return
+	}
+
+	// Membership check (mirrors RequireMembership: active workspace + active membership).
+	if _, err := q.GetWorkspaceWithMembership(r.Context(), dbq.GetWorkspaceWithMembershipParams{
+		ID: wsID, UserID: user.ID,
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			httpx.WriteError(w, http.StatusForbidden, "not_a_member", "not a member of this workspace")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "membership lookup failed")
+		return
+	}
+
+	if err := q.UpdateUserLastWorkspace(r.Context(), dbq.UpdateUserLastWorkspaceParams{
+		LastWorkspaceID: &wsID, ID: user.ID,
+	}); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "update failed")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // parseIPForStorage parses a string IP to net.IP. Returns nil on parse failure.
