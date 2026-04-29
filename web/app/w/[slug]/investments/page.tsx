@@ -256,6 +256,10 @@ function SummaryGrid({
   summary: DashboardSummary;
   reportCcy: string;
 }) {
+  const pricedPositions = Math.max(
+    0,
+    summary.openPositionsCount - summary.missingQuotes
+  );
   const stats = [
     {
       label: "Cost basis",
@@ -282,10 +286,10 @@ function SummaryGrid({
       tone: sign(summary.totalDividends),
     },
     {
-      label: "Total return",
-      value: formatAmount(summary.totalReturn, reportCcy),
-      sub: `${summary.totalReturnPct}% incl. dividends and fees`,
-      tone: sign(summary.totalReturn),
+      label: "Quote coverage",
+      value: `${pricedPositions}/${summary.openPositionsCount}`,
+      sub: `${summary.staleQuotes} stale / ${summary.missingQuotes} missing`,
+      tone: summary.missingQuotes > 0 ? ("neg" as const) : ("neutral" as const),
     },
   ];
 
