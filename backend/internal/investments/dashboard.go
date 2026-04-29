@@ -184,6 +184,8 @@ func (s *Service) BuildDashboardSummary(ctx context.Context, workspaceID uuid.UU
 
 	// Movers: largest absolute unrealised P/L (top 5).
 	movers := make([]HoldingMover, 0, 5)
+	profits := make([]HoldingMover, 0, 5)
+	losses := make([]HoldingMover, 0, 5)
 	for _, h := range holdings {
 		if h.UnrealisedPnLReport == nil {
 			continue
@@ -204,14 +206,37 @@ func (s *Service) BuildDashboardSummary(ctx context.Context, workspaceID uuid.UU
 			UnrealisedPct:  pct.StringFixed(2),
 			ReportCurrency: report,
 		})
+		if unr.GreaterThan(decimal.Zero) {
+			profits = append(profits, movers[len(movers)-1])
+		}
+		if unr.LessThan(decimal.Zero) {
+			losses = append(losses, movers[len(movers)-1])
+		}
 	}
+	sort.Slice(profits, func(i, j int) bool {
+		ai, _ := decimal.NewFromString(profits[i].UnrealisedPnL)
+		aj, _ := decimal.NewFromString(profits[j].UnrealisedPnL)
+		return ai.GreaterThan(aj)
+	})
+	sort.Slice(losses, func(i, j int) bool {
+		ai, _ := decimal.NewFromString(losses[i].UnrealisedPnL)
+		aj, _ := decimal.NewFromString(losses[j].UnrealisedPnL)
+		return ai.LessThan(aj)
+	})
+	movers = dailyMovers(ctx, s, holdings, report, now)
 	sort.Slice(movers, func(i, j int) bool {
-		ai, _ := decimal.NewFromString(movers[i].UnrealisedPnL)
-		aj, _ := decimal.NewFromString(movers[j].UnrealisedPnL)
+		ai, _ := decimal.NewFromString(movers[i].DailyChange)
+		aj, _ := decimal.NewFromString(movers[j].DailyChange)
 		return ai.Abs().GreaterThan(aj.Abs())
 	})
 	if len(movers) > 5 {
 		movers = movers[:5]
+	}
+	if len(profits) > 5 {
+		profits = profits[:5]
+	}
+	if len(losses) > 5 {
+		losses = losses[:5]
 	}
 
 	totalReturn := totalUnreal.Add(totalReal).Add(totalDiv).Sub(totalFees)
@@ -246,8 +271,88 @@ func (s *Service) BuildDashboardSummary(ctx context.Context, workspaceID uuid.UU
 		AllocationByAccount:    allocAcct,
 		AllocationByAssetClass: allocClass,
 		TopMovers:              movers,
+		TopProfits:             profits,
+		TopLosses:              losses,
 		Warnings:               dedupe(warnings),
 	}, nil
+}
+
+func dailyMovers(ctx context.Context, s *Service, holdings []Holding, report string, now time.Time) []HoldingMover {
+	out := make([]HoldingMover, 0, len(holdings))
+	from := dayUTC(now.AddDate(0, 0, -10))
+	to := dayUTC(now)
+	for _, h := range holdings {
+		qty, _ := decimal.NewFromString(h.Quantity)
+		if qty.LessThanOrEqual(decimal.Zero) || h.LastPrice == nil {
+			continue
+		}
+		currentPrice, err := decimal.NewFromString(*h.LastPrice)
+		if err != nil || currentPrice.LessThanOrEqual(decimal.Zero) {
+			continue
+		}
+		previousPrice, ok := s.previousRecentPrice(ctx, h.InstrumentID, h.Symbol, from, to)
+		if !ok || previousPrice.LessThanOrEqual(decimal.Zero) {
+			continue
+		}
+		changeNative := currentPrice.Sub(previousPrice).Mul(qty)
+		change := changeNative
+		if !strings.EqualFold(h.InstrumentCcy, report) {
+			if fx, err := s.fxOrIdentity(ctx, h.InstrumentCcy, report, now); err == nil {
+				change = changeNative.Mul(fx)
+			}
+		}
+		prevValue := previousPrice.Mul(qty)
+		pct := decimal.Zero
+		if !prevValue.IsZero() {
+			pct = changeNative.Div(prevValue).Mul(decimal.NewFromInt(100))
+		}
+		out = append(out, HoldingMover{
+			Symbol:         h.Symbol,
+			Name:           h.Name,
+			UnrealisedPnL:  "0.00",
+			UnrealisedPct:  "0.00",
+			DailyChange:    change.StringFixed(2),
+			DailyChangePct: pct.StringFixed(2),
+			ReportCurrency: report,
+		})
+	}
+	return out
+}
+
+func (s *Service) previousRecentPrice(ctx context.Context, instrumentID uuid.UUID, symbol string, from, to time.Time) (decimal.Decimal, bool) {
+	var prices map[time.Time]marketdata.PriceQuote
+	var err error
+	if s.md != nil {
+		prices, err = s.md.HistoricalRange(ctx, instrumentID, symbol, from, to)
+	} else {
+		rows, queryErr := dbq.New(s.pool).LookupCachedPriceRange(ctx, dbq.LookupCachedPriceRangeParams{
+			InstrumentID: instrumentID,
+			FromDate:     from,
+			ToDate:       to.Add(24 * time.Hour),
+		})
+		err = queryErr
+		prices = make(map[time.Time]marketdata.PriceQuote, len(rows))
+		for _, row := range rows {
+			prices[dayUTC(row.AsOf)] = marketdata.PriceQuote{
+				AsOf:     row.AsOf,
+				Price:    numericToDecimal(row.Price),
+				Currency: row.Currency,
+				Source:   row.Source,
+			}
+		}
+	}
+	if err != nil || len(prices) < 2 {
+		return decimal.Zero, false
+	}
+	dates := make([]time.Time, 0, len(prices))
+	for d := range prices {
+		dates = append(dates, d)
+	}
+	sort.Slice(dates, func(i, j int) bool { return dates[i].Before(dates[j]) })
+	if len(dates) < 2 {
+		return decimal.Zero, false
+	}
+	return prices[dates[len(dates)-2]].Price, true
 }
 
 // BuildDashboardHistory aggregates instrument value histories into a portfolio

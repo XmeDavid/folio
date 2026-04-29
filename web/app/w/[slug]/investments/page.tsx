@@ -29,6 +29,7 @@ import {
   type DashboardSummary,
   type DividendEvent,
   type Holding,
+  type HoldingMover,
   type PortfolioHistoryPoint,
   type Trade,
 } from "@/lib/api/investments";
@@ -224,7 +225,11 @@ export default function InvestmentsDashboardPage({
               reportCcy={reportCcy}
               summary={data}
             />
-            <MoversCard movers={data.topMovers} />
+            <MoversCard
+              movers={data.topMovers}
+              profits={data.topProfits ?? []}
+              losses={data.topLosses ?? []}
+            />
           </div>
 
           <HoldingsCard
@@ -432,28 +437,60 @@ function PerformanceCard({
 
 function MoversCard({
   movers,
+  profits,
+  losses,
 }: {
-  movers: {
-    symbol: string;
-    name: string;
-    unrealisedPnL: string;
-    unrealisedPct: string;
-    reportCurrency: string;
-  }[];
+  movers: HoldingMover[];
+  profits: HoldingMover[];
+  losses: HoldingMover[];
 }) {
+  const [mode, setMode] = React.useState<"daily" | "profits" | "losses">(
+    "daily"
+  );
+  const active =
+    mode === "daily" ? movers : mode === "profits" ? profits : losses;
+  const tabs = [
+    { id: "daily" as const, label: "Daily" },
+    { id: "profits" as const, label: "Profits" },
+    { id: "losses" as const, label: "Losses" },
+  ];
+
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="gap-3">
         <CardTitle>Top movers</CardTitle>
+        <div className="border-border bg-surface-subtle flex w-fit flex-wrap gap-1 rounded-[8px] border p-1">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setMode(tab.id)}
+              className={
+                "h-7 rounded-[6px] px-2 text-[12px] font-medium transition-colors " +
+                (mode === tab.id
+                  ? "bg-surface text-fg shadow-sm"
+                  : "text-fg-muted hover:text-fg")
+              }
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        {movers.length === 0 ? (
+        {active.length === 0 ? (
           <p className="text-fg-muted text-[13px]">
-            No live quotes yet. Refresh once positions exist.
+            {mode === "daily"
+              ? "No daily price changes yet."
+              : "No holdings in this view yet."}
           </p>
         ) : (
-          movers.map((m) => {
-            const tone = sign(m.unrealisedPnL);
+          active.map((m) => {
+            const amount =
+              mode === "daily" ? (m.dailyChange ?? "0") : m.unrealisedPnL;
+            const pct =
+              mode === "daily" ? (m.dailyChangePct ?? "0") : m.unrealisedPct;
+            const tone = sign(amount);
             return (
               <div
                 key={m.symbol}
@@ -470,10 +507,8 @@ function MoversCard({
                     "shrink-0 text-right tabular-nums " + toneClass(tone)
                   }
                 >
-                  <div>{formatAmount(m.unrealisedPnL, m.reportCurrency)}</div>
-                  <div className="text-[11px] opacity-80">
-                    {m.unrealisedPct}%
-                  </div>
+                  <div>{formatAmount(amount, m.reportCurrency)}</div>
+                  <div className="text-[11px] opacity-80">{pct}%</div>
                 </div>
               </div>
             );

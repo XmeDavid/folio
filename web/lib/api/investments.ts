@@ -155,6 +155,8 @@ export type HoldingMover = {
   name: string;
   unrealisedPnL: string;
   unrealisedPct: string;
+  dailyChange?: string;
+  dailyChangePct?: string;
   reportCurrency: string;
 };
 
@@ -178,6 +180,8 @@ export type DashboardSummary = {
   allocationByAccount: AllocationSlice[];
   allocationByAssetClass: AllocationSlice[];
   topMovers: HoldingMover[];
+  topProfits: HoldingMover[];
+  topLosses: HoldingMover[];
   warnings?: string[];
 };
 

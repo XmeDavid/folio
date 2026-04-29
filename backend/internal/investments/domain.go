@@ -144,6 +144,8 @@ type DashboardSummary struct {
 	AllocationByAccount    []AllocationSlice `json:"allocationByAccount"`
 	AllocationByAssetClass []AllocationSlice `json:"allocationByAssetClass"`
 	TopMovers              []HoldingMover    `json:"topMovers"`
+	TopProfits             []HoldingMover    `json:"topProfits"`
+	TopLosses              []HoldingMover    `json:"topLosses"`
 	Warnings               []string          `json:"warnings,omitempty"`
 }
 
@@ -170,6 +172,8 @@ type HoldingMover struct {
 	Name           string `json:"name"`
 	UnrealisedPnL  string `json:"unrealisedPnL"`
 	UnrealisedPct  string `json:"unrealisedPct"`
+	DailyChange    string `json:"dailyChange,omitempty"`
+	DailyChangePct string `json:"dailyChangePct,omitempty"`
 	ReportCurrency string `json:"reportCurrency"`
 }
 
