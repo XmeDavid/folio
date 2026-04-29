@@ -188,6 +188,10 @@ type Querier interface {
 	// Only considers rows from a different import batch than the synthetic itself.
 	LoadRealRowsForSynthetic(ctx context.Context, arg LoadRealRowsForSyntheticParams) ([]LoadRealRowsForSyntheticRow, error)
 	// Scan synthetic balance-reconcile rows for potential retirement.
+	// gap_start_date is the consolidated row date that established the previous
+	// balance for this synthetic; together with booked_at it bounds the interval
+	// where the missing real transaction must have occurred. Older synthetics
+	// (pre-#TBD) didn't store this and fall back to NULL.
 	LoadSyntheticCandidates(ctx context.Context, arg LoadSyntheticCandidatesParams) ([]LoadSyntheticCandidatesRow, error)
 	LoadTradeEvents(ctx context.Context, arg LoadTradeEventsParams) ([]LoadTradeEventsRow, error)
 	LoadTransactionSnapshot(ctx context.Context, arg LoadTransactionSnapshotParams) (LoadTransactionSnapshotRow, error)

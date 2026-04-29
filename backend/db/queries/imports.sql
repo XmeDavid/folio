@@ -74,8 +74,13 @@ WHERE t.workspace_id = @workspace_id
 
 -- name: LoadSyntheticCandidates :many
 -- Scan synthetic balance-reconcile rows for potential retirement.
+-- gap_start_date is the consolidated row date that established the previous
+-- balance for this synthetic; together with booked_at it bounds the interval
+-- where the missing real transaction must have occurred. Older synthetics
+-- (pre-#TBD) didn't store this and fall back to NULL.
 SELECT t.id, t.booked_at, t.posted_at, t.amount::text AS amount, t.currency,
        coalesce(t.raw->>'synthetic_residual', t.amount::text)::text AS residual,
+       coalesce(t.raw->>'gap_start_date', '')::text AS gap_start_date,
        sr.import_batch_id
 FROM transactions t
 LEFT JOIN source_refs sr

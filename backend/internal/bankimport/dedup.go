@@ -10,18 +10,28 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// dateProximityMatch returns true when incomingBooked is within toleranceDays
-// of either the existing row's booked_at or its posted_at (when present).
-// The two-axis check exists because Revolut's banking export carries both
-// auth (booked) and settle (posted) dates while the consolidated v2 export
-// only carries one date stamp; matching either covers same-tx pairs in both
-// files.
-func dateProximityMatch(incomingBooked, existingBooked time.Time, existingPosted *time.Time, toleranceDays int) bool {
+// dateProximityMatch returns true when any of incomingBooked/incomingPosted
+// is within toleranceDays of any of existingBooked/existingPosted. The
+// four-way check exists because Revolut's banking export carries both auth
+// (booked) and settle (posted) dates while the consolidated v2 export only
+// carries one date stamp — usually the settle date. Either side may be the
+// "incoming" depending on import order, so we have to compare both axes on
+// both sides; otherwise card transactions whose booked/posted span exceeds
+// the tolerance window slip past dedup and double-count.
+func dateProximityMatch(incomingBooked time.Time, incomingPosted *time.Time, existingBooked time.Time, existingPosted *time.Time, toleranceDays int) bool {
 	if datesWithin(incomingBooked, existingBooked, toleranceDays) {
 		return true
 	}
 	if existingPosted != nil && datesWithin(incomingBooked, *existingPosted, toleranceDays) {
 		return true
+	}
+	if incomingPosted != nil {
+		if datesWithin(*incomingPosted, existingBooked, toleranceDays) {
+			return true
+		}
+		if existingPosted != nil && datesWithin(*incomingPosted, *existingPosted, toleranceDays) {
+			return true
+		}
 	}
 	return false
 }
@@ -51,7 +61,7 @@ func fuzzyStableMatch(incoming ParsedTransaction, existing existingTx, tolerance
 	if incoming.Currency != existing.Currency {
 		return false
 	}
-	return dateProximityMatch(incoming.BookedAt, existing.BookedAt, existing.PostedAt, toleranceDays)
+	return dateProximityMatch(incoming.BookedAt, incoming.PostedAt, existing.BookedAt, existing.PostedAt, toleranceDays)
 }
 
 // normalizeDescription folds a transaction description for fuzzy comparison.

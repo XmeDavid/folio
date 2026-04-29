@@ -58,7 +58,7 @@ func TestResidualExplainedByExisting(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := residualExplainedByExisting(syntheticDate, "CHF", residual, tc.existing); got != tc.want {
+			if got := residualExplainedByExisting(syntheticDate, time.Time{}, "CHF", residual, tc.existing); got != tc.want {
 				t.Fatalf("residualExplainedByExisting = %v, want %v", got, tc.want)
 			}
 		})

@@ -753,7 +753,13 @@ func residualAlreadyImported(incoming ParsedTransaction, existing []existingTx) 
 		}
 		real = append(real, e)
 	}
-	return residualExplainedByExisting(incoming.BookedAt, incoming.Currency, residual, real)
+	var gapStart time.Time
+	if raw := incoming.Raw["gap_start_date"]; raw != "" {
+		if t, err := time.Parse(dateOnly, raw); err == nil {
+			gapStart = t
+		}
+	}
+	return residualExplainedByExisting(incoming.BookedAt, gapStart, incoming.Currency, residual, real)
 }
 
 func duplicateBySource(incoming ParsedTransaction, existing []existingTx) bool {
@@ -768,6 +774,14 @@ func duplicateBySource(incoming ParsedTransaction, existing []existingTx) bool {
 func duplicateByFingerprint(incoming ParsedTransaction, existing []existingTx) bool {
 	incomingDesc := normalizeDescription(valueOf(incoming.Description))
 	for _, e := range existing {
+		// Synthetic balance-adjustment rows are placeholders inserted to
+		// reconcile gaps in a single source's running balance — they aren't
+		// real transactions. A real row arriving from a second source should
+		// never be absorbed into a synthetic; let it land as importable and
+		// rely on retireExplainedSynthetics to void the synthetic afterwards.
+		if e.Synthetic {
+			continue
+		}
 		if !fuzzyStableMatch(incoming, e, autoDedupDays) {
 			continue
 		}
@@ -782,6 +796,9 @@ func conflictByStableFields(incoming ParsedTransaction, existing []existingTx) (
 	incomingDesc := normalizeDescription(valueOf(incoming.Description))
 	// Pass 1: auto-window match with description disagreement.
 	for _, e := range existing {
+		if e.Synthetic {
+			continue
+		}
 		if !fuzzyStableMatch(incoming, e, autoDedupDays) {
 			continue
 		}
@@ -791,6 +808,9 @@ func conflictByStableFields(incoming ParsedTransaction, existing []existingTx) (
 	}
 	// Pass 2: review-window drift on amount+currency, regardless of description.
 	for _, e := range existing {
+		if e.Synthetic {
+			continue
+		}
 		if fuzzyStableMatch(incoming, e, autoDedupDays) {
 			continue // already handled
 		}
@@ -875,6 +895,7 @@ func (s *Service) retireExplainedSynthetics(ctx context.Context, q *dbq.Queries,
 	type synthCandidate struct {
 		id       uuid.UUID
 		bookedAt time.Time
+		gapStart time.Time
 		currency string
 		residual decimal.Decimal
 		batchID  *uuid.UUID
@@ -885,9 +906,16 @@ func (s *Service) retireExplainedSynthetics(ctx context.Context, q *dbq.Queries,
 		if err != nil {
 			continue
 		}
+		gapStart := r.BookedAt
+		if r.GapStartDate != "" {
+			if t, err := time.Parse(dateOnly, r.GapStartDate); err == nil {
+				gapStart = t
+			}
+		}
 		candidates = append(candidates, synthCandidate{
 			id:       r.ID,
 			bookedAt: r.BookedAt,
+			gapStart: gapStart,
 			currency: r.Currency,
 			residual: residual,
 			batchID:  r.ImportBatchID,
@@ -897,7 +925,12 @@ func (s *Service) retireExplainedSynthetics(ctx context.Context, q *dbq.Queries,
 		return nil
 	}
 	for _, c := range candidates {
-		from := c.bookedAt.Add(-time.Duration(reviewDedupDays) * 24 * time.Hour)
+		// Search the entire gap interval (gapStart..bookedAt) plus the
+		// review-window slop on either side. The synthetic represents a
+		// missing real transaction somewhere inside that interval, so the
+		// matching banking row may sit anywhere along it. Using only ±7d
+		// around bookedAt misses gaps wider than 14 days.
+		from := c.gapStart.Add(-time.Duration(reviewDedupDays) * 24 * time.Hour)
 		to := c.bookedAt.Add(time.Duration(reviewDedupDays) * 24 * time.Hour)
 		// Only consider rows from a different import batch than the
 		// synthetic itself. The matcher's subset-sum search false-positives
@@ -932,7 +965,7 @@ func (s *Service) retireExplainedSynthetics(ctx context.Context, q *dbq.Queries,
 				Description: r.Description,
 			})
 		}
-		if !residualExplainedByExisting(c.bookedAt, c.currency, c.residual, existing) {
+		if !residualExplainedByExisting(c.bookedAt, c.gapStart, c.currency, c.residual, existing) {
 			continue
 		}
 		if err := q.VoidTransaction(ctx, dbq.VoidTransactionParams{

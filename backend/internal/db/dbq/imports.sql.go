@@ -374,6 +374,7 @@ func (q *Queries) LoadRealRowsForSynthetic(ctx context.Context, arg LoadRealRows
 const loadSyntheticCandidates = `-- name: LoadSyntheticCandidates :many
 SELECT t.id, t.booked_at, t.posted_at, t.amount::text AS amount, t.currency,
        coalesce(t.raw->>'synthetic_residual', t.amount::text)::text AS residual,
+       coalesce(t.raw->>'gap_start_date', '')::text AS gap_start_date,
        sr.import_batch_id
 FROM transactions t
 LEFT JOIN source_refs sr
@@ -401,10 +402,15 @@ type LoadSyntheticCandidatesRow struct {
 	Amount        string     `json:"amount"`
 	Currency      string     `json:"currency"`
 	Residual      string     `json:"residual"`
+	GapStartDate  string     `json:"gap_start_date"`
 	ImportBatchID *uuid.UUID `json:"import_batch_id"`
 }
 
 // Scan synthetic balance-reconcile rows for potential retirement.
+// gap_start_date is the consolidated row date that established the previous
+// balance for this synthetic; together with booked_at it bounds the interval
+// where the missing real transaction must have occurred. Older synthetics
+// (pre-#TBD) didn't store this and fall back to NULL.
 func (q *Queries) LoadSyntheticCandidates(ctx context.Context, arg LoadSyntheticCandidatesParams) ([]LoadSyntheticCandidatesRow, error) {
 	rows, err := q.db.Query(ctx, loadSyntheticCandidates,
 		arg.WorkspaceID,
@@ -426,6 +432,7 @@ func (q *Queries) LoadSyntheticCandidates(ctx context.Context, arg LoadSynthetic
 			&i.Amount,
 			&i.Currency,
 			&i.Residual,
+			&i.GapStartDate,
 			&i.ImportBatchID,
 		); err != nil {
 			return nil, err

@@ -32,7 +32,7 @@ func TestDateProximityMatch(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := dateProximityMatch(tc.incomingBooked, tc.existingBooked, tc.existingPosted, tc.toleranceDays)
+			got := dateProximityMatch(tc.incomingBooked, nil, tc.existingBooked, tc.existingPosted, tc.toleranceDays)
 			if got != tc.wantMatch {
 				t.Fatalf("dateProximityMatch = %v, want %v", got, tc.wantMatch)
 			}

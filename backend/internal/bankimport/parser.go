@@ -356,6 +356,7 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 		// from the stated amount, so an imported account closes at the
 		// same balance Revolut shows.
 		var prevBal decimal.Decimal
+		var prevDate time.Time
 		havePrev := false
 		for _, row := range sec.dataRows {
 			tx, ok, rowErr := parseConsolidatedTxRow(row, sec.accountHint, sec.currency, sec.columns, lang)
@@ -378,12 +379,13 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 				expected := bal.Sub(prevBal)
 				diff := expected.Sub(tx.Amount)
 				if diff.Abs().GreaterThan(reconcileTolerance) {
-					synth := buildReconcileTx(tx, diff, balRaw)
+					synth := buildReconcileTx(tx, diff, balRaw, prevDate)
 					out.Transactions = append(out.Transactions, synth)
 					reconcileRows++
 				}
 			}
 			prevBal = bal
+			prevDate = tx.BookedAt
 			havePrev = true
 		}
 	}

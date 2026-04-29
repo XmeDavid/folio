@@ -8,26 +8,33 @@ import (
 
 // residualExplainedByExisting returns true when a synthetic balance-reconcile
 // row's residual is already covered by real (non-synthetic) transactions in
-// the destination account within ±7 days of the synthetic's date. Used in
-// two places:
+// the destination account inside the synthetic's gap interval (extended by
+// reviewDedupDays on either side). Used in two places:
 //
 //   - At classify time on banking-first → consolidated-second imports, to
 //     skip inserting a synthetic whose residual is already present.
 //   - At post-apply time on consolidated-first → banking-second imports, to
 //     void synthetics now redundant after the banking rows arrive.
 //
-// The matcher accepts two shapes: a single existing row whose amount equals
-// the residual, or a subset whose sum equals it. We keep this conservative —
-// only consider rows in the same currency, same sign, within window — to
-// avoid voiding a real synthetic that just happens to coincide with normal
-// transaction noise.
-func residualExplainedByExisting(syntheticDate time.Time, currency string, residual decimal.Decimal, existing []existingTx) bool {
+// gapStart is the booked date of the consolidated row preceding the gap. A
+// zero gapStart degrades to "syntheticDate alone", preserving the original
+// ±7d behaviour for callers that don't have gap context. The matcher accepts
+// two shapes: a single existing row whose amount equals the residual, or a
+// subset whose sum equals it. We keep this conservative — same currency,
+// same sign, inside the gap window — to avoid voiding a real synthetic that
+// just happens to coincide with normal transaction noise.
+func residualExplainedByExisting(syntheticDate time.Time, gapStart time.Time, currency string, residual decimal.Decimal, existing []existingTx) bool {
+	if gapStart.IsZero() || gapStart.After(syntheticDate) {
+		gapStart = syntheticDate
+	}
+	from := gapStart.AddDate(0, 0, -reviewDedupDays)
+	to := syntheticDate.AddDate(0, 0, reviewDedupDays)
 	candidates := make([]decimal.Decimal, 0, len(existing))
 	for _, e := range existing {
 		if e.Currency != currency {
 			continue
 		}
-		if !datesWithin(e.BookedAt, syntheticDate, reviewDedupDays) {
+		if e.BookedAt.Before(from) || e.BookedAt.After(to) {
 			continue
 		}
 		if residual.Sign() != 0 && e.Amount.Sign() != 0 && residual.Sign() != e.Amount.Sign() {
@@ -72,7 +79,15 @@ const syntheticBalanceReconcile = "balance_reconcile"
 // triggering row's date and account hint so the reconcile lands inside
 // the same logical day as the cause. Raw["synthetic_residual"] echoes the
 // amount as a decimal string so the apply path can match without reparsing.
-func buildReconcileTx(trigger ParsedTransaction, residual decimal.Decimal, balanceRaw string) ParsedTransaction {
+//
+// gapStart is the booked date of the preceding consolidated row that
+// established prevBal — i.e. the lower bound of the interval where the
+// missing real transaction must have happened. It's recorded so the retire
+// step can search the entire gap span (gap_start..trigger) for explaining
+// rows, not just ±7d around the trigger date. Without this, missing rows
+// dated more than 7d before the trigger never void the synthetic, and
+// re-importing the matching banking export double-counts.
+func buildReconcileTx(trigger ParsedTransaction, residual decimal.Decimal, balanceRaw string, gapStart time.Time) ParsedTransaction {
 	cause := ""
 	if trigger.Description != nil {
 		cause = *trigger.Description
@@ -89,6 +104,7 @@ func buildReconcileTx(trigger ParsedTransaction, residual decimal.Decimal, balan
 		"synthetic_residual": residual.String(),
 		"trigger_amount":     trigger.Amount.String(),
 		"trigger_balance":    balanceRaw,
+		"gap_start_date":     gapStart.Format(dateOnly),
 	}
 	if cause != "" {
 		raw["trigger_description"] = cause
