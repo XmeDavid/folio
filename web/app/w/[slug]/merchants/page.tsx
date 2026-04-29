@@ -82,6 +82,7 @@ export default function MerchantsPage({
           </CardHeader>
           <CardContent>
             <MerchantForm
+              slug={slug}
               workspaceId={workspaceId}
               leafCategories={leafCategories}
               onDone={() => setCreating(false)}

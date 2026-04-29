@@ -182,15 +182,17 @@ func TestUpdateMerchant_RenameTwiceCapturesBothNames(t *testing.T) {
 
 // TestUpdateMerchant_RenameCollisionWithActiveMerchant verifies that renaming
 // a merchant to the canonical_name of another active merchant in the same
-// workspace fails. Per the classification package convention (mapWriteError),
-// the 23505 unique-violation surfaces as *httpx.ValidationError.
+// workspace surfaces as a typed *httpx.ConflictError carrying
+// merchant_name_conflict + the existing merchant's id, so the frontend can
+// offer a deep link / Merge.
 func TestUpdateMerchant_RenameCollisionWithActiveMerchant(t *testing.T) {
 	ctx := context.Background()
 	pool := testdb.Open(t)
 	svc := classification.NewService(pool)
 	wsID, _ := testdb.CreateTestWorkspace(t, pool, "ws-merchant-rename-collision")
 
-	if _, err := svc.CreateMerchant(ctx, wsID, classification.MerchantCreateInput{CanonicalName: "Coop"}); err != nil {
+	coop, err := svc.CreateMerchant(ctx, wsID, classification.MerchantCreateInput{CanonicalName: "Coop"})
+	if err != nil {
 		t.Fatalf("CreateMerchant Coop: %v", err)
 	}
 	migros, err := svc.CreateMerchant(ctx, wsID, classification.MerchantCreateInput{CanonicalName: "Migros"})
@@ -203,9 +205,23 @@ func TestUpdateMerchant_RenameCollisionWithActiveMerchant(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error renaming Migros to Coop, got nil")
 	}
-	var verr *httpx.ValidationError
-	if !errors.As(err, &verr) {
-		t.Errorf("want *httpx.ValidationError (per mapWriteError convention), got %T: %v", err, err)
+	var cerr *httpx.ConflictError
+	if !errors.As(err, &cerr) {
+		t.Fatalf("want *httpx.ConflictError, got %T: %v", err, err)
+	}
+	if cerr.Code != "merchant_name_conflict" {
+		t.Errorf("ConflictError.Code = %q, want %q", cerr.Code, "merchant_name_conflict")
+	}
+	details, ok := cerr.Details.(map[string]any)
+	if !ok {
+		t.Fatalf("ConflictError.Details = %T, want map[string]any", cerr.Details)
+	}
+	gotID, ok := details["existingMerchantId"].(string)
+	if !ok {
+		t.Fatalf("details[existingMerchantId] = %T, want string", details["existingMerchantId"])
+	}
+	if gotID != coop.ID.String() {
+		t.Errorf("details[existingMerchantId] = %q, want %q (Coop's id)", gotID, coop.ID.String())
 	}
 
 	// And no alias should have been captured (transaction rolled back).

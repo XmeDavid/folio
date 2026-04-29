@@ -257,6 +257,7 @@ function MerchantDetailSidebar({
       {editing ? (
         <div className="border-t border-border pt-4">
           <MerchantForm
+            slug={workspaceSlug}
             workspaceId={workspaceId}
             leafCategories={leafCategories}
             merchant={merchant}

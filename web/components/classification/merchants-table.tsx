@@ -103,6 +103,7 @@ function MerchantRow({
     return (
       <li className="px-5 py-3">
         <MerchantForm
+          slug={slug}
           workspaceId={workspaceId}
           leafCategories={leafCategories}
           merchant={merchant}
@@ -208,6 +209,7 @@ function MerchantAvatar({ logoUrl }: { logoUrl?: string | null }) {
 }
 
 export function MerchantForm({
+  slug,
   workspaceId,
   leafCategories,
   merchant,
@@ -215,6 +217,9 @@ export function MerchantForm({
   onDone,
   onCancel,
 }: {
+  /** Workspace slug — used to deep-link to an existing merchant when a
+   *  rename collides with another active merchant in this workspace. */
+  slug: string;
   workspaceId: string;
   leafCategories: Category[];
   merchant?: Merchant;
@@ -299,8 +304,15 @@ export function MerchantForm({
     },
   });
 
-  const error =
-    mutation.error instanceof ApiError ? mutation.error.message : null;
+  const apiError =
+    mutation.error instanceof ApiError ? mutation.error : null;
+  const conflictExistingMerchantId =
+    apiError?.body?.code === "merchant_name_conflict" &&
+    typeof (apiError.body.details as { existingMerchantId?: unknown })
+      ?.existingMerchantId === "string"
+      ? ((apiError.body.details as { existingMerchantId: string })
+          .existingMerchantId as string)
+      : null;
 
   const cascadeResult: MerchantPatchResult | null =
     merchant &&
@@ -419,7 +431,22 @@ export function MerchantForm({
         </Field>
       </div>
 
-      {error ? <FormError>{error}</FormError> : null}
+      {conflictExistingMerchantId ? (
+        <FormError>
+          Another active merchant in this workspace already uses that name.{" "}
+          <Link
+            href={
+              `/w/${slug}/merchants/${conflictExistingMerchantId}` as Route
+            }
+            className="underline"
+          >
+            Open the existing merchant
+          </Link>
+          {" "}— from there you can Merge this one into it.
+        </FormError>
+      ) : apiError ? (
+        <FormError>{apiError.message}</FormError>
+      ) : null}
 
       {cascadedCount > 0 ? (
         <div className="rounded-[8px] border border-border bg-surface-subtle px-3 py-2 text-[12px] text-fg-muted">

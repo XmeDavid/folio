@@ -9,10 +9,19 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
+
+// merchantsActiveCanonicalNameUniq is the partial unique index name for
+// (workspace_id, canonical_name) WHERE archived_at IS NULL. A 23505 with this
+// constraint name on the merchants UPDATE means a rename collided with another
+// active merchant in the same workspace — we surface it as a typed
+// ConflictError instead of a generic ValidationError so the frontend can offer
+// a deep link to the existing merchant for a Merge.
+const merchantsActiveCanonicalNameUniq = "merchants_active_canonical_name_uniq"
 
 // Merchant is the read-model returned by the API.
 type Merchant struct {
@@ -356,6 +365,32 @@ func (s *Service) UpdateMerchant(ctx context.Context, workspaceID, id uuid.UUID,
 	if err := scanMerchant(row, &m); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("merchant")
+		}
+		// Special-case the rename-collision path: a 23505 on the partial
+		// unique on (workspace_id, canonical_name) WHERE archived_at IS NULL
+		// means we're renaming this merchant to a name another active
+		// merchant already owns. Resolve the existing merchant's id so the
+		// frontend can deep-link to it for a Merge.
+		var pgErr *pgconn.PgError
+		if p.canonicalNameSet && errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == merchantsActiveCanonicalNameUniq {
+			var existingID uuid.UUID
+			// Use the pool (not tx) for the side SELECT: tx is in a failed
+			// state after the unique violation and any further query on it
+			// will return "current transaction is aborted". The defer will
+			// roll back the tx, and the active merchant we're looking up is
+			// committed data outside this tx anyway.
+			if scanErr := s.pool.QueryRow(ctx,
+				`select id from merchants where workspace_id = $1 and canonical_name = $2 and archived_at is null`,
+				workspaceID, p.canonicalName,
+			).Scan(&existingID); scanErr == nil {
+				return nil, httpx.NewConflictError(
+					"merchant_name_conflict",
+					"another active merchant in this workspace already has that name",
+					map[string]any{"existingMerchantId": existingID.String()},
+				)
+			}
+			// If the side lookup fails for any reason, fall through to the
+			// generic mapping so the user still sees a useful error.
 		}
 		return nil, mapWriteError("merchant", err)
 	}
