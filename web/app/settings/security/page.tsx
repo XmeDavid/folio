@@ -8,23 +8,30 @@ import {
   beginPasskeyEnrollment,
   completePasskeyEnrollment,
   confirmTOTP,
+  deletePasskey,
   disableTOTP,
   enrollTOTP,
   fetchMFAStatus,
+  listPasskeys,
   regenerateRecoveryCodes,
   type TOTPSetup,
   ApiError,
 } from "@/lib/api/client";
+import { formatDate } from "@/lib/format";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 export default function SecuritySettingsPage() {
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["mfa-status"], queryFn: fetchMFAStatus });
+  const { data: passkeys } = useQuery({ queryKey: ["passkeys"], queryFn: listPasskeys });
   const [setup, setSetup] = useState<TOTPSetup | null>(null);
   const [code, setCode] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Two-press inline confirmation, indexed by passkey id (matches the TOTP
+  // disable pattern in this same screen).
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   async function startTOTP() {
     setBusy(true);
@@ -60,10 +67,39 @@ export default function SecuritySettingsPage() {
       const { options, session } = await beginPasskeyEnrollment();
       const credential = await startRegistration({ optionsJSON: options as never });
       await completePasskeyEnrollment(session, credential);
-      await qc.invalidateQueries({ queryKey: ["mfa-status"] });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["mfa-status"] }),
+        qc.invalidateQueries({ queryKey: ["passkeys"] }),
+      ]);
       setMessage("Passkey added.");
     } catch {
       setMessage("Passkey enrollment was cancelled or failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeletePasskey(id: string) {
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
+    setConfirmDeleteId(null);
+    setBusy(true);
+    setMessage(null);
+    try {
+      await deletePasskey(id);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["mfa-status"] }),
+        qc.invalidateQueries({ queryKey: ["passkeys"] }),
+      ]);
+      setMessage("Passkey removed.");
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        setMessage("This action requires recent sign-in. Sign out and back in to continue.");
+      } else {
+        setMessage(err instanceof Error ? err.message : "Failed to remove passkey.");
+      }
     } finally {
       setBusy(false);
     }
@@ -157,13 +193,43 @@ export default function SecuritySettingsPage() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="font-medium">Passkeys</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{data?.passkeyCount ?? 0} registered</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {(passkeys?.length ?? data?.passkeyCount ?? 0)} registered
+            </p>
           </div>
           <button className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm" onClick={addPasskey} disabled={busy}>
             <KeyRound className="size-4" aria-hidden="true" />
             Add
           </button>
         </div>
+        {passkeys && passkeys.length > 0 ? (
+          <ul className="mt-4 flex flex-col divide-y border-t">
+            {passkeys.map((pk) => {
+              const isConfirming = confirmDeleteId === pk.id;
+              return (
+                <li key={pk.id} className="flex items-center justify-between gap-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{pk.label || "Unnamed passkey"}</p>
+                    <p className="text-xs text-muted-foreground">Added {formatDate(pk.createdAt)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className={`inline-flex items-center gap-2 rounded border px-3 py-2 text-sm ${isConfirming ? "border-danger text-danger" : ""}`}
+                    onClick={() => handleDeletePasskey(pk.id)}
+                    onBlur={() => isConfirming && setConfirmDeleteId(null)}
+                    disabled={busy}
+                  >
+                    {isConfirming ? "Confirm remove?" : "Remove"}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : passkeys ? (
+          <p className="mt-4 border-t pt-4 text-sm text-muted-foreground">
+            No passkeys yet. Add one to sign in without a password.
+          </p>
+        ) : null}
       </section>
 
       <section className="rounded-lg border bg-card p-4">

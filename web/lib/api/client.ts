@@ -155,6 +155,20 @@ export async function disableTOTP(): Promise<void> {
   return request<void>("/api/v1/me/mfa/totp", { method: "DELETE" });
 }
 
+export type Passkey = {
+  id: string;
+  label: string;
+  createdAt: string;
+};
+
+export async function listPasskeys(): Promise<Passkey[]> {
+  return request<Passkey[]>("/api/v1/me/mfa/passkeys", { method: "GET" });
+}
+
+export async function deletePasskey(id: string): Promise<void> {
+  return request<void>(`/api/v1/me/mfa/passkeys/${id}`, { method: "DELETE" });
+}
+
 export async function reauth(password: string, code?: string): Promise<void> {
   return request<void>("/api/v1/auth/reauth", {
     method: "POST",
