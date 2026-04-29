@@ -284,6 +284,15 @@ func (h *Handler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteServiceError(w, err)
 		return
 	}
+	// Land the user on the workspace they just created. Best-effort: a failure
+	// here is logged but doesn't poison the create response — the user will
+	// still be routed to the new workspace by the FE, and a subsequent switch
+	// will re-set last_workspace_id.
+	if err := dbq.New(h.svc.pool).UpdateUserLastWorkspace(r.Context(), dbq.UpdateUserLastWorkspaceParams{
+		LastWorkspaceID: &t.ID, ID: user.ID,
+	}); err != nil {
+		slog.Default().Warn("set last_workspace_id after create", "err", err, "user_id", user.ID, "workspace_id", t.ID)
+	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"workspace":  t,
 		"membership": m,

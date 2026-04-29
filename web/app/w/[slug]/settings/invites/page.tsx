@@ -272,8 +272,8 @@ function ResendSuccessPanel({
   return (
     <div className="flex flex-col gap-2 text-sm text-emerald-900">
       <p>
-        New accept link issued. Send it to the invitee. We've also re-sent the
-        invite email best-effort.
+        New accept link issued. Send it to the invitee. We&apos;ve also re-sent
+        the invite email best-effort.
       </p>
       <div className="flex gap-2">
         <input
