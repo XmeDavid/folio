@@ -210,10 +210,12 @@ func (q *Queries) InsertImportBatch(ctx context.Context, arg InsertImportBatchPa
 const insertImportTransaction = `-- name: InsertImportTransaction :exec
 INSERT INTO transactions (
   id, workspace_id, account_id, status, booked_at, value_at, posted_at,
-  amount, currency, counterparty_raw, description, raw
+  amount, currency, counterparty_raw, description, raw,
+  merchant_id, category_id
 ) VALUES (
   $1, $2, $3, 'posted', $4, $5, $6,
-  $7::numeric, $8, $9, $10, $11::jsonb
+  $7::numeric, $8, $9, $10, $11::jsonb,
+  $12, $13
 )
 `
 
@@ -229,6 +231,8 @@ type InsertImportTransactionParams struct {
 	CounterpartyRaw *string        `json:"counterparty_raw"`
 	Description     *string        `json:"description"`
 	Raw             []byte         `json:"raw"`
+	MerchantID      *uuid.UUID     `json:"merchant_id"`
+	CategoryID      *uuid.UUID     `json:"category_id"`
 }
 
 func (q *Queries) InsertImportTransaction(ctx context.Context, arg InsertImportTransactionParams) error {
@@ -244,6 +248,8 @@ func (q *Queries) InsertImportTransaction(ctx context.Context, arg InsertImportT
 		arg.CounterpartyRaw,
 		arg.Description,
 		arg.Raw,
+		arg.MerchantID,
+		arg.CategoryID,
 	)
 	return err
 }

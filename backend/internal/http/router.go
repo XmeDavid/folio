@@ -79,12 +79,12 @@ func NewRouter(d Deps) http.Handler {
 
 	accountsSvc := accounts.NewService(d.DB)
 	accountsH := accounts.NewHandler(accountsSvc)
-	importSvc := bankimport.NewService(d.DB)
+	classificationSvc := classification.NewService(d.DB)
+	classificationH := classification.NewHandler(classificationSvc)
+	importSvc := bankimport.NewService(d.DB, classificationSvc)
 	importH := bankimport.NewHandler(importSvc)
 	transactionsSvc := transactions.NewService(d.DB)
 	transactionsH := transactions.NewHandler(transactionsSvc)
-	classificationSvc := classification.NewService(d.DB)
-	classificationH := classification.NewHandler(classificationSvc)
 
 	// Investments use a marketdata service (FX + price cache + providers).
 	// Providers are HTTP clients to public sources (Yahoo, Frankfurter); they

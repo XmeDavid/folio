@@ -25,10 +25,12 @@ INSERT INTO import_batches (
 -- name: InsertImportTransaction :exec
 INSERT INTO transactions (
   id, workspace_id, account_id, status, booked_at, value_at, posted_at,
-  amount, currency, counterparty_raw, description, raw
+  amount, currency, counterparty_raw, description, raw,
+  merchant_id, category_id
 ) VALUES (
   @id, @workspace_id, @account_id, 'posted', @booked_at, @value_at, @posted_at,
-  @amount::numeric, @currency, @counterparty_raw, @description, @raw::jsonb
+  @amount::numeric, @currency, @counterparty_raw, @description, @raw::jsonb,
+  @merchant_id, @category_id
 );
 
 -- name: InsertSourceRef :exec

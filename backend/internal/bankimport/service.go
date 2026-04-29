@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
+	"github.com/xmedavid/folio/backend/internal/classification"
 	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
@@ -37,12 +38,13 @@ func stringToNumeric(s string) pgtype.Numeric {
 }
 
 type Service struct {
-	pool *pgxpool.Pool
-	now  func() time.Time
+	pool     *pgxpool.Pool
+	classSvc *classification.Service
+	now      func() time.Time
 }
 
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, now: time.Now}
+func NewService(pool *pgxpool.Pool, classSvc *classification.Service) *Service {
+	return &Service{pool: pool, classSvc: classSvc, now: time.Now}
 }
 
 func (s *Service) Preview(ctx context.Context, workspaceID uuid.UUID, fileName string, r io.Reader, accountID *uuid.UUID) (*Preview, error) {
@@ -636,6 +638,29 @@ func (s *Service) insertImportableTx(ctx context.Context, q *dbq.Queries, worksp
 	for _, incoming := range rows {
 		id := uuidx.New()
 		rawJSON, _ := json.Marshal(incoming.Raw)
+
+		// Resolve merchant + default category from counterparty_raw. Empty
+		// or whitespace-only raws (internal transfers, ATM withdrawals,
+		// bank fees) leave both columns NULL — see spec §5. AttachByRaw is
+		// idempotent: identical raws within the same workspace map to the
+		// same merchant row.
+		var merchantID *uuid.UUID
+		var categoryID *uuid.UUID
+		if s.classSvc != nil && incoming.CounterpartyRaw != nil && strings.TrimSpace(*incoming.CounterpartyRaw) != "" {
+			m, err := s.classSvc.AttachByRaw(ctx, workspaceID, *incoming.CounterpartyRaw)
+			if err != nil {
+				return nil, fmt.Errorf("attach merchant: %w", err)
+			}
+			if m != nil {
+				mid := m.ID
+				merchantID = &mid
+				if m.DefaultCategoryID != nil {
+					cid := *m.DefaultCategoryID
+					categoryID = &cid
+				}
+			}
+		}
+
 		if err := q.InsertImportTransaction(ctx, dbq.InsertImportTransactionParams{
 			ID:              id,
 			WorkspaceID:     workspaceID,
@@ -648,6 +673,8 @@ func (s *Service) insertImportableTx(ctx context.Context, q *dbq.Queries, worksp
 			CounterpartyRaw: incoming.CounterpartyRaw,
 			Description:     incoming.Description,
 			Raw:             rawJSON,
+			MerchantID:      merchantID,
+			CategoryID:      categoryID,
 		}); err != nil {
 			return nil, fmt.Errorf("insert transaction: %w", err)
 		}
