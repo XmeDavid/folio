@@ -314,13 +314,50 @@ func (s *Service) UpdateMerchant(ctx context.Context, workspaceID, id uuid.UUID,
 		returning %s
 	`, strings.Join(sets, ", "), merchantCols)
 
-	row := s.pool.QueryRow(ctx, q, args...)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Read the existing canonical_name before applying the UPDATE so we
+	// can capture it as an alias if the merchant is being renamed.
+	var existingCanonicalName string
+	if err := tx.QueryRow(ctx,
+		`select canonical_name from merchants where workspace_id = $1 and id = $2`,
+		workspaceID, id,
+	).Scan(&existingCanonicalName); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, httpx.NewNotFoundError("merchant")
+		}
+		return nil, fmt.Errorf("read existing merchant: %w", err)
+	}
+
+	row := tx.QueryRow(ctx, q, args...)
 	var m Merchant
 	if err := scanMerchant(row, &m); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("merchant")
 		}
 		return nil, mapWriteError("merchant", err)
+	}
+
+	// On rename, capture the previous canonical_name as an alias so future
+	// imports of the old raw string still resolve to this merchant.
+	// ON CONFLICT DO NOTHING keeps this idempotent (e.g. the same name was
+	// already an alias from a prior rename).
+	if p.canonicalNameSet && p.canonicalName != existingCanonicalName {
+		if _, err := tx.Exec(ctx, `
+			insert into merchant_aliases (id, workspace_id, merchant_id, raw_pattern)
+			values ($1, $2, $3, $4)
+			on conflict (workspace_id, raw_pattern) do nothing
+		`, uuidx.New(), workspaceID, id, existingCanonicalName); err != nil {
+			return nil, fmt.Errorf("capture old canonical name as alias: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
 	}
 	return &m, nil
 }
