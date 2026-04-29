@@ -24,6 +24,9 @@ func TestYahooFallbackSymbols(t *testing.T) {
 	if got := yahooFallbackSymbols("VUAA.MI"); got != nil {
 		t.Fatalf("qualified symbols should not fallback: %v", got)
 	}
+	if got := yahooLookupSymbols("VUSA"); len(got) < 3 || got[0] != "VUSA.DE" || got[1] != "VUSA.AS" {
+		t.Fatalf("known EU alias lookup order is wrong: %v", got)
+	}
 }
 
 func TestYahooLatestQuoteRetriesEuropeanFallback(t *testing.T) {
@@ -49,7 +52,7 @@ func TestYahooLatestQuoteRetriesEuropeanFallback(t *testing.T) {
 	if q.Symbol != "VUAA.DE" || q.Currency != "EUR" || !q.Price.Equal(decimalFromString("101.23")) {
 		t.Fatalf("quote = %+v", q)
 	}
-	if len(seen) < 2 || seen[0] != "VUAA" || seen[1] != "VUAA.DE" {
+	if len(seen) != 1 || seen[0] != "VUAA.DE" {
 		t.Fatalf("unexpected lookup order: %v", seen)
 	}
 }

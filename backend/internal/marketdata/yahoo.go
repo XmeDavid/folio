@@ -57,6 +57,7 @@ var yahooSymbolAliases = map[string][]string{
 	"SPYW": {"SPYW.DE"},
 	"VUAA": {"VUAA.DE", "VUAA.MI"},
 	"VGEU": {"VGEU.DE"},
+	"VUSA": {"VUSA.DE", "VUSA.AS", "VUSA.MI"},
 }
 
 var yahooEuropeanSuffixes = []string{".DE", ".MI", ".AS", ".PA", ".L", ".SW"}
@@ -99,18 +100,48 @@ func (p *YahooProvider) fetch(ctx context.Context, symbol, range_, interval stri
 
 func (p *YahooProvider) fetchWithFallback(ctx context.Context, symbol, range_, interval string, period1, period2 int64) (*yahooChartResp, error) {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
-	body, err := p.fetch(ctx, symbol, range_, interval, period1, period2)
-	if err == nil {
-		return body, nil
-	}
-	firstErr := err
-	for _, candidate := range yahooFallbackSymbols(symbol) {
-		body, err = p.fetch(ctx, candidate, range_, interval, period1, period2)
+	candidates := yahooLookupSymbols(symbol)
+	var firstErr error
+	for _, candidate := range candidates {
+		body, err := p.fetch(ctx, candidate, range_, interval, period1, period2)
+		if firstErr == nil && err != nil {
+			firstErr = err
+		}
 		if err == nil {
 			return body, nil
 		}
 	}
 	return nil, firstErr
+}
+
+func yahooLookupSymbols(symbol string) []string {
+	if symbol == "" {
+		return nil
+	}
+	candidates := []string{symbol}
+	if _, ok := yahooSymbolAliases[symbol]; ok {
+		candidates = append(yahooFallbackSymbols(symbol), symbol)
+	}
+	out := make([]string, 0, len(candidates))
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	if _, ok := yahooSymbolAliases[symbol]; ok {
+		return out
+	}
+	for _, candidate := range yahooFallbackSymbols(symbol) {
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	return out
 }
 
 func yahooFallbackSymbols(symbol string) []string {
