@@ -214,8 +214,6 @@ export default function InvestmentsDashboardPage({
             />
           ) : null}
 
-          <SummaryGrid summary={data} reportCcy={reportCcy} />
-
           <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
             <PerformanceCard
               data={historyQuery.data ?? []}
@@ -249,74 +247,6 @@ export default function InvestmentsDashboardPage({
   );
 }
 
-function SummaryGrid({
-  summary,
-  reportCcy,
-}: {
-  summary: DashboardSummary;
-  reportCcy: string;
-}) {
-  const pricedPositions = Math.max(
-    0,
-    summary.openPositionsCount - summary.missingQuotes
-  );
-  const stats = [
-    {
-      label: "Cost basis",
-      value: formatAmount(summary.totalCostBasis, reportCcy),
-      sub: `${summary.openPositionsCount} open positions`,
-      tone: "neutral" as const,
-    },
-    {
-      label: "Unrealised P/L",
-      value: formatAmount(summary.totalUnrealisedPnL, reportCcy),
-      sub: `${summary.totalUnrealisedPnLPct}% on cost`,
-      tone: sign(summary.totalUnrealisedPnL),
-    },
-    {
-      label: "Realised P/L",
-      value: formatAmount(summary.totalRealisedPnL, reportCcy),
-      sub: "lifetime",
-      tone: sign(summary.totalRealisedPnL),
-    },
-    {
-      label: "Dividends",
-      value: formatAmount(summary.totalDividends, reportCcy),
-      sub: `fees ${formatAmount(summary.totalFees, reportCcy)}`,
-      tone: sign(summary.totalDividends),
-    },
-    {
-      label: "Quote coverage",
-      value: `${pricedPositions}/${summary.openPositionsCount}`,
-      sub: `${summary.staleQuotes} stale / ${summary.missingQuotes} missing`,
-      tone: summary.missingQuotes > 0 ? ("neg" as const) : ("neutral" as const),
-    },
-  ];
-
-  return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-      {stats.map((stat) => (
-        <div
-          key={stat.label}
-          className="border-border bg-surface flex min-h-[108px] flex-col justify-between rounded-[8px] border px-4 py-3"
-        >
-          <div className="text-fg-faint text-[11px] font-medium tracking-wide uppercase">
-            {stat.label}
-          </div>
-          <div
-            className={
-              "text-[20px] font-medium tabular-nums " + toneClass(stat.tone)
-            }
-          >
-            {stat.value}
-          </div>
-          <div className="text-fg-muted text-[12px]">{stat.sub}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function PerformanceCard({
   data,
   isLoading,
@@ -338,39 +268,82 @@ function PerformanceCard({
       value: Number(point.value),
     }))
     .filter((point) => Number.isFinite(point.value));
+  const headerStats = [
+    {
+      label: "Total return",
+      value: formatAmount(summary.totalReturn, reportCcy),
+      sub: `${summary.totalReturnPct}%`,
+      tone: sign(summary.totalReturn),
+    },
+    {
+      label: "Unrealised",
+      value: formatAmount(summary.totalUnrealisedPnL, reportCcy),
+      sub: `${summary.totalUnrealisedPnLPct}%`,
+      tone: sign(summary.totalUnrealisedPnL),
+    },
+    {
+      label: "Cost basis",
+      value: formatAmount(summary.totalCostBasis, reportCcy),
+      sub: `${summary.openPositionsCount} open`,
+      tone: "neutral" as const,
+    },
+    {
+      label: "Realised",
+      value: formatAmount(summary.totalRealisedPnL, reportCcy),
+      sub: `Div ${formatAmount(summary.totalDividends, reportCcy)}`,
+      tone: sign(summary.totalRealisedPnL),
+    },
+  ];
 
   return (
     <Card>
-      <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex flex-col gap-1">
-          <CardTitle>Portfolio performance</CardTitle>
-          <div className="text-fg text-[24px] font-medium tabular-nums">
-            {formatAmount(summary.totalMarketValue, reportCcy)}
+      <CardHeader className="gap-4">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div className="flex flex-col gap-1">
+            <CardTitle>Portfolio performance</CardTitle>
+            <div className="text-fg text-[28px] font-medium tabular-nums">
+              {formatAmount(summary.totalMarketValue, reportCcy)}
+            </div>
+            <div className="text-fg-muted text-[12px]">
+              Market value across investment positions
+            </div>
           </div>
-          <div
-            className={
-              "text-[13px] tabular-nums " + toneClass(sign(summary.totalReturn))
-            }
-          >
-            {formatAmount(summary.totalReturn, reportCcy)} /{" "}
-            {summary.totalReturnPct}%
+          <div className="border-border bg-surface-subtle flex w-fit flex-wrap gap-1 rounded-[8px] border p-1">
+            {HISTORY_RANGES.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => onRangeChange(option)}
+                className={
+                  "h-7 rounded-[6px] px-2 text-[12px] font-medium tabular-nums transition-colors " +
+                  (range === option
+                    ? "bg-surface text-fg shadow-sm"
+                    : "text-fg-muted hover:text-fg")
+                }
+              >
+                {option}
+              </button>
+            ))}
           </div>
         </div>
-        <div className="border-border bg-surface-subtle flex flex-wrap gap-1 rounded-[8px] border p-1">
-          {HISTORY_RANGES.map((option) => (
-            <button
-              key={option}
-              type="button"
-              onClick={() => onRangeChange(option)}
-              className={
-                "h-7 rounded-[6px] px-2 text-[12px] font-medium tabular-nums transition-colors " +
-                (range === option
-                  ? "bg-surface text-fg shadow-sm"
-                  : "text-fg-muted hover:text-fg")
-              }
-            >
-              {option}
-            </button>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {headerStats.map((stat) => (
+            <div key={stat.label} className="flex min-w-0 flex-col gap-0.5">
+              <div className="text-fg-faint text-[11px] font-medium tracking-wide uppercase">
+                {stat.label}
+              </div>
+              <div
+                className={
+                  "truncate text-[15px] font-medium tabular-nums " +
+                  toneClass(stat.tone)
+                }
+              >
+                {stat.value}
+              </div>
+              <div className="text-fg-muted text-[12px] tabular-nums">
+                {stat.sub}
+              </div>
+            </div>
           ))}
         </div>
       </CardHeader>
