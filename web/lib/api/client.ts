@@ -269,14 +269,19 @@ export type InviteCreateInput = {
   role: MemberRole;
 };
 
+export type WorkspaceInviteCreated = {
+  invite: PendingInvite;
+  acceptUrl: string;
+};
+
 export async function createInvite(
   workspaceId: string,
   body: InviteCreateInput
-): Promise<PendingInvite> {
-  return request<PendingInvite>(`/api/v1/t/${workspaceId}/invites`, {
-    method: "POST",
-    json: body,
-  });
+): Promise<WorkspaceInviteCreated> {
+  return request<WorkspaceInviteCreated>(
+    `/api/v1/t/${workspaceId}/invites`,
+    { method: "POST", json: body }
+  );
 }
 
 export async function revokeInvite(

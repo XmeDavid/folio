@@ -1,12 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import { Field } from "@/components/ui/field";
+import { FormError } from "@/components/ui/form-error";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import {
   ApiError,
   createInvite,
   type MemberRole,
+  type WorkspaceInviteCreated,
 } from "@/lib/api/client";
+
+type Stage = "form" | "success";
 
 export function NewInviteDialog({
   open,
@@ -19,96 +27,189 @@ export function NewInviteDialog({
   workspaceId: string;
   canInviteOwners: boolean;
 }) {
+  if (!open) return null;
+  // Mounted only while open; unmount-on-close gives us a fresh state machine
+  // for every re-open without needing setState-in-effect resets.
+  return (
+    <NewInviteDialogContent
+      onClose={onClose}
+      workspaceId={workspaceId}
+      canInviteOwners={canInviteOwners}
+    />
+  );
+}
+
+function NewInviteDialogContent({
+  onClose,
+  workspaceId,
+  canInviteOwners,
+}: {
+  onClose: () => void;
+  workspaceId: string;
+  canInviteOwners: boolean;
+}) {
   const qc = useQueryClient();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<MemberRole>("member");
+  const [stage, setStage] = useState<Stage>("form");
   const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<WorkspaceInviteCreated | null>(null);
+  const [copied, setCopied] = useState(false);
+  const emailInputRef = useRef<HTMLInputElement>(null);
+  const linkInputRef = useRef<HTMLInputElement>(null);
 
   const create = useMutation({
     mutationFn: () => createInvite(workspaceId, { email, role }),
-    onSuccess: async () => {
+    onSuccess: async (data) => {
       await qc.invalidateQueries({ queryKey: ["members", workspaceId] });
-      setEmail("");
-      setRole("member");
       setError(null);
-      onClose();
+      setCreated(data);
+      setStage("success");
     },
     onError: (err) => {
       setError(formatError(err));
     },
   });
 
-  if (!open) return null;
+  // Autofocus the email input once mounted.
+  useEffect(() => {
+    emailInputRef.current?.focus();
+  }, []);
+
+  // Reset the "Copied" feedback after 2s.
+  useEffect(() => {
+    if (!copied) return;
+    const t = window.setTimeout(() => setCopied(false), 2000);
+    return () => window.clearTimeout(t);
+  }, [copied]);
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    create.mutate();
+  };
+
+  const handleCopy = async () => {
+    if (!created) return;
+    try {
+      await navigator.clipboard.writeText(created.acceptUrl);
+      setCopied(true);
+    } catch {
+      // Fallback: select the text in the input so the user can copy manually.
+      linkInputRef.current?.select();
+    }
+  };
+
+  const closeAndReset = () => {
+    if (create.isPending) return;
+    onClose();
+  };
 
   return (
     <div
       role="dialog"
       aria-modal="true"
+      aria-labelledby="new-invite-dialog-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={() => {
-        if (!create.isPending) onClose();
-      }}
+      onClick={closeAndReset}
     >
       <div
-        className="w-full max-w-md rounded bg-background p-6 shadow-lg"
+        className="w-full max-w-md rounded-[16px] border border-border bg-surface p-6 shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-lg font-semibold">New invite</h3>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            create.mutate();
-          }}
-          className="mt-3 flex flex-col gap-3"
+        <h3
+          id="new-invite-dialog-title"
+          className="text-[15px] font-semibold text-fg"
         >
-          <label className="flex flex-col gap-1">
-            <span className="text-sm font-medium">Email</span>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="rounded border px-3 py-2"
-              autoFocus
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-sm font-medium">Role</span>
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as MemberRole)}
-              className="rounded border px-3 py-2"
+          {stage === "form" ? "New invite" : "Invite created"}
+        </h3>
+
+        {stage === "form" ? (
+          <form onSubmit={submit} className="mt-4 flex flex-col gap-4">
+            <Field label="Email" htmlFor="new-invite-email">
+              <Input
+                id="new-invite-email"
+                ref={emailInputRef}
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="name@example.com"
+                autoComplete="off"
+              />
+            </Field>
+
+            <Field
+              label="Role"
+              htmlFor="new-invite-role"
+              hint={
+                !canInviteOwners
+                  ? "Only owners can invite other owners."
+                  : undefined
+              }
             >
-              <option value="member">member</option>
-              {canInviteOwners ? (
-                <option value="owner">owner</option>
-              ) : null}
-            </select>
-            {!canInviteOwners ? (
-              <span className="text-xs text-muted-foreground">
-                Only owners can invite other owners.
-              </span>
-            ) : null}
-          </label>
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
-          <div className="mt-2 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={create.isPending}
-              className="rounded border px-3 py-2 text-sm"
+              <Select
+                id="new-invite-role"
+                value={role}
+                onChange={(e) => setRole(e.target.value as MemberRole)}
+              >
+                <option value="member">member</option>
+                {canInviteOwners ? (
+                  <option value="owner">owner</option>
+                ) : null}
+              </Select>
+            </Field>
+
+            {error ? <FormError>{error}</FormError> : null}
+
+            <div className="mt-1 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={closeAndReset}
+                disabled={create.isPending}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={create.isPending}>
+                {create.isPending ? "Sending…" : "Send invite"}
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <div className="mt-4 flex flex-col gap-4">
+            <Field
+              label="Accept link"
+              htmlFor="new-invite-accept-url"
+              hint="Send this link to the invitee. We've also emailed it to them, but the email may not arrive if the mailer isn't configured."
             >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={create.isPending}
-              className="rounded bg-foreground px-3 py-2 text-sm text-background disabled:opacity-60"
-            >
-              {create.isPending ? "Sending…" : "Send invite"}
-            </button>
+              <div className="flex gap-2">
+                <Input
+                  id="new-invite-accept-url"
+                  ref={linkInputRef}
+                  readOnly
+                  value={created?.acceptUrl ?? ""}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="font-mono text-[12px]"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleCopy}
+                  className="shrink-0"
+                >
+                  {copied ? "Copied" : "Copy link"}
+                </Button>
+              </div>
+            </Field>
+
+            <div className="mt-1 flex justify-end">
+              <Button type="button" onClick={closeAndReset}>
+                Done
+              </Button>
+            </div>
           </div>
-        </form>
+        )}
       </div>
     </div>
   );
