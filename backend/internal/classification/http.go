@@ -42,6 +42,10 @@ func (h *Handler) MountMerchants(r chi.Router) {
 	r.Get("/{merchantId}/aliases", h.listMerchantAliases)
 	r.Post("/{merchantId}/aliases", h.addMerchantAlias)
 	r.Delete("/{merchantId}/aliases/{aliasId}", h.removeMerchantAlias)
+
+	// merge: preview + commit
+	r.Post("/{merchantId}/merge/preview", h.previewMergeMerchant)
+	r.Post("/{merchantId}/merge", h.mergeMerchant)
 }
 
 // MountTags installs /api/v1/tags routes.
@@ -430,6 +434,74 @@ func (h *Handler) removeMerchantAlias(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- merchant merge --------------------------------------------------------
+
+type mergePreviewReq struct {
+	TargetID string `json:"targetId"`
+}
+
+type mergeReq struct {
+	TargetID           string `json:"targetId"`
+	ApplyTargetDefault bool   `json:"applyTargetDefault"`
+}
+
+func (h *Handler) previewMergeMerchant(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireWorkspace(w, r)
+	if !ok {
+		return
+	}
+	sourceID, ok := parseUUIDParam(w, r, "merchantId")
+	if !ok {
+		return
+	}
+	var req mergePreviewReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return
+	}
+	targetID, err := uuid.Parse(req.TargetID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "targetId must be a UUID")
+		return
+	}
+	res, err := h.svc.PreviewMerge(r.Context(), workspaceID, sourceID, targetID)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) mergeMerchant(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireWorkspace(w, r)
+	if !ok {
+		return
+	}
+	sourceID, ok := parseUUIDParam(w, r, "merchantId")
+	if !ok {
+		return
+	}
+	var req mergeReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return
+	}
+	targetID, err := uuid.Parse(req.TargetID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "targetId must be a UUID")
+		return
+	}
+	res, err := h.svc.MergeMerchants(r.Context(), workspaceID, sourceID, MergeMerchantsInput{
+		TargetID:           targetID,
+		ApplyTargetDefault: req.ApplyTargetDefault,
+	})
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 // ---- tags ------------------------------------------------------------------
