@@ -13,6 +13,55 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const backfillAccountOpeningDate = `-- name: BackfillAccountOpeningDate :exec
+UPDATE accounts
+SET opening_balance_date = $1::date
+WHERE workspace_id = $2
+  AND id = $3
+  AND opening_balance_date > $1::date
+`
+
+type BackfillAccountOpeningDateParams struct {
+	NewDate     time.Time `json:"new_date"`
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	AccountID   uuid.UUID `json:"account_id"`
+}
+
+// Move the opening-balance anchor back when a later import lands rows that
+// pre-date the existing one (e.g. a savings-statement import covering a
+// period before the account's first consolidated-MMF interest event).
+// Without this, the balance query's `booked_at >= opening_balance_date`
+// filter silently excludes the early rows from the displayed balance even
+// though they were inserted. Only shifts when @new_date is strictly
+// earlier — a no-op if already covered.
+func (q *Queries) BackfillAccountOpeningDate(ctx context.Context, arg BackfillAccountOpeningDateParams) error {
+	_, err := q.db.Exec(ctx, backfillAccountOpeningDate, arg.NewDate, arg.WorkspaceID, arg.AccountID)
+	return err
+}
+
+const backfillOpeningSnapshot = `-- name: BackfillOpeningSnapshot :exec
+UPDATE account_balance_snapshots
+SET as_of = $1::timestamptz
+WHERE workspace_id = $2
+  AND account_id = $3
+  AND source = 'opening'
+  AND as_of > $1::timestamptz
+`
+
+type BackfillOpeningSnapshotParams struct {
+	NewAsOf     time.Time `json:"new_as_of"`
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	AccountID   uuid.UUID `json:"account_id"`
+}
+
+// Companion to BackfillAccountOpeningDate. The balance query reads from
+// the latest snapshot's as_of when present, so updating only the account
+// column is insufficient — the snapshot has to move with it.
+func (q *Queries) BackfillOpeningSnapshot(ctx context.Context, arg BackfillOpeningSnapshotParams) error {
+	_, err := q.db.Exec(ctx, backfillOpeningSnapshot, arg.NewAsOf, arg.WorkspaceID, arg.AccountID)
+	return err
+}
+
 const deleteAccount = `-- name: DeleteAccount :execrows
 DELETE FROM accounts WHERE workspace_id = $1 AND id = $2
 `

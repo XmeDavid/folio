@@ -33,6 +33,18 @@ type Querier interface {
 	AdminUserHasTOTP(ctx context.Context, userID uuid.UUID) (bool, error)
 	ArchiveCategory(ctx context.Context, arg ArchiveCategoryParams) (int64, error)
 	ArchiveTag(ctx context.Context, arg ArchiveTagParams) (int64, error)
+	// Move the opening-balance anchor back when a later import lands rows that
+	// pre-date the existing one (e.g. a savings-statement import covering a
+	// period before the account's first consolidated-MMF interest event).
+	// Without this, the balance query's `booked_at >= opening_balance_date`
+	// filter silently excludes the early rows from the displayed balance even
+	// though they were inserted. Only shifts when @new_date is strictly
+	// earlier — a no-op if already covered.
+	BackfillAccountOpeningDate(ctx context.Context, arg BackfillAccountOpeningDateParams) error
+	// Companion to BackfillAccountOpeningDate. The balance query reads from
+	// the latest snapshot's as_of when present, so updating only the account
+	// column is insufficient — the snapshot has to move with it.
+	BackfillOpeningSnapshot(ctx context.Context, arg BackfillOpeningSnapshotParams) error
 	BumpMFAChallengeAttempts(ctx context.Context, arg BumpMFAChallengeAttemptsParams) (int32, error)
 	BumpTOTPLastUsedStep(ctx context.Context, arg BumpTOTPLastUsedStepParams) (int64, error)
 	CategoryExists(ctx context.Context, arg CategoryExistsParams) (bool, error)

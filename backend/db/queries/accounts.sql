@@ -29,6 +29,31 @@ INSERT INTO account_balance_snapshots (
   @id, @workspace_id, @account_id, @as_of, @balance::numeric, @currency, 'opening'
 );
 
+-- name: BackfillAccountOpeningDate :exec
+-- Move the opening-balance anchor back when a later import lands rows that
+-- pre-date the existing one (e.g. a savings-statement import covering a
+-- period before the account's first consolidated-MMF interest event).
+-- Without this, the balance query's `booked_at >= opening_balance_date`
+-- filter silently excludes the early rows from the displayed balance even
+-- though they were inserted. Only shifts when @new_date is strictly
+-- earlier — a no-op if already covered.
+UPDATE accounts
+SET opening_balance_date = @new_date::date
+WHERE workspace_id = @workspace_id
+  AND id = @account_id
+  AND opening_balance_date > @new_date::date;
+
+-- name: BackfillOpeningSnapshot :exec
+-- Companion to BackfillAccountOpeningDate. The balance query reads from
+-- the latest snapshot's as_of when present, so updating only the account
+-- column is insufficient — the snapshot has to move with it.
+UPDATE account_balance_snapshots
+SET as_of = @new_as_of::timestamptz
+WHERE workspace_id = @workspace_id
+  AND account_id = @account_id
+  AND source = 'opening'
+  AND as_of > @new_as_of::timestamptz;
+
 -- Derived balance rule (spec §5.2):
 --   balance = coalesce(latest_snapshot.balance, opening_balance)
 --           + sum(transactions.amount where status in ('posted','reconciled')

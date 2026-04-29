@@ -125,6 +125,11 @@ func (s *Service) Apply(ctx context.Context, workspaceID, accountID, userID uuid
 			return nil, err
 		}
 	}
+	if parsed.DateFrom != nil {
+		if err := s.backfillOpeningIfEarlier(ctx, q, workspaceID, accountID, *parsed.DateFrom); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit import: %w", err)
@@ -299,12 +304,45 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 					return nil, err
 				}
 			}
+			if err := s.backfillOpeningIfEarlier(ctx, q, workspaceID, accountID, *group.parsed.DateFrom); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit import plan: %w", err)
 	}
 	return out, nil
+}
+
+// backfillOpeningIfEarlier moves an account's opening-balance anchor (and
+// the corresponding opening snapshot) back when a re-import drops rows
+// that pre-date the existing anchor. The balance query filters on
+// `booked_at >= max(latest_snapshot.as_of, opening_balance_date)`, so
+// without this nudge those early rows are inserted but silently excluded
+// from the displayed balance — exactly the failure mode that produced
+// "Flexible Cash Funds GBP = -156.85" after a savings-statement re-import
+// landed BUYs on 2024-11-18 in an account whose anchor sat at 2024-11-19.
+//
+// We only ever shift the anchor *earlier*; the SQL UPDATEs are guarded so
+// they no-op when the existing date already covers the new range.
+func (s *Service) backfillOpeningIfEarlier(ctx context.Context, q *dbq.Queries, workspaceID, accountID uuid.UUID, dateFrom time.Time) error {
+	newDate := time.Date(dateFrom.Year(), dateFrom.Month(), dateFrom.Day(), 0, 0, 0, 0, time.UTC)
+	if err := q.BackfillAccountOpeningDate(ctx, dbq.BackfillAccountOpeningDateParams{
+		WorkspaceID: workspaceID,
+		AccountID:   accountID,
+		NewDate:     newDate,
+	}); err != nil {
+		return fmt.Errorf("backfill opening_balance_date: %w", err)
+	}
+	if err := q.BackfillOpeningSnapshot(ctx, dbq.BackfillOpeningSnapshotParams{
+		WorkspaceID: workspaceID,
+		AccountID:   accountID,
+		NewAsOf:     newDate,
+	}); err != nil {
+		return fmt.Errorf("backfill opening snapshot as_of: %w", err)
+	}
+	return nil
 }
 
 // retireMMFSummaries voids consolidated-MMF "net interest" rows in a
