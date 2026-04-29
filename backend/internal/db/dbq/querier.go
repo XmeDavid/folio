@@ -14,6 +14,11 @@ import (
 
 type Querier interface {
 	AcceptWorkspaceInvite(ctx context.Context, id uuid.UUID) error
+	// Detects whether an account already contains higher-fidelity savings-
+	// statement events. Used to make MMF summary retirement order-independent:
+	// a consolidated import that follows a savings-statement import should
+	// still void its newly-emitted summary rows, just like the reverse order.
+	AccountHasSavingsStatementRows(ctx context.Context, arg AccountHasSavingsStatementRowsParams) (bool, error)
 	AcquireFirstRunLock(ctx context.Context, pgAdvisoryXactLock int64) error
 	AcquireUserMembershipLock(ctx context.Context, dollar_1 string) error
 	AcquireWorkspaceMembershipLock(ctx context.Context, dollar_1 string) error

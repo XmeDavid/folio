@@ -21,6 +21,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) MountAccountRoutes(r chi.Router) {
 	r.Post("/import-preview", h.previewForNewAccount)
 	r.Post("/imports/apply-plan", h.applyPlan)
+	r.Post("/imports/apply-multi", h.applyMulti)
 	r.Post("/{accountId}/imports/preview", h.previewForExistingAccount)
 	r.Post("/{accountId}/imports", h.applyToExistingAccount)
 }
@@ -49,6 +50,30 @@ func (h *Handler) applyPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.svc.ApplyPlan(r.Context(), workspaceID, userID, req)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, res)
+}
+
+// applyMulti is the multi-file companion to applyPlan. The frontend posts
+// the list of {fileToken, groups[]} entries it wants applied; each entry
+// runs through ApplyPlan independently so a single bad file is reported
+// in-band without blocking the rest of the batch from committing.
+func (h *Handler) applyMulti(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.MustWorkspace(r).ID
+	userID := auth.MustUser(r).ID
+	var req ApplyMultiPlanInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return
+	}
+	if len(req.Files) == 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "files is required")
+		return
+	}
+	res, err := h.svc.ApplyMultiPlan(r.Context(), workspaceID, userID, req)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return

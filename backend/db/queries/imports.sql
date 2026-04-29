@@ -75,6 +75,21 @@ WHERE t.workspace_id = @workspace_id
   AND t.status <> 'voided'
   AND t.currency = @currency;
 
+-- name: AccountHasSavingsStatementRows :one
+-- Detects whether an account already contains higher-fidelity savings-
+-- statement events. Used to make MMF summary retirement order-independent:
+-- a consolidated import that follows a savings-statement import should
+-- still void its newly-emitted summary rows, just like the reverse order.
+SELECT EXISTS (
+  SELECT 1 FROM transactions t
+  WHERE t.workspace_id = @workspace_id
+    AND t.account_id = @account_id
+    AND t.status = 'posted'
+    AND t.raw->>'section' = 'Flexible Cash Funds'
+    AND t.raw->>'op' IN ('buy', 'sell', 'interest_paid', 'service_fee', 'interest_reinvested', 'interest_withdrawn')
+  LIMIT 1
+) AS exists_;
+
 -- name: LoadMMFSummaryCandidates :many
 -- Find consolidated-MMF "net interest" rows in this account that fall
 -- within a date range, so a higher-fidelity savings-statement import can

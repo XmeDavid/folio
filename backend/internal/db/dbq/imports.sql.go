@@ -13,6 +13,34 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const accountHasSavingsStatementRows = `-- name: AccountHasSavingsStatementRows :one
+SELECT EXISTS (
+  SELECT 1 FROM transactions t
+  WHERE t.workspace_id = $1
+    AND t.account_id = $2
+    AND t.status = 'posted'
+    AND t.raw->>'section' = 'Flexible Cash Funds'
+    AND t.raw->>'op' IN ('buy', 'sell', 'interest_paid', 'service_fee', 'interest_reinvested', 'interest_withdrawn')
+  LIMIT 1
+) AS exists_
+`
+
+type AccountHasSavingsStatementRowsParams struct {
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	AccountID   uuid.UUID `json:"account_id"`
+}
+
+// Detects whether an account already contains higher-fidelity savings-
+// statement events. Used to make MMF summary retirement order-independent:
+// a consolidated import that follows a savings-statement import should
+// still void its newly-emitted summary rows, just like the reverse order.
+func (q *Queries) AccountHasSavingsStatementRows(ctx context.Context, arg AccountHasSavingsStatementRowsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, accountHasSavingsStatementRows, arg.WorkspaceID, arg.AccountID)
+	var exists_ bool
+	err := row.Scan(&exists_)
+	return exists_, err
+}
+
 const getAccountCurrency = `-- name: GetAccountCurrency :one
 SELECT currency FROM accounts WHERE workspace_id = $1 AND id = $2
 `

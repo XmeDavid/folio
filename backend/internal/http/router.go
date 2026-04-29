@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xmedavid/folio/backend/internal/accounts"
@@ -142,6 +143,7 @@ func NewRouter(d Deps) http.Handler {
 				// investment format is detected) wins the route.
 				importH.MountAccountRoutes(r)
 				r.Post("/import-preview", smartImportPreview(investmentsSvc, importSvc))
+				r.Post("/imports/multi-preview", smartImportMultiPreview(investmentsSvc, importSvc))
 				accountsH.Mount(r)
 			})
 			r.Route("/transactions", transactionsH.Mount)
@@ -184,30 +186,99 @@ func smartImportPreview(invSvc *investments.Service, bank *bankimport.Service) h
 			return
 		}
 
-		// Try investment detection first.
-		smart, err := invSvc.SmartImport(r.Context(), workspaceID, body, header.Filename)
-		if err != nil {
-			httpx.WriteServiceError(w, err)
+		entry := smartPreviewOneFile(r.Context(), workspaceID, header.Filename, body, invSvc, bank)
+		if entry.HTTPError != nil {
+			httpx.WriteServiceError(w, entry.HTTPError)
 			return
 		}
-		if smart != nil && smart.Detected {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"kind":       "investment",
-				"investment": smart,
-			})
-			return
-		}
+		httpx.WriteJSON(w, http.StatusOK, entry.Body)
+	}
+}
 
-		// Fall through to bank-import preview.
-		preview, err := bank.Preview(r.Context(), workspaceID, header.Filename, bytes.NewReader(body), nil)
-		if err != nil {
-			httpx.WriteServiceError(w, err)
+// smartImportMultiPreview is the multi-file companion to smartImportPreview.
+// Files are accepted under repeated `files` form fields. Each file runs
+// through the same smart-detect + bank-preview pipeline as the single-file
+// endpoint; per-file errors land as `{kind: "error", error: "..."}`
+// entries instead of aborting siblings, since the user reasonably expects
+// "two of three files imported" rather than the whole drop being rejected
+// because one file was malformed.
+func smartImportMultiPreview(invSvc *investments.Service, bank *bankimport.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := auth.MustWorkspace(r).ID
+		// Cap each upload at 8 MiB to match bankimport. We allow up to 20 MiB
+		// total across the whole multipart body to leave room for several
+		// real Revolut exports without bloating the cap.
+		const maxBytes = 20 << 20
+		if err := r.ParseMultipartForm(maxBytes); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_multipart", "request must include file fields")
 			return
 		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"kind":    "bank",
-			"preview": preview,
-		})
+		headers := r.MultipartForm.File["files"]
+		if len(headers) == 0 {
+			// Accept the singular `file` field as a convenience so the
+			// frontend can use the same endpoint for one-or-many uploads.
+			headers = r.MultipartForm.File["file"]
+		}
+		if len(headers) == 0 {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "at least one file is required")
+			return
+		}
+		entries := make([]map[string]any, 0, len(headers))
+		for _, fh := range headers {
+			file, err := fh.Open()
+			if err != nil {
+				entries = append(entries, errorEntry(fh.Filename, "could not read upload"))
+				continue
+			}
+			body, readErr := io.ReadAll(file)
+			_ = file.Close()
+			if readErr != nil {
+				entries = append(entries, errorEntry(fh.Filename, "could not read upload"))
+				continue
+			}
+			res := smartPreviewOneFile(r.Context(), workspaceID, fh.Filename, body, invSvc, bank)
+			if res.HTTPError != nil {
+				entries = append(entries, errorEntry(fh.Filename, res.HTTPError.Error()))
+				continue
+			}
+			res.Body["fileName"] = fh.Filename
+			entries = append(entries, res.Body)
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"files": entries})
+	}
+}
+
+type smartPreviewResult struct {
+	Body      map[string]any
+	HTTPError error
+}
+
+func smartPreviewOneFile(ctx context.Context, workspaceID uuid.UUID, fileName string, body []byte, invSvc *investments.Service, bank *bankimport.Service) smartPreviewResult {
+	smart, err := invSvc.SmartImport(ctx, workspaceID, body, fileName)
+	if err != nil {
+		return smartPreviewResult{HTTPError: err}
+	}
+	if smart != nil && smart.Detected {
+		return smartPreviewResult{Body: map[string]any{
+			"kind":       "investment",
+			"investment": smart,
+		}}
+	}
+	preview, err := bank.Preview(ctx, workspaceID, fileName, bytes.NewReader(body), nil)
+	if err != nil {
+		return smartPreviewResult{HTTPError: err}
+	}
+	return smartPreviewResult{Body: map[string]any{
+		"kind":    "bank",
+		"preview": preview,
+	}}
+}
+
+func errorEntry(fileName, message string) map[string]any {
+	return map[string]any{
+		"kind":     "error",
+		"fileName": fileName,
+		"error":    message,
 	}
 }
 

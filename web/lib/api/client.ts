@@ -601,6 +601,68 @@ export async function applyAccountImportPlan(
   );
 }
 
+// MultiSmartImportEntry is one element of the multi-file preview response.
+// `kind` discriminates: bank → preview is the full ImportPreview; investment
+// → already-ingested summary; error → file couldn't be read or parsed and
+// the user should be told why without aborting the rest of the batch.
+export type MultiSmartImportEntry =
+  | { kind: "bank"; fileName: string; preview: ImportPreview }
+  | {
+      kind: "investment";
+      fileName: string;
+      investment: SmartInvestmentImportResult;
+    }
+  | { kind: "error"; fileName: string; error: string };
+
+export type MultiSmartImportResponse = {
+  files: MultiSmartImportEntry[];
+};
+
+export async function previewAccountImportMulti(
+  workspaceId: string,
+  files: File[]
+): Promise<MultiSmartImportResponse> {
+  const form = new FormData();
+  for (const file of files) {
+    form.append("files", file);
+  }
+  return uploadRequest<MultiSmartImportResponse>(
+    `/api/v1/t/${workspaceId}/accounts/imports/multi-preview`,
+    form
+  );
+}
+
+export type MultiApplyFileInput = {
+  fileToken: string;
+  groups: ImportPlanGroup[];
+};
+
+export type MultiApplyFileResult = {
+  fileName?: string;
+  result?: ImportApplyResult;
+  error?: string;
+};
+
+export type MultiApplyResult = {
+  files: MultiApplyFileResult[];
+  insertedCount: number;
+  duplicateCount: number;
+  conflictCount: number;
+};
+
+export async function applyAccountImportMulti(
+  workspaceId: string,
+  files: MultiApplyFileInput[]
+): Promise<MultiApplyResult> {
+  return request<MultiApplyResult>(
+    `/api/v1/t/${workspaceId}/accounts/imports/apply-multi`,
+    {
+      method: "POST",
+      json: { files },
+    }
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Transactions
 // ---------------------------------------------------------------------------

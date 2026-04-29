@@ -30,13 +30,13 @@ import { DateInput } from "@/components/ui/date-input";
 import { CreateAccountForm } from "@/components/accounts/create-account-form";
 import {
   ApiError,
-  applyAccountImportPlan,
+  applyAccountImportMulti,
   createAccountGroup,
   deleteAccount,
   deleteAccountGroup,
   fetchAccountGroups,
   fetchAccounts,
-  previewAccountImport,
+  previewAccountImportMulti,
   reorderAccounts,
   updateAccount,
   updateAccountGroup,
@@ -46,6 +46,7 @@ import {
   type ImportCurrencyGroup,
   type ImportPlanGroup,
   type ImportPreview,
+  type MultiSmartImportEntry,
   type SmartInvestmentImportResult,
 } from "@/lib/api/client";
 import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
@@ -63,6 +64,63 @@ export default function AccountsPage({
   const [creating, setCreating] = React.useState(false);
   const [importing, setImporting] = React.useState(false);
   const [includeArchived, setIncludeArchived] = React.useState(false);
+  // Files queued to hand to the import component on its next open. The page
+  // owns this state so a drop anywhere on the Accounts route can open the
+  // import card preloaded with the dropped files; SmartAccountImport drains
+  // the queue on consumption.
+  const [pendingFiles, setPendingFiles] = React.useState<File[]>([]);
+  const [dragOverlay, setDragOverlay] = React.useState(false);
+
+  // Page-level drag-and-drop. Listeners go on document so the user can drop
+  // on any part of the Accounts page, not just a specific zone. We track an
+  // event-counter via document.body.dataset so flicker between child
+  // elements doesn't toggle the overlay off mid-drag (dragenter fires on
+  // entering each child, dragleave on leaving each — naive boolean toggling
+  // strobes).
+  React.useEffect(() => {
+    if (!workspaceId) return;
+    let depth = 0;
+    const isFileDrag = (event: DragEvent) =>
+      Array.from(event.dataTransfer?.types ?? []).includes("Files");
+    const onEnter = (event: DragEvent) => {
+      if (!isFileDrag(event)) return;
+      depth += 1;
+      setDragOverlay(true);
+    };
+    const onOver = (event: DragEvent) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+    };
+    const onLeave = (event: DragEvent) => {
+      if (!isFileDrag(event)) return;
+      depth -= 1;
+      if (depth <= 0) {
+        depth = 0;
+        setDragOverlay(false);
+      }
+    };
+    const onDrop = (event: DragEvent) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      depth = 0;
+      setDragOverlay(false);
+      const dropped = Array.from(event.dataTransfer?.files ?? []);
+      if (dropped.length === 0) return;
+      setPendingFiles((current) => [...current, ...dropped]);
+      setImporting(true);
+      setCreating(false);
+    };
+    document.addEventListener("dragenter", onEnter);
+    document.addEventListener("dragover", onOver);
+    document.addEventListener("dragleave", onLeave);
+    document.addEventListener("drop", onDrop);
+    return () => {
+      document.removeEventListener("dragenter", onEnter);
+      document.removeEventListener("dragover", onOver);
+      document.removeEventListener("dragleave", onLeave);
+      document.removeEventListener("drop", onDrop);
+    };
+  }, [workspaceId]);
 
   const accountsQuery = useQuery({
     queryKey: ["accounts", workspaceId, includeArchived],
@@ -130,15 +188,35 @@ export default function AccountsPage({
       {importing ? (
         <Card>
           <CardHeader>
-            <CardTitle>Import bank export</CardTitle>
+            <CardTitle>Import bank exports</CardTitle>
           </CardHeader>
           <CardContent>
             <SmartAccountImport
               workspaceId={workspaceId!}
-              onDone={() => setImporting(false)}
+              pendingFiles={pendingFiles}
+              onConsumePendingFiles={() => setPendingFiles([])}
+              onDone={() => {
+                setImporting(false);
+                setPendingFiles([]);
+              }}
             />
           </CardContent>
         </Card>
+      ) : null}
+
+      {dragOverlay ? (
+        <div
+          className="bg-fg/40 pointer-events-none fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm"
+          aria-hidden="true"
+        >
+          <div className="bg-surface text-fg border-border rounded-[16px] border-2 border-dashed px-8 py-6 text-center shadow-xl">
+            <FileUp className="text-accent mx-auto mb-2 h-10 w-10" />
+            <p className="text-[15px] font-semibold">Drop to import</p>
+            <p className="text-fg-muted mt-1 text-[12px]">
+              Multiple files supported — order doesn&apos;t matter.
+            </p>
+          </div>
+        </div>
       ) : null}
 
       {accountsQuery.isError || groupsQuery.isError ? (
@@ -184,117 +262,279 @@ export default function AccountsPage({
   );
 }
 
+// FileBucket holds the post-preview state of one uploaded file: the
+// preview/investment summary/error for that file and (for bank previews)
+// the user's draft plan keyed per currency group. Bank-style files are the
+// only ones that need apply-time confirmation; investment files are
+// already ingested at preview time, so they only need a status echo.
+type FileBucket = {
+  id: string;
+  fileName: string;
+  status: "pending" | "bank" | "investment" | "error";
+  preview?: ImportPreview;
+  investment?: SmartInvestmentImportResult;
+  error?: string;
+  plans: Record<string, ImportPlanGroup>;
+};
+
+function makeBucket(file: File): FileBucket {
+  return {
+    id: `${file.name}|${file.size}|${file.lastModified}|${Math.random().toString(36).slice(2, 8)}`,
+    fileName: file.name,
+    status: "pending",
+    plans: {},
+  };
+}
+
+function bucketGroups(bucket: FileBucket): ImportCurrencyGroup[] {
+  if (!bucket.preview) return [];
+  if (bucket.preview.currencyGroups?.length) return bucket.preview.currencyGroups;
+  const p = bucket.preview;
+  return [
+    {
+      currency: p.suggestedCurrency ?? "",
+      suggestedName: p.suggestedName ?? "Imported account",
+      suggestedKind: p.suggestedKind ?? "checking",
+      suggestedOpenDate: p.suggestedOpenDate,
+      transactionCount: p.transactionCount,
+      dateFrom: p.dateFrom,
+      dateTo: p.dateTo,
+      action: "create_account",
+      importableCount: p.importableCount,
+      duplicateCount: p.duplicateCount,
+      conflictCount: p.conflictCount,
+      sampleTransactions: p.sampleTransactions,
+      conflictTransactions: p.conflictTransactions,
+    },
+  ];
+}
+
+function defaultPlansForPreview(
+  preview: ImportPreview
+): Record<string, ImportPlanGroup> {
+  const next: Record<string, ImportPlanGroup> = {};
+  const previewGroups = preview.currencyGroups?.length
+    ? preview.currencyGroups
+    : [
+        {
+          currency: preview.suggestedCurrency ?? "",
+          suggestedName: preview.suggestedName ?? "Imported account",
+          suggestedKind: preview.suggestedKind ?? "checking",
+          suggestedOpenDate: preview.suggestedOpenDate,
+          dateFrom: preview.dateFrom,
+          existingAccountId: preview.existingAccountId,
+          action: preview.existingAccountId
+            ? "import_to_account"
+            : "create_account",
+        } as ImportCurrencyGroup,
+      ];
+  for (const group of previewGroups) {
+    next[importGroupKey(group)] = {
+      currency: group.currency,
+      sourceKey: group.sourceKey,
+      action: group.existingAccountId
+        ? "import_to_account"
+        : "create_account",
+      accountId: group.existingAccountId,
+      name: group.suggestedName,
+      kind: group.suggestedKind,
+      openDate: group.suggestedOpenDate ?? group.dateFrom,
+      openingBalance: "0",
+      openingBalanceDate: group.suggestedOpenDate ?? group.dateFrom,
+    };
+  }
+  return next;
+}
+
 function SmartAccountImport({
   workspaceId,
+  pendingFiles,
+  onConsumePendingFiles,
   onDone,
 }: {
   workspaceId: string;
+  pendingFiles: File[];
+  onConsumePendingFiles: () => void;
   onDone: () => void;
 }) {
-  const [preview, setPreview] = React.useState<ImportPreview | null>(null);
-  const [plans, setPlans] = React.useState<Record<string, ImportPlanGroup>>({});
-  const [investmentResult, setInvestmentResult] = React.useState<
-    SmartInvestmentImportResult | null
-  >(null);
-  const groups = preview?.currencyGroups?.length
-    ? preview.currencyGroups
-    : preview
-      ? [
-          {
-            currency: preview.suggestedCurrency ?? "",
-            suggestedName: preview.suggestedName ?? "Imported account",
-            suggestedKind: preview.suggestedKind ?? "checking",
-            suggestedOpenDate: preview.suggestedOpenDate,
-            transactionCount: preview.transactionCount,
-            dateFrom: preview.dateFrom,
-            dateTo: preview.dateTo,
-            action: "create_account" as const,
-            importableCount: preview.importableCount,
-            duplicateCount: preview.duplicateCount,
-            conflictCount: preview.conflictCount,
-            sampleTransactions: preview.sampleTransactions,
-            conflictTransactions: preview.conflictTransactions,
-          },
-        ]
-      : [];
+  // One bucket per uploaded file. We keep them keyed by a per-file id so
+  // re-uploads of the same name don't collide and so re-renders are stable.
+  const [buckets, setBuckets] = React.useState<FileBucket[]>([]);
 
   const previewMutation = useMutation({
-    mutationFn: (file: File) => previewAccountImport(workspaceId, file),
-    onSuccess: (resp) => {
-      if (resp.kind === "investment") {
-        setInvestmentResult(resp.investment);
-        setPreview(null);
-        setPlans({});
-        return;
-      }
-      setInvestmentResult(null);
-      const p = resp.preview;
-      setPreview(p);
-      const next: Record<string, ImportPlanGroup> = {};
-      const previewGroups = p.currencyGroups?.length
-        ? p.currencyGroups
-        : [
-            {
-              currency: p.suggestedCurrency ?? "",
-              suggestedName: p.suggestedName ?? "Imported account",
-              suggestedKind: p.suggestedKind ?? "checking",
-              suggestedOpenDate: p.suggestedOpenDate,
-              dateFrom: p.dateFrom,
-              existingAccountId: p.existingAccountId,
-              action: p.existingAccountId
-                ? "import_to_account"
-                : "create_account",
-            } as ImportCurrencyGroup,
-          ];
-      for (const group of previewGroups) {
-        next[importGroupKey(group)] = {
-          currency: group.currency,
-          sourceKey: group.sourceKey,
-          action: group.existingAccountId
-            ? "import_to_account"
-            : "create_account",
-          accountId: group.existingAccountId,
-          name: group.suggestedName,
-          kind: group.suggestedKind,
-          openDate: group.suggestedOpenDate ?? group.dateFrom,
-          openingBalance: "0",
-          openingBalanceDate: group.suggestedOpenDate ?? group.dateFrom,
-        };
-      }
-      setPlans(next);
+    mutationFn: async (files: File[]) => {
+      const buckets = files.map(makeBucket);
+      setBuckets((current) => [...current, ...buckets]);
+      const response = await previewAccountImportMulti(workspaceId, files);
+      return { buckets, response };
     },
-  });
-  const applyMutation = useMutation({
-    mutationFn: async () => {
-      if (!preview) return;
-      await applyAccountImportPlan(
-        workspaceId,
-        preview.fileToken,
-        groups
-          .filter(
-            (group) =>
-              effectiveImportable(group, plans[importGroupKey(group)]) > 0
-          )
-          .map((group) => {
-            const plan = plans[importGroupKey(group)];
-            return plan && plan.action === "create_account"
-              ? {
-                  ...plan,
-                  openingBalanceDate: plan.openingBalanceDate || plan.openDate,
-                }
-              : plan;
-          })
-          .filter((plan): plan is ImportPlanGroup => Boolean(plan))
+    onSuccess: ({ buckets: newBuckets, response }) => {
+      // Pair response entries to buckets by index — the backend preserves
+      // upload order. Pairing by file name is fragile when the user drops
+      // two files with the same name.
+      setBuckets((current) => {
+        const updated = [...current];
+        newBuckets.forEach((bucket, i) => {
+          const entry: MultiSmartImportEntry | undefined = response.files[i];
+          const idx = updated.findIndex((b) => b.id === bucket.id);
+          if (idx < 0) return;
+          const base: FileBucket = updated[idx] ?? bucket;
+          if (!entry) {
+            updated[idx] = {
+              ...base,
+              status: "error",
+              error: "no preview returned for this file",
+            };
+            return;
+          }
+          if (entry.kind === "investment") {
+            updated[idx] = {
+              ...base,
+              fileName: entry.fileName || base.fileName,
+              status: "investment",
+              investment: entry.investment,
+            };
+          } else if (entry.kind === "error") {
+            updated[idx] = {
+              ...base,
+              fileName: entry.fileName || base.fileName,
+              status: "error",
+              error: entry.error,
+            };
+          } else {
+            updated[idx] = {
+              ...base,
+              fileName: entry.fileName || base.fileName,
+              status: "bank",
+              preview: entry.preview,
+              plans: defaultPlansForPreview(entry.preview),
+            };
+          }
+        });
+        return updated;
+      });
+    },
+    onError: (_err, files) => {
+      // The whole-batch preview failed (network, auth, etc). Mark every
+      // bucket we just queued so the UI can surface the error inline
+      // without leaving them stuck in `pending`.
+      const failedNames = files.map((f) => f.name);
+      setBuckets((current) =>
+        current.map((bucket) =>
+          bucket.status === "pending" && failedNames.includes(bucket.fileName)
+            ? {
+                ...bucket,
+                status: "error",
+                error:
+                  _err instanceof ApiError
+                    ? _err.body?.error || _err.message
+                    : "preview failed",
+              }
+            : bucket
+        )
       );
     },
-    onSuccess: () => onDone(),
   });
-  const err =
-    previewMutation.error instanceof ApiError
-      ? previewMutation.error
-      : applyMutation.error instanceof ApiError
-        ? applyMutation.error
-        : null;
+
+  // Drain pendingFiles whenever it changes — page-level drop adds files
+  // here, this effect ships them to preview.
+  React.useEffect(() => {
+    if (pendingFiles.length === 0) return;
+    previewMutation.mutate(pendingFiles);
+    onConsumePendingFiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingFiles]);
+
+  const onSelectFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length === 0) return;
+    previewMutation.mutate(files);
+  };
+
+  const setBucketPlans = (
+    bucketId: string,
+    plans: Record<string, ImportPlanGroup>
+  ) => {
+    setBuckets((current) =>
+      current.map((bucket) =>
+        bucket.id === bucketId ? { ...bucket, plans } : bucket
+      )
+    );
+  };
+
+  const removeBucket = (bucketId: string) => {
+    setBuckets((current) => current.filter((bucket) => bucket.id !== bucketId));
+  };
+
+  // Build the apply-multi payload from every bank bucket's plans. We skip
+  // groups that have nothing importable (avoid noisy "0 rows" entries) and
+  // backfill openingBalanceDate from openDate when the user didn't override.
+  const buildApplyPayload = () => {
+    const payload: { fileToken: string; groups: ImportPlanGroup[] }[] = [];
+    for (const bucket of buckets) {
+      if (bucket.status !== "bank" || !bucket.preview) continue;
+      const groups = bucketGroups(bucket);
+      const planGroups: ImportPlanGroup[] = [];
+      for (const group of groups) {
+        const plan = bucket.plans[importGroupKey(group)];
+        if (!plan) continue;
+        if (effectiveImportable(group, plan) === 0) continue;
+        if (plan.action === "create_account") {
+          planGroups.push({
+            ...plan,
+            openingBalanceDate: plan.openingBalanceDate || plan.openDate,
+          });
+        } else {
+          planGroups.push(plan);
+        }
+      }
+      if (planGroups.length === 0) continue;
+      payload.push({ fileToken: bucket.preview.fileToken, groups: planGroups });
+    }
+    return payload;
+  };
+
+  const applyMutation = useMutation({
+    mutationFn: async () => {
+      const files = buildApplyPayload();
+      if (files.length === 0) return null;
+      return applyAccountImportMulti(workspaceId, files);
+    },
+    onSuccess: (result) => {
+      // If the backend reported per-file errors, keep the panel open so the
+      // user can see what went wrong. Otherwise close out.
+      const hasErrors = result?.files.some((f) => f.error) ?? false;
+      if (!hasErrors) {
+        onDone();
+      }
+    },
+  });
+
+  const bankBuckets = buckets.filter((bucket) => bucket.status === "bank");
+  const allReady =
+    bankBuckets.length > 0 &&
+    bankBuckets.every((bucket) => {
+      const groups = bucketGroups(bucket);
+      return groups.every((group) =>
+        isImportPlanReady(group, bucket.plans[importGroupKey(group)])
+      );
+    });
+  const anyImportable =
+    bankBuckets.length > 0 &&
+    bankBuckets.some((bucket) => {
+      const groups = bucketGroups(bucket);
+      return groups.some(
+        (group) =>
+          effectiveImportable(group, bucket.plans[importGroupKey(group)]) > 0
+      );
+    });
+
+  const previewError =
+    previewMutation.error instanceof ApiError ? previewMutation.error : null;
+  const applyError =
+    applyMutation.error instanceof ApiError ? applyMutation.error : null;
+  const applyResult = applyMutation.data;
 
   return (
     <div className="flex flex-col gap-4">
@@ -302,93 +542,197 @@ function SmartAccountImport({
         <div className="border-border bg-surface rounded-[12px] border px-4 py-3">
           <p className="text-[13px] font-medium">Smart import</p>
           <p className="text-fg-muted mt-1 text-[12px]">
-            Folio will match clear existing accounts or create separate accounts
-            per currency.
+            Drop one or more files anywhere on this page, or pick them here.
+            Order doesn&apos;t matter — Folio matches existing accounts and
+            cross-references duplicates across files automatically.
           </p>
         </div>
         <label className="flex flex-col gap-1.5 text-[13px] font-medium">
-          Export file
+          Export files
           <Input
             type="file"
+            multiple
             accept=".csv,.json,.xml,text/csv,application/json,application/xml"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) previewMutation.mutate(file);
-            }}
+            onChange={onSelectFiles}
           />
         </label>
       </div>
 
       {previewMutation.isPending ? (
-        <p className="text-fg-muted text-[13px]">Reading export...</p>
+        <p className="text-fg-muted text-[13px]">Reading {previewMutation.variables?.length ?? 0} file(s)...</p>
       ) : null}
-
-      {investmentResult ? (
-        <div className="border-border bg-surface rounded-[12px] border px-4 py-3">
-          <p className="text-[13px] font-medium text-fg">
-            Investment activity imported into{" "}
-            <span className="text-emerald-500">{investmentResult.accountName}</span>
-            {investmentResult.created ? " (new account)" : ""}
-          </p>
-          <p className="text-fg-muted mt-1 text-[12px]">
-            Source: {investmentResult.source.replace("_", " ")} · base{" "}
-            {investmentResult.baseCurrency}
-          </p>
-          <ul className="mt-2 grid gap-1 text-[12px] text-fg-muted sm:grid-cols-4">
-            <li>
-              Trades created:{" "}
-              <strong className="text-fg">
-                {investmentResult.summary.tradesCreated}
-              </strong>
-            </li>
-            <li>
-              Dividends:{" "}
-              <strong className="text-fg">
-                {investmentResult.summary.dividendsCreated}
-              </strong>
-            </li>
-            <li>
-              Instruments:{" "}
-              <strong className="text-fg">
-                {investmentResult.summary.instrumentsTouched}
-              </strong>
-            </li>
-            <li>
-              Skipped (dedupe):{" "}
-              <strong className="text-fg">
-                {investmentResult.summary.skipped}
-              </strong>
-            </li>
-          </ul>
-          {investmentResult.summary.warnings &&
-          investmentResult.summary.warnings.length > 0 ? (
-            <details className="mt-2">
-              <summary className="cursor-pointer text-[12px] text-fg-muted">
-                {investmentResult.summary.warnings.length} warning(s)
-              </summary>
-              <ul className="mt-1 list-disc pl-5 text-[12px] text-fg-muted">
-                {investmentResult.summary.warnings.map((w, i) => (
-                  <li key={i}>{w}</li>
-                ))}
-              </ul>
-            </details>
-          ) : null}
-          <div className="mt-3 flex justify-end">
-            <Button variant="secondary" onClick={onDone}>
-              Done
-            </Button>
-          </div>
+      {previewError ? (
+        <div className="border-border text-danger rounded-[8px] border bg-[#F5DADA] px-3 py-2 text-[13px]">
+          {previewError.body?.error || previewError.message}
         </div>
       ) : null}
 
-      {preview ? (
-        <div className="border-border bg-surface rounded-[12px] border px-4 py-3">
+      {buckets.length === 0 ? (
+        <div className="border-border bg-surface-subtle text-fg-muted rounded-[12px] border-2 border-dashed px-4 py-8 text-center text-[13px]">
+          No files queued. Pick files above or drag them onto the page.
+        </div>
+      ) : null}
+
+      <div className="flex flex-col gap-4">
+        {buckets.map((bucket) => (
+          <ImportFileSection
+            key={bucket.id}
+            bucket={bucket}
+            onPlansChange={(plans) => setBucketPlans(bucket.id, plans)}
+            onRemove={() => removeBucket(bucket.id)}
+          />
+        ))}
+      </div>
+
+      {applyError ? (
+        <div className="border-border text-danger rounded-[8px] border bg-[#F5DADA] px-3 py-2 text-[13px]">
+          {applyError.body?.error || applyError.message}
+        </div>
+      ) : null}
+
+      {applyResult ? (
+        <div className="border-border bg-surface rounded-[12px] border px-4 py-3 text-[12px]">
           <p className="text-[13px] font-medium">
-            {preview.fileName || "Export"} · {preview.dateFrom} to{" "}
-            {preview.dateTo}
+            Imported{" "}
+            <strong className="text-emerald-500">
+              {applyResult.insertedCount}
+            </strong>{" "}
+            transaction(s) across {applyResult.files.length} file(s).
+            {applyResult.duplicateCount
+              ? ` ${applyResult.duplicateCount} duplicate(s) skipped.`
+              : ""}
+            {applyResult.conflictCount
+              ? ` ${applyResult.conflictCount} need review.`
+              : ""}
+          </p>
+          {applyResult.files.some((f) => f.error) ? (
+            <ul className="text-danger mt-2 list-disc pl-4">
+              {applyResult.files
+                .filter((f) => f.error)
+                .map((f, idx) => (
+                  <li key={idx}>
+                    {f.fileName ?? "(file)"}: {f.error}
+                  </li>
+                ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="secondary" onClick={onDone}>
+          Close
+        </Button>
+        <Button
+          type="button"
+          disabled={
+            !anyImportable || !allReady || applyMutation.isPending
+          }
+          onClick={() => applyMutation.mutate()}
+        >
+          {applyMutation.isPending ? "Importing..." : "Apply import plan"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ImportFileSection({
+  bucket,
+  onPlansChange,
+  onRemove,
+}: {
+  bucket: FileBucket;
+  onPlansChange: (plans: Record<string, ImportPlanGroup>) => void;
+  onRemove: () => void;
+}) {
+  if (bucket.status === "pending") {
+    return (
+      <div className="border-border bg-surface rounded-[12px] border px-4 py-3 text-[13px]">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-fg font-medium">{bucket.fileName}</span>
+          <span className="text-fg-muted text-[12px]">Reading...</span>
+        </div>
+      </div>
+    );
+  }
+  if (bucket.status === "error") {
+    return (
+      <div className="border-border bg-[#F5DADA] text-danger rounded-[12px] border px-4 py-3 text-[13px]">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="font-medium">{bucket.fileName}</p>
+            <p className="text-[12px]">{bucket.error}</p>
+          </div>
+          <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
+            Remove
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  if (bucket.status === "investment" && bucket.investment) {
+    const inv = bucket.investment;
+    return (
+      <div className="border-border bg-surface rounded-[12px] border px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[13px] font-medium text-fg">
+            {bucket.fileName} · investment activity imported into{" "}
+            <span className="text-emerald-500">{inv.accountName}</span>
+            {inv.created ? " (new account)" : ""}
+          </p>
+          <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
+            Dismiss
+          </Button>
+        </div>
+        <p className="text-fg-muted mt-1 text-[12px]">
+          Source: {inv.source.replace("_", " ")} · base {inv.baseCurrency}
+        </p>
+        <ul className="mt-2 grid gap-1 text-[12px] text-fg-muted sm:grid-cols-4">
+          <li>
+            Trades: <strong className="text-fg">{inv.summary.tradesCreated}</strong>
+          </li>
+          <li>
+            Dividends:{" "}
+            <strong className="text-fg">{inv.summary.dividendsCreated}</strong>
+          </li>
+          <li>
+            Instruments:{" "}
+            <strong className="text-fg">{inv.summary.instrumentsTouched}</strong>
+          </li>
+          <li>
+            Skipped: <strong className="text-fg">{inv.summary.skipped}</strong>
+          </li>
+        </ul>
+        {inv.summary.warnings && inv.summary.warnings.length > 0 ? (
+          <details className="mt-2">
+            <summary className="cursor-pointer text-[12px] text-fg-muted">
+              {inv.summary.warnings.length} warning(s)
+            </summary>
+            <ul className="mt-1 list-disc pl-5 text-[12px] text-fg-muted">
+              {inv.summary.warnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+      </div>
+    );
+  }
+  if (bucket.status !== "bank" || !bucket.preview) return null;
+
+  const preview = bucket.preview;
+  const groups = bucketGroups(bucket);
+
+  return (
+    <div className="border-border bg-surface flex flex-col gap-3 rounded-[12px] border px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[13px] font-medium">
+            {bucket.fileName} · {preview.dateFrom} to {preview.dateTo}
           </p>
           {!preview.currencyGroups?.length ? (
-            <div className="text-fg-muted mt-2 grid gap-2 text-[12px] sm:grid-cols-4">
+            <div className="text-fg-muted mt-1 grid gap-2 text-[12px] sm:grid-cols-4">
               <span>
                 Total: <strong>{preview.transactionCount}</strong>
               </span>
@@ -403,48 +747,18 @@ function SmartAccountImport({
               </span>
             </div>
           ) : null}
-          {preview.conflictTransactions?.length ? (
-            <div className="text-amber mt-2 space-y-1 text-[12px]">
-              <p>
-                {preview.conflictTransactions.length} row
-                {preview.conflictTransactions.length === 1 ? "" : "s"} need
-                review and will not be imported automatically.
-              </p>
-              {(() => {
-                const driftCount = preview.conflictTransactions.filter(
-                  (c) => c.reason === "date_drift"
-                ).length;
-                const descCount = preview.conflictTransactions.filter(
-                  (c) => c.reason === "description_mismatch"
-                ).length;
-                return (
-                  <ul className="text-fg-muted list-disc pl-4">
-                    {driftCount > 0 ? (
-                      <li>
-                        {driftCount} possible duplicate
-                        {driftCount === 1 ? "" : "s"} with different dates
-                        (within ±7 days)
-                      </li>
-                    ) : null}
-                    {descCount > 0 ? (
-                      <li>
-                        {descCount} same amount/date with a different
-                        description
-                      </li>
-                    ) : null}
-                  </ul>
-                );
-              })()}
-            </div>
-          ) : null}
-          {preview.warnings?.length ? (
-            <ul className="text-fg-muted mt-2 list-disc pl-4 text-[12px]">
-              {preview.warnings.map((warning) => (
-                <li key={warning}>{warning}</li>
-              ))}
-            </ul>
-          ) : null}
         </div>
+        <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
+          Remove
+        </Button>
+      </div>
+
+      {preview.warnings?.length ? (
+        <ul className="text-fg-muted list-disc pl-4 text-[12px]">
+          {preview.warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
       ) : null}
 
       {groups.length ? (
@@ -462,12 +776,9 @@ function SmartAccountImport({
                 <ImportGroupRow
                   key={key}
                   group={group}
-                  plan={plans[key]}
+                  plan={bucket.plans[key]}
                   onPlanChange={(plan) =>
-                    setPlans((current) => ({
-                      ...current,
-                      [key]: plan,
-                    }))
+                    onPlansChange({ ...bucket.plans, [key]: plan })
                   }
                 />
               );
@@ -475,35 +786,6 @@ function SmartAccountImport({
           </div>
         </div>
       ) : null}
-
-      {err ? (
-        <div className="border-border text-danger rounded-[8px] border bg-[#F5DADA] px-3 py-2 text-[13px]">
-          {err.body?.error || err.message}
-        </div>
-      ) : null}
-
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="secondary" onClick={onDone}>
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          disabled={
-            !preview ||
-            applyMutation.isPending ||
-            groups.every(
-              (group) =>
-                effectiveImportable(group, plans[importGroupKey(group)]) === 0
-            ) ||
-            groups.some(
-              (group) => !isImportPlanReady(group, plans[importGroupKey(group)])
-            )
-          }
-          onClick={() => applyMutation.mutate()}
-        >
-          {applyMutation.isPending ? "Importing..." : "Apply import plan"}
-        </Button>
-      </div>
     </div>
   );
 }

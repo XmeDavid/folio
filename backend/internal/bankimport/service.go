@@ -120,7 +120,7 @@ func (s *Service) Apply(ctx context.Context, workspaceID, accountID, userID uuid
 		return nil, err
 	}
 
-	if parsed.Profile == "revolut_savings_statement" && parsed.DateFrom != nil && parsed.DateTo != nil {
+	if parsed.DateFrom != nil && parsed.DateTo != nil {
 		if err := s.retireMMFSummaries(ctx, q, workspaceID, accountID, *parsed.DateFrom, *parsed.DateTo); err != nil {
 			return nil, err
 		}
@@ -299,10 +299,8 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 			if err := s.retireExplainedSynthetics(ctx, q, workspaceID, accountID, *group.parsed.DateFrom, *group.parsed.DateTo); err != nil {
 				return nil, err
 			}
-			if group.parsed.Profile == "revolut_savings_statement" {
-				if err := s.retireMMFSummaries(ctx, q, workspaceID, accountID, *group.parsed.DateFrom, *group.parsed.DateTo); err != nil {
-					return nil, err
-				}
+			if err := s.retireMMFSummaries(ctx, q, workspaceID, accountID, *group.parsed.DateFrom, *group.parsed.DateTo); err != nil {
+				return nil, err
 			}
 			if err := s.backfillOpeningIfEarlier(ctx, q, workspaceID, accountID, *group.parsed.DateFrom); err != nil {
 				return nil, err
@@ -311,6 +309,40 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit import plan: %w", err)
+	}
+	return out, nil
+}
+
+// ApplyMultiPlan applies a list of file plans serially, each in its own
+// transaction. A parse/validation error on one file is captured into that
+// file's result without aborting the rest, since the per-file pipeline
+// already produces an order-independent end state — there's no benefit
+// to rolling back successful files because of an unrelated bad upload.
+//
+// File names come back in the result so the UI can pair errors with
+// their source files; we extract them from each token's preview payload
+// (no DB lookup needed). The aggregate counts let the toast/summary UI
+// say "imported 312 transactions across 3 files" without summing client-
+// side.
+func (s *Service) ApplyMultiPlan(ctx context.Context, workspaceID, userID uuid.UUID, in ApplyMultiPlanInput) (*ApplyMultiPlanResult, error) {
+	out := &ApplyMultiPlanResult{Files: make([]ApplyMultiPlanFileResult, 0, len(in.Files))}
+	for _, file := range in.Files {
+		fileName := ""
+		if payload, err := parseToken(file.FileToken); err == nil {
+			fileName = payload.FileName
+		}
+		entry := ApplyMultiPlanFileResult{FileName: fileName}
+		res, err := s.ApplyPlan(ctx, workspaceID, userID, file)
+		if err != nil {
+			entry.Error = err.Error()
+			out.Files = append(out.Files, entry)
+			continue
+		}
+		entry.Result = res
+		out.InsertedCount += res.InsertedCount
+		out.DuplicateCount += res.DuplicateCount
+		out.ConflictCount += res.ConflictCount
+		out.Files = append(out.Files, entry)
 	}
 	return out, nil
 }
@@ -346,12 +378,29 @@ func (s *Service) backfillOpeningIfEarlier(ctx context.Context, q *dbq.Queries, 
 }
 
 // retireMMFSummaries voids consolidated-MMF "net interest" rows in a
-// destination account when a higher-fidelity savings-statement import
-// covers the same date range. The savings statement breaks each day's
-// activity into separate Interest PAID + Service Fee rows (plus BUY/SELL/
-// reinvestment events the consolidated drops entirely), so the older
-// summary rows would double-count if left in place.
+// destination account when higher-fidelity savings-statement events are
+// present alongside them. Runs after every import touching the account,
+// so the cleanup is order-independent: importing the savings statement
+// after the consolidated voids the existing summaries (the original
+// case), and importing the consolidated after the savings statement
+// voids the freshly-inserted summaries on the spot.
+//
+// The presence check is account-scoped — if the account has no savings-
+// statement events, summaries are kept as the user's only source of MMF
+// interest history. The void scan stays narrowed to the import's date
+// range so older summaries outside the new file's coverage aren't
+// nuked when a partial-period file lands.
 func (s *Service) retireMMFSummaries(ctx context.Context, q *dbq.Queries, workspaceID, accountID uuid.UUID, dateFrom, dateTo time.Time) error {
+	hasSavings, err := q.AccountHasSavingsStatementRows(ctx, dbq.AccountHasSavingsStatementRowsParams{
+		WorkspaceID: workspaceID,
+		AccountID:   accountID,
+	})
+	if err != nil {
+		return fmt.Errorf("check savings-statement presence: %w", err)
+	}
+	if !hasSavings {
+		return nil
+	}
 	rows, err := q.LoadMMFSummaryCandidates(ctx, dbq.LoadMMFSummaryCandidatesParams{
 		WorkspaceID: workspaceID,
 		AccountID:   accountID,

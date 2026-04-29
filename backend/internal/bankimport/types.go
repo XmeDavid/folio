@@ -141,6 +141,32 @@ type ApplyResult struct {
 	Conflicts      []ConflictPreview `json:"conflicts,omitempty"`
 }
 
+// ApplyMultiPlanInput is a list of file plans applied in sequence. Each
+// file lands in its own transaction so a failure on one file (bad parse,
+// validation, write error) doesn't roll back files that already
+// committed — order independence in the import logic means downstream
+// files don't depend on earlier ones for correctness, just for context.
+type ApplyMultiPlanInput struct {
+	Files []ApplyPlanInput `json:"files"`
+}
+
+// ApplyMultiPlanResult mirrors ApplyMultiPlanInput shape: one entry per
+// input file with either the per-file ApplyResult or an Error string.
+// Aggregate counts at the top level let the UI summarise the run without
+// digging into the per-file detail.
+type ApplyMultiPlanResult struct {
+	Files          []ApplyMultiPlanFileResult `json:"files"`
+	InsertedCount  int                        `json:"insertedCount"`
+	DuplicateCount int                        `json:"duplicateCount"`
+	ConflictCount  int                        `json:"conflictCount"`
+}
+
+type ApplyMultiPlanFileResult struct {
+	FileName string       `json:"fileName,omitempty"`
+	Result   *ApplyResult `json:"result,omitempty"`
+	Error    string       `json:"error,omitempty"`
+}
+
 type previewPayload struct {
 	FileName string `json:"fileName"`
 	FileHash string `json:"fileHash"`
