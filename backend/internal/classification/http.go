@@ -253,6 +253,7 @@ type merchantPatchReq struct {
 	Website           *string `json:"website"`
 	Notes             *string `json:"notes"`
 	Archived          *bool   `json:"archived"`
+	Cascade           *bool   `json:"cascade"`
 }
 
 func (h *Handler) listMerchants(w http.ResponseWriter, r *http.Request) {
@@ -340,6 +341,7 @@ func (h *Handler) updateMerchant(w http.ResponseWriter, r *http.Request) {
 		Website:           req.Website,
 		Notes:             req.Notes,
 		Archived:          req.Archived,
+		Cascade:           req.Cascade,
 	}
 	res, err := h.svc.UpdateMerchant(r.Context(), workspaceID, id, in)
 	if err != nil {

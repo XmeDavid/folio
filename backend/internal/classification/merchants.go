@@ -58,6 +58,18 @@ type MerchantPatchInput struct {
 	Website           *string
 	Notes             *string
 	Archived          *bool
+	// Cascade, when true and DefaultCategoryID is being changed, also
+	// re-categorises this merchant's existing transactions whose category_id
+	// matches the previous default_category_id (null included).
+	Cascade *bool
+}
+
+// MerchantPatchResult is the return shape of UpdateMerchant. The
+// CascadedTransactionCount field is omitted from the response when no
+// cascade was requested (zero value).
+type MerchantPatchResult struct {
+	Merchant                 *Merchant `json:"merchant"`
+	CascadedTransactionCount int       `json:"cascadedTransactionCount,omitempty"`
 }
 
 type merchantPatchNormalized struct {
@@ -239,7 +251,7 @@ func (s *Service) GetMerchant(ctx context.Context, workspaceID, id uuid.UUID) (*
 }
 
 // UpdateMerchant applies a PATCH and returns the result.
-func (s *Service) UpdateMerchant(ctx context.Context, workspaceID, id uuid.UUID, raw MerchantPatchInput) (*Merchant, error) {
+func (s *Service) UpdateMerchant(ctx context.Context, workspaceID, id uuid.UUID, raw MerchantPatchInput) (*MerchantPatchResult, error) {
 	p, err := raw.normalize()
 	if err != nil {
 		return nil, err
@@ -305,7 +317,11 @@ func (s *Service) UpdateMerchant(ctx context.Context, workspaceID, id uuid.UUID,
 	}
 
 	if len(sets) == 0 {
-		return s.GetMerchant(ctx, workspaceID, id)
+		m, err := s.GetMerchant(ctx, workspaceID, id)
+		if err != nil {
+			return nil, err
+		}
+		return &MerchantPatchResult{Merchant: m}, nil
 	}
 
 	q := fmt.Sprintf(`
@@ -320,13 +336,15 @@ func (s *Service) UpdateMerchant(ctx context.Context, workspaceID, id uuid.UUID,
 	}
 	defer tx.Rollback(ctx)
 
-	// Read the existing canonical_name before applying the UPDATE so we
-	// can capture it as an alias if the merchant is being renamed.
+	// Read the existing canonical_name and default_category_id before
+	// applying the UPDATE: canonical_name is captured as an alias on
+	// rename, default_category_id is the predicate for the cascade.
 	var existingCanonicalName string
+	var existingDefaultCategoryID *uuid.UUID
 	if err := tx.QueryRow(ctx,
-		`select canonical_name from merchants where workspace_id = $1 and id = $2`,
+		`select canonical_name, default_category_id from merchants where workspace_id = $1 and id = $2`,
 		workspaceID, id,
-	).Scan(&existingCanonicalName); err != nil {
+	).Scan(&existingCanonicalName, &existingDefaultCategoryID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("merchant")
 		}
@@ -356,10 +374,36 @@ func (s *Service) UpdateMerchant(ctx context.Context, workspaceID, id uuid.UUID,
 		}
 	}
 
+	// Cascade: when the default category is changing AND cascade=true, update
+	// transactions whose category_id matches the previous default. Using
+	// IS NOT DISTINCT FROM so a null old-default fills null categories on
+	// first-time set. Manual overrides (category neither null nor old-default)
+	// are preserved because the predicate doesn't match them.
+	cascadedCount := 0
+	if p.defaultCategoryIDSet && raw.Cascade != nil && *raw.Cascade {
+		var newDefault any
+		if p.defaultCategoryIDNull {
+			newDefault = nil
+		} else {
+			newDefault = p.defaultCategoryID
+		}
+		tag, err := tx.Exec(ctx, `
+			update transactions
+			set category_id = $3
+			where workspace_id = $1
+			  and merchant_id = $2
+			  and category_id is not distinct from $4
+		`, workspaceID, id, newDefault, existingDefaultCategoryID)
+		if err != nil {
+			return nil, fmt.Errorf("cascade default category: %w", err)
+		}
+		cascadedCount = int(tag.RowsAffected())
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
-	return &m, nil
+	return &MerchantPatchResult{Merchant: &m, CascadedTransactionCount: cascadedCount}, nil
 }
 
 // ArchiveMerchant sets archived_at = now() idempotently.
