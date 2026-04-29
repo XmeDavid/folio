@@ -15,6 +15,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       code: body.code,
     });
   }
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -108,5 +109,58 @@ export function useAdminMutation(pathFor: (id: string) => string) {
   return useMutation({
     mutationFn: (id: string) => api<{ ok: true }>(pathFor(id), { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin"] }),
+  });
+}
+
+// ── Platform invites ──────────────────────────────────────────────────────────
+
+export type PlatformInvite = {
+  id: string;
+  // null on the wire when the invite is "open" (no specific email target)
+  email: string | null;
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+  acceptedAt?: string;
+  acceptedBy?: string;
+  revokedAt?: string;
+  revokedBy?: string;
+};
+
+export type PlatformInviteCreated = {
+  invite: PlatformInvite;
+  token: string; // plaintext, shown ONCE
+  acceptUrl: string;
+};
+
+export function useAdminInvites() {
+  return useQuery({
+    queryKey: ["admin", "invites"],
+    queryFn: () => api<PlatformInvite[]>("/api/v1/admin/invites"),
+  });
+}
+
+// Note: POST and DELETE return 403 with code "reauth_required" when the session
+// lacks fresh reauth. The error bubbles here; Task 1.2 (the dialog) will surface
+// it as "Action requires recent sign-in — sign out and back in to continue."
+export function useCreateAdminInvite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { email?: string }) =>
+      api<PlatformInviteCreated>("/api/v1/admin/invites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: input.email ?? "" }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "invites"] }),
+  });
+}
+
+export function useRevokeAdminInvite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<void>(`/api/v1/admin/invites/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "invites"] }),
   });
 }
