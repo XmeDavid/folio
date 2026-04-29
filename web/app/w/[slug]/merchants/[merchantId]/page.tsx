@@ -22,6 +22,7 @@ import { Card } from "@/components/ui/card";
 import { FormError } from "@/components/ui/form-error";
 import { Input } from "@/components/ui/input";
 import { MerchantForm } from "@/components/classification/merchants-table";
+import { MerchantMergeDialog } from "@/components/classification/merchant-merge-dialog";
 import {
   ApiError,
   addMerchantAlias,
@@ -153,6 +154,7 @@ export default function MerchantDetailPage({
       <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
         <MerchantDetailSidebar
           workspaceId={workspace.id}
+          workspaceSlug={slug}
           merchant={merchant}
           categoryById={categoryById}
           leafCategories={leafCategories}
@@ -193,12 +195,14 @@ function BackLink({ href }: { href: Route }) {
 
 function MerchantDetailSidebar({
   workspaceId,
+  workspaceSlug,
   merchant,
   categoryById,
   leafCategories,
   transactionCount,
 }: {
   workspaceId: string;
+  workspaceSlug: string;
   merchant: Merchant;
   categoryById: Map<string, Category>;
   leafCategories: Category[];
@@ -206,6 +210,7 @@ function MerchantDetailSidebar({
 }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = React.useState(false);
+  const [mergeOpen, setMergeOpen] = React.useState(false);
 
   const archiveMutation = useMutation({
     mutationFn: async () => {
@@ -315,9 +320,13 @@ function MerchantDetailSidebar({
           <Button
             variant="secondary"
             size="sm"
-            disabled
-            title="Merge dialog coming in next task"
-            // TODO: wire up merge dialog (Task 9.2)
+            onClick={() => setMergeOpen(true)}
+            disabled={!!merchant.archivedAt}
+            title={
+              merchant.archivedAt
+                ? "Restore this merchant before merging."
+                : undefined
+            }
           >
             <GitMerge className="h-3.5 w-3.5" />
             Merge into…
@@ -342,6 +351,13 @@ function MerchantDetailSidebar({
           </Button>
         </div>
       ) : null}
+      <MerchantMergeDialog
+        open={mergeOpen}
+        workspaceId={workspaceId}
+        workspaceSlug={workspaceSlug}
+        source={merchant}
+        onClose={() => setMergeOpen(false)}
+      />
     </Card>
   );
 }
