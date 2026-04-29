@@ -33,6 +33,7 @@ import {
   type PortfolioHistoryPoint,
   type Trade,
 } from "@/lib/api/investments";
+import { fetchAccounts, type Account } from "@/lib/api/client";
 import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate, formatQuantity } from "@/lib/format";
 
@@ -53,10 +54,35 @@ export default function InvestmentsDashboardPage({
   const queryClient = useQueryClient();
   const [historyRange, setHistoryRange] = React.useState<HistoryRange>("1M");
   const [holdingFilter, setHoldingFilter] = React.useState("all");
+  const [accountId, setAccountId] = React.useState<string>("");
+
+  const accountsQuery = useQuery({
+    queryKey: ["accounts", workspaceId],
+    queryFn: () => fetchAccounts(workspaceId!),
+    enabled: !!workspaceId,
+  });
+  const brokerageAccounts = React.useMemo<Account[]>(
+    () => accountsQuery.data?.filter((a) => a.kind === "brokerage") ?? [],
+    [accountsQuery.data]
+  );
+  const effectiveAccountId =
+    accountId && brokerageAccounts.some((a) => a.id === accountId)
+      ? accountId
+      : "";
 
   const dashboardQuery = useQuery({
-    queryKey: ["investments", "dashboard", workspaceId, reportCcy],
-    queryFn: () => fetchDashboard(workspaceId!, { currency: reportCcy }),
+    queryKey: [
+      "investments",
+      "dashboard",
+      workspaceId,
+      reportCcy,
+      effectiveAccountId,
+    ],
+    queryFn: () =>
+      fetchDashboard(workspaceId!, {
+        currency: reportCcy,
+        accountId: effectiveAccountId || undefined,
+      }),
     enabled: !!workspaceId,
   });
 
@@ -67,11 +93,13 @@ export default function InvestmentsDashboardPage({
       workspaceId,
       reportCcy,
       historyRange,
+      effectiveAccountId,
     ],
     queryFn: () =>
       fetchDashboardHistory(workspaceId!, {
         currency: reportCcy,
         range: historyRange,
+        accountId: effectiveAccountId || undefined,
       }),
     enabled: !!workspaceId,
     staleTime: HISTORY_STALE_MS,
@@ -94,11 +122,13 @@ export default function InvestmentsDashboardPage({
               workspaceId,
               reportCcy,
               range,
+              effectiveAccountId,
             ],
             queryFn: () =>
               fetchDashboardHistory(workspaceId, {
                 currency: reportCcy,
                 range,
+                accountId: effectiveAccountId || undefined,
               }),
             staleTime: HISTORY_STALE_MS,
             gcTime: HISTORY_GC_MS,
@@ -132,6 +162,7 @@ export default function InvestmentsDashboardPage({
       }
     };
   }, [
+    effectiveAccountId,
     historyQuery.dataUpdatedAt,
     historyQuery.isSuccess,
     historyRange,
@@ -141,14 +172,20 @@ export default function InvestmentsDashboardPage({
   ]);
 
   const tradesQuery = useQuery({
-    queryKey: ["investments", "trades", workspaceId],
-    queryFn: () => fetchTrades(workspaceId!),
+    queryKey: ["investments", "trades", workspaceId, effectiveAccountId],
+    queryFn: () =>
+      fetchTrades(workspaceId!, {
+        accountId: effectiveAccountId || undefined,
+      }),
     enabled: !!workspaceId,
   });
 
   const dividendsQuery = useQuery({
-    queryKey: ["investments", "dividends", workspaceId],
-    queryFn: () => fetchDividends(workspaceId!),
+    queryKey: ["investments", "dividends", workspaceId, effectiveAccountId],
+    queryFn: () =>
+      fetchDividends(workspaceId!, {
+        accountId: effectiveAccountId || undefined,
+      }),
     enabled: !!workspaceId,
   });
 
@@ -170,6 +207,21 @@ export default function InvestmentsDashboardPage({
         description="Total value, returns, and exposure across every brokerage account in this workspace."
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {brokerageAccounts.length > 1 ? (
+              <select
+                aria-label="Filter by account"
+                className="border-border bg-surface text-fg h-9 rounded-[8px] border px-3 text-[13px]"
+                value={effectiveAccountId}
+                onChange={(e) => setAccountId(e.target.value)}
+              >
+                <option value="">All accounts</option>
+                {brokerageAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <Button
               variant="secondary"
               onClick={() => refreshMutation.mutate()}
