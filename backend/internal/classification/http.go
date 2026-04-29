@@ -37,6 +37,11 @@ func (h *Handler) MountMerchants(r chi.Router) {
 	r.Get("/{merchantId}", h.getMerchant)
 	r.Patch("/{merchantId}", h.updateMerchant)
 	r.Delete("/{merchantId}", h.deleteMerchant)
+
+	// merchant aliases sub-resource
+	r.Get("/{merchantId}/aliases", h.listMerchantAliases)
+	r.Post("/{merchantId}/aliases", h.addMerchantAlias)
+	r.Delete("/{merchantId}/aliases/{aliasId}", h.removeMerchantAlias)
 }
 
 // MountTags installs /api/v1/tags routes.
@@ -354,6 +359,71 @@ func (h *Handler) deleteMerchant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.ArchiveMerchant(r.Context(), workspaceID, id); err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- merchant aliases ------------------------------------------------------
+
+type addAliasReq struct {
+	RawPattern string `json:"rawPattern"`
+}
+
+func (h *Handler) listMerchantAliases(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireWorkspace(w, r)
+	if !ok {
+		return
+	}
+	merchantID, ok := parseUUIDParam(w, r, "merchantId")
+	if !ok {
+		return
+	}
+	res, err := h.svc.ListAliases(r.Context(), workspaceID, merchantID)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) addMerchantAlias(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireWorkspace(w, r)
+	if !ok {
+		return
+	}
+	merchantID, ok := parseUUIDParam(w, r, "merchantId")
+	if !ok {
+		return
+	}
+	var req addAliasReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return
+	}
+	res, err := h.svc.AddAlias(r.Context(), workspaceID, merchantID, req.RawPattern)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, res)
+}
+
+func (h *Handler) removeMerchantAlias(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireWorkspace(w, r)
+	if !ok {
+		return
+	}
+	merchantID, ok := parseUUIDParam(w, r, "merchantId")
+	if !ok {
+		return
+	}
+	aliasID, ok := parseUUIDParam(w, r, "aliasId")
+	if !ok {
+		return
+	}
+	if err := h.svc.RemoveAlias(r.Context(), workspaceID, merchantID, aliasID); err != nil {
 		httpx.WriteServiceError(w, err)
 		return
 	}
