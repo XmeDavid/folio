@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -45,6 +46,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 // MountAuthed mounts authenticated, non-workspace-scoped routes (session required).
 func (h *Handler) MountAuthed(r chi.Router) {
 	r.Get("/me", h.me)
+	r.Patch("/me", h.patchMe)
 	r.Patch("/me/last-workspace", h.updateLastWorkspace)
 	r.Get("/me/mfa", h.mfaStatus)
 	// Enroll/disable/regenerate all pin a new factor to the account, so they
@@ -223,6 +225,39 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		"user":    user,
 		"workspaces": workspaces,
 	})
+}
+
+type patchMeReq struct {
+	DisplayName *string `json:"displayName,omitempty"`
+}
+
+func (h *Handler) patchMe(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var body patchMeReq
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", "expected JSON")
+		return
+	}
+	user := MustUser(r)
+
+	if body.DisplayName != nil {
+		name := strings.TrimSpace(*body.DisplayName)
+		if len(name) < 1 || len(name) > 80 {
+			httpx.WriteError(w, http.StatusUnprocessableEntity, "invalid_display_name", "displayName must be 1-80 characters")
+			return
+		}
+		if err := dbq.New(h.svc.pool).UpdateUserDisplayName(r.Context(), dbq.UpdateUserDisplayNameParams{
+			ID: user.ID, DisplayName: name,
+		}); err != nil {
+			httpx.WriteServiceError(w, err)
+			return
+		}
+		h.svc.WriteAudit(r.Context(), uuid.Nil, user.ID,
+			"user.profile_updated", "user", user.ID,
+			map[string]any{"displayName": user.DisplayName},
+			map[string]any{"displayName": name})
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type createWorkspaceReq struct {

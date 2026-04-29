@@ -228,6 +228,7 @@ type Querier interface {
 	UpdateSessionLastSeen(ctx context.Context, arg UpdateSessionLastSeenParams) error
 	UpdateSessionReauthAt(ctx context.Context, arg UpdateSessionReauthAtParams) error
 	UpdateSessionReauthByID(ctx context.Context, arg UpdateSessionReauthByIDParams) error
+	UpdateUserDisplayName(ctx context.Context, arg UpdateUserDisplayNameParams) error
 	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) error
 	UpdateUserLastLoginAt(ctx context.Context, arg UpdateUserLastLoginAtParams) error
 	UpdateUserLastWorkspace(ctx context.Context, arg UpdateUserLastWorkspaceParams) error

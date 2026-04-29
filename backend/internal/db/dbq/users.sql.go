@@ -376,6 +376,20 @@ func (q *Queries) ListAdminUsers(ctx context.Context) ([]ListAdminUsersRow, erro
 	return items, nil
 }
 
+const updateUserDisplayName = `-- name: UpdateUserDisplayName :exec
+UPDATE users SET display_name = $2 WHERE id = $1
+`
+
+type UpdateUserDisplayNameParams struct {
+	ID          uuid.UUID `json:"id"`
+	DisplayName string    `json:"display_name"`
+}
+
+func (q *Queries) UpdateUserDisplayName(ctx context.Context, arg UpdateUserDisplayNameParams) error {
+	_, err := q.db.Exec(ctx, updateUserDisplayName, arg.ID, arg.DisplayName)
+	return err
+}
+
 const updateUserEmail = `-- name: UpdateUserEmail :exec
 UPDATE users SET email = $1, email_verified_at = now() WHERE id = $2
 `

@@ -81,3 +81,6 @@ UPDATE workspace_invites SET accepted_at = now() WHERE id = $1;
 -- name: GetWorkspaceInviteByTokenHash :one
 SELECT id, workspace_id, email, role::text AS role, expires_at, revoked_at, accepted_at
 FROM workspace_invites WHERE token_hash = $1 FOR UPDATE;
+
+-- name: UpdateUserDisplayName :exec
+UPDATE users SET display_name = $2 WHERE id = $1;
