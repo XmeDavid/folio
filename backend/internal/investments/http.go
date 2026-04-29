@@ -30,6 +30,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // Mount installs investment routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/dashboard", h.dashboard)
+	r.Get("/dashboard/history", h.dashboardHistory)
 	r.Get("/positions", h.listPositions)
 	r.Post("/refresh", h.refresh)
 
@@ -258,6 +259,29 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		f.AccountID = &id
 	}
 	res, err := h.svc.BuildDashboardSummary(r.Context(), workspaceID, f)
+	if err != nil {
+		httpx.WriteServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) dashboardHistory(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.MustWorkspace(r).ID
+	q := r.URL.Query()
+	f := DashboardHistoryFilter{
+		ReportCurrency: q.Get("currency"),
+		Range:          q.Get("range"),
+	}
+	if raw := q.Get("accountId"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "accountId must be a UUID")
+			return
+		}
+		f.AccountID = &id
+	}
+	res, err := h.svc.BuildDashboardHistory(r.Context(), workspaceID, f)
 	if err != nil {
 		httpx.WriteServiceError(w, err)
 		return

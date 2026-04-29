@@ -5,18 +5,37 @@ import { use } from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LineChart, RefreshCcw, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, LineChart, RefreshCcw } from "lucide-react";
+import {
+  CartesianGrid,
+  Line,
+  LineChart as RechartsLineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { PageHeader } from "@/components/app/page-header";
 import { EmptyState, ErrorBanner, LoadingText } from "@/components/app/empty";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   fetchDashboard,
+  fetchDashboardHistory,
+  fetchDividends,
+  fetchTrades,
   refreshInvestments,
+  type DashboardSummary,
+  type DividendEvent,
   type Holding,
+  type PortfolioHistoryPoint,
+  type Trade,
 } from "@/lib/api/investments";
 import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
-import { formatAmount } from "@/lib/format";
+import { formatAmount, formatDate } from "@/lib/format";
+
+const HISTORY_RANGES = ["1W", "1M", "3M", "6M", "YTD", "1Y", "ALL"] as const;
+type HistoryRange = (typeof HISTORY_RANGES)[number];
 
 export default function InvestmentsDashboardPage({
   params,
@@ -28,11 +47,40 @@ export default function InvestmentsDashboardPage({
   const workspaceId = workspace?.id ?? null;
   const reportCcy = workspace?.baseCurrency ?? "CHF";
   const queryClient = useQueryClient();
+  const [historyRange, setHistoryRange] = React.useState<HistoryRange>("1M");
+  const [holdingFilter, setHoldingFilter] = React.useState("all");
 
   const dashboardQuery = useQuery({
     queryKey: ["investments", "dashboard", workspaceId, reportCcy],
+    queryFn: () => fetchDashboard(workspaceId!, { currency: reportCcy }),
+    enabled: !!workspaceId,
+  });
+
+  const historyQuery = useQuery({
+    queryKey: [
+      "investments",
+      "dashboard-history",
+      workspaceId,
+      reportCcy,
+      historyRange,
+    ],
     queryFn: () =>
-      fetchDashboard(workspaceId!, { currency: reportCcy }),
+      fetchDashboardHistory(workspaceId!, {
+        currency: reportCcy,
+        range: historyRange,
+      }),
+    enabled: !!workspaceId,
+  });
+
+  const tradesQuery = useQuery({
+    queryKey: ["investments", "trades", workspaceId],
+    queryFn: () => fetchTrades(workspaceId!),
+    enabled: !!workspaceId,
+  });
+
+  const dividendsQuery = useQuery({
+    queryKey: ["investments", "dividends", workspaceId],
+    queryFn: () => fetchDividends(workspaceId!),
     enabled: !!workspaceId,
   });
 
@@ -60,7 +108,7 @@ export default function InvestmentsDashboardPage({
               disabled={refreshMutation.isPending}
             >
               <RefreshCcw className="h-4 w-4" />
-              {refreshMutation.isPending ? "Refreshing…" : "Refresh"}
+              {refreshMutation.isPending ? "Refreshing..." : "Refresh"}
             </Button>
             <Button asChild>
               <Link href={`/w/${slug}/investments/positions` as Route}>
@@ -73,7 +121,7 @@ export default function InvestmentsDashboardPage({
       />
 
       {dashboardQuery.isLoading ? (
-        <LoadingText>Loading dashboard…</LoadingText>
+        <LoadingText>Loading dashboard...</LoadingText>
       ) : dashboardQuery.isError ? (
         <ErrorBanner
           title="Couldn't load investment dashboard"
@@ -94,34 +142,39 @@ export default function InvestmentsDashboardPage({
           {data.warnings && data.warnings.length > 0 ? (
             <ErrorBanner
               title="Pricing or FX gaps"
-              description={data.warnings.join(" · ")}
+              description={data.warnings.join(" / ")}
             />
           ) : null}
 
           <SummaryGrid summary={data} reportCcy={reportCcy} />
 
-          <div className="grid gap-4 lg:grid-cols-3">
-            <AllocationCard
-              title="By currency"
-              slices={data.allocationByCurrency}
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+            <PerformanceCard
+              data={historyQuery.data ?? []}
+              isLoading={historyQuery.isLoading}
+              range={historyRange}
+              onRangeChange={setHistoryRange}
               reportCcy={reportCcy}
+              summary={data}
             />
-            <AllocationCard
-              title="By asset class"
-              slices={data.allocationByAssetClass}
-              reportCcy={reportCcy}
-            />
-            <MoversCard movers={data.topMovers} />
+            <AllocationOverview summary={data} reportCcy={reportCcy} />
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Holdings</CardTitle>
-            </CardHeader>
-            <CardContent className="overflow-x-auto p-0">
-              <HoldingsTable holdings={data.holdings} slug={slug} />
-            </CardContent>
-          </Card>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+            <HoldingsCard
+              holdings={data.holdings}
+              slug={slug}
+              filter={holdingFilter}
+              onFilterChange={setHoldingFilter}
+            />
+            <div className="grid gap-4">
+              <MoversCard movers={data.topMovers} />
+              <RecentActivityCard
+                trades={tradesQuery.data ?? []}
+                dividends={dividendsQuery.data ?? []}
+              />
+            </div>
+          </div>
         </>
       )}
     </div>
@@ -132,84 +185,217 @@ function SummaryGrid({
   summary,
   reportCcy,
 }: {
-  summary: ReturnType<typeof Object.assign> & {
-    totalMarketValue: string;
-    totalCostBasis: string;
-    totalUnrealisedPnL: string;
-    totalUnrealisedPnLPct: string;
-    totalRealisedPnL: string;
-    totalDividends: string;
-    totalFees: string;
-    totalReturn: string;
-    totalReturnPct: string;
-    openPositionsCount: number;
-    staleQuotes: number;
-    missingQuotes: number;
-  };
+  summary: DashboardSummary;
   reportCcy: string;
 }) {
-  const stat = (
-    label: string,
-    value: string,
-    sub?: string,
-    accent?: "pos" | "neg" | "neutral"
-  ) => (
-    <div className="flex flex-col gap-1 rounded-[12px] border border-border bg-surface px-4 py-3">
-      <div className="text-[11px] font-medium tracking-wide text-fg-faint uppercase">
-        {label}
-      </div>
-      <div
-        className={
-          "text-[20px] font-medium tabular-nums " +
-          (accent === "pos"
-            ? "text-emerald-500"
-            : accent === "neg"
-              ? "text-rose-500"
-              : "text-fg")
-        }
-      >
-        {value}
-      </div>
-      {sub ? <div className="text-[12px] text-fg-muted">{sub}</div> : null}
-    </div>
-  );
-  const sign = (n: string): "pos" | "neg" | "neutral" => {
-    const t = n.trim();
-    if (t.startsWith("-")) return "neg";
-    const num = Number(t);
-    if (!Number.isFinite(num) || num === 0) return "neutral";
-    return "pos";
-  };
+  const stats = [
+    {
+      label: "Market value",
+      value: formatAmount(summary.totalMarketValue, reportCcy),
+      sub: `${summary.openPositionsCount} open / ${summary.staleQuotes} stale / ${summary.missingQuotes} missing`,
+      tone: "neutral" as const,
+    },
+    {
+      label: "Unrealised P/L",
+      value: formatAmount(summary.totalUnrealisedPnL, reportCcy),
+      sub: `${summary.totalUnrealisedPnLPct}% on cost`,
+      tone: sign(summary.totalUnrealisedPnL),
+    },
+    {
+      label: "Realised P/L",
+      value: formatAmount(summary.totalRealisedPnL, reportCcy),
+      sub: "lifetime",
+      tone: sign(summary.totalRealisedPnL),
+    },
+    {
+      label: "Dividends",
+      value: formatAmount(summary.totalDividends, reportCcy),
+      sub: `fees ${formatAmount(summary.totalFees, reportCcy)}`,
+      tone: sign(summary.totalDividends),
+    },
+    {
+      label: "Total return",
+      value: formatAmount(summary.totalReturn, reportCcy),
+      sub: `${summary.totalReturnPct}% incl. dividends and fees`,
+      tone: sign(summary.totalReturn),
+    },
+  ];
+
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      {stat(
-        "Market value",
-        formatAmount(summary.totalMarketValue, reportCcy),
-        `${summary.openPositionsCount} open · ${summary.staleQuotes} stale`
-      )}
-      {stat(
-        "Unrealised P/L",
-        formatAmount(summary.totalUnrealisedPnL, reportCcy),
-        `${summary.totalUnrealisedPnLPct}% on cost`,
-        sign(summary.totalUnrealisedPnL)
-      )}
-      {stat(
-        "Realised P/L",
-        formatAmount(summary.totalRealisedPnL, reportCcy),
-        "lifetime",
-        sign(summary.totalRealisedPnL)
-      )}
-      {stat(
-        "Total return",
-        formatAmount(summary.totalReturn, reportCcy),
-        `${summary.totalReturnPct}% incl. dividends · fees ${formatAmount(summary.totalFees, reportCcy)}`,
-        sign(summary.totalReturn)
-      )}
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      {stats.map((stat) => (
+        <div
+          key={stat.label}
+          className="border-border bg-surface flex min-h-[108px] flex-col justify-between rounded-[8px] border px-4 py-3"
+        >
+          <div className="text-fg-faint text-[11px] font-medium tracking-wide uppercase">
+            {stat.label}
+          </div>
+          <div
+            className={
+              "text-[20px] font-medium tabular-nums " + toneClass(stat.tone)
+            }
+          >
+            {stat.value}
+          </div>
+          <div className="text-fg-muted text-[12px]">{stat.sub}</div>
+        </div>
+      ))}
     </div>
   );
 }
 
-function AllocationCard({
+function PerformanceCard({
+  data,
+  isLoading,
+  range,
+  onRangeChange,
+  reportCcy,
+  summary,
+}: {
+  data: PortfolioHistoryPoint[];
+  isLoading: boolean;
+  range: HistoryRange;
+  onRangeChange: (range: HistoryRange) => void;
+  reportCcy: string;
+  summary: DashboardSummary;
+}) {
+  const chartData = data
+    .map((point) => ({
+      date: point.date,
+      value: Number(point.value),
+    }))
+    .filter((point) => Number.isFinite(point.value));
+
+  return (
+    <Card>
+      <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-1">
+          <CardTitle>Portfolio performance</CardTitle>
+          <div className="text-fg text-[24px] font-medium tabular-nums">
+            {formatAmount(summary.totalMarketValue, reportCcy)}
+          </div>
+          <div
+            className={
+              "text-[13px] tabular-nums " + toneClass(sign(summary.totalReturn))
+            }
+          >
+            {formatAmount(summary.totalReturn, reportCcy)} /{" "}
+            {summary.totalReturnPct}%
+          </div>
+        </div>
+        <div className="border-border bg-surface-subtle flex flex-wrap gap-1 rounded-[8px] border p-1">
+          {HISTORY_RANGES.map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => onRangeChange(option)}
+              className={
+                "h-7 rounded-[6px] px-2 text-[12px] font-medium tabular-nums transition-colors " +
+                (range === option
+                  ? "bg-surface text-fg shadow-sm"
+                  : "text-fg-muted hover:text-fg")
+              }
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="h-[280px] w-full">
+          {isLoading ? (
+            <LoadingText>Loading performance...</LoadingText>
+          ) : chartData.length === 0 ? (
+            <p className="text-fg-muted py-8 text-[13px]">
+              No priced history for this range.
+            </p>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <RechartsLineChart
+                data={chartData}
+                margin={{ top: 12, right: 12, bottom: 0, left: 0 }}
+              >
+                <CartesianGrid stroke="var(--color-border)" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fill: "var(--color-fg-muted)", fontSize: 12 }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(value) =>
+                    new Intl.DateTimeFormat(undefined, {
+                      month: "short",
+                      day: "numeric",
+                    }).format(new Date(value))
+                  }
+                />
+                <YAxis
+                  width={72}
+                  tick={{ fill: "var(--color-fg-muted)", fontSize: 12 }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(value) => compactCurrency(value, reportCcy)}
+                />
+                <Tooltip
+                  cursor={{ stroke: "var(--color-border-strong)" }}
+                  contentStyle={{
+                    border: "1px solid var(--color-border)",
+                    borderRadius: 8,
+                    background: "var(--color-surface)",
+                    color: "var(--color-fg)",
+                  }}
+                  formatter={(value) => [
+                    formatAmount(String(value), reportCcy),
+                    "Value",
+                  ]}
+                  labelFormatter={(value) => formatDate(String(value))}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  stroke="var(--color-accent)"
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+              </RechartsLineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AllocationOverview({
+  summary,
+  reportCcy,
+}: {
+  summary: DashboardSummary;
+  reportCcy: string;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Allocation</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5">
+        <AllocationList
+          title="Asset class"
+          slices={summary.allocationByAssetClass}
+          reportCcy={reportCcy}
+        />
+        <AllocationList
+          title="Currency"
+          slices={summary.allocationByCurrency}
+          reportCcy={reportCcy}
+        />
+      </CardContent>
+    </Card>
+  );
+}
+
+function AllocationList({
   title,
   slices,
   reportCcy,
@@ -218,42 +404,37 @@ function AllocationCard({
   slices: { key: string; label: string; value: string; pct: string }[];
   reportCcy: string;
 }) {
-  if (slices.length === 0) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>{title}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-[13px] text-fg-muted">No exposure to show yet.</p>
-        </CardContent>
-      </Card>
-    );
-  }
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {slices.slice(0, 6).map((s) => (
-          <div key={s.key} className="flex flex-col gap-1">
-            <div className="flex items-center justify-between text-[13px]">
-              <span className="font-medium text-fg">{s.label}</span>
-              <span className="tabular-nums text-fg-muted">
-                {formatAmount(s.value, reportCcy)} · {s.pct}%
+    <div className="flex flex-col gap-3">
+      <div className="text-fg-faint text-[11px] font-medium tracking-wide uppercase">
+        {title}
+      </div>
+      {slices.length === 0 ? (
+        <p className="text-fg-muted text-[13px]">No exposure to show yet.</p>
+      ) : (
+        slices.slice(0, 6).map((s) => (
+          <div key={`${title}:${s.key}`} className="flex flex-col gap-1">
+            <div className="flex items-center justify-between gap-3 text-[13px]">
+              <span className="text-fg truncate font-medium">
+                {formatAssetClass(s.label)}
+              </span>
+              <span className="text-fg-muted shrink-0 tabular-nums">
+                {s.pct}%
               </span>
             </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+            <div className="bg-border h-2 w-full overflow-hidden rounded-full">
               <div
-                className="h-full rounded-full bg-accent"
+                className="bg-accent h-full rounded-full"
                 style={{ width: `${Math.min(100, Number(s.pct))}%` }}
               />
             </div>
+            <div className="text-fg-muted text-[12px] tabular-nums">
+              {formatAmount(s.value, reportCcy)}
+            </div>
           </div>
-        ))}
-      </CardContent>
-    </Card>
+        ))
+      )}
+    </div>
   );
 }
 
@@ -275,30 +456,29 @@ function MoversCard({
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {movers.length === 0 ? (
-          <p className="text-[13px] text-fg-muted">
+          <p className="text-fg-muted text-[13px]">
             No live quotes yet. Refresh once positions exist.
           </p>
         ) : (
           movers.map((m) => {
-            const neg = m.unrealisedPnL.trim().startsWith("-");
+            const tone = sign(m.unrealisedPnL);
             return (
               <div
                 key={m.symbol}
-                className="flex items-center justify-between text-[13px]"
+                className="flex items-center justify-between gap-3 text-[13px]"
               >
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium text-fg">{m.symbol}</span>
-                  <span className="text-[11px] text-fg-muted">{m.name}</span>
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <span className="text-fg font-medium">{m.symbol}</span>
+                  <span className="text-fg-muted truncate text-[11px]">
+                    {m.name}
+                  </span>
                 </div>
                 <div
                   className={
-                    "tabular-nums text-right " +
-                    (neg ? "text-rose-500" : "text-emerald-500")
+                    "shrink-0 text-right tabular-nums " + toneClass(tone)
                   }
                 >
-                  <div>
-                    {formatAmount(m.unrealisedPnL, m.reportCurrency)}
-                  </div>
+                  <div>{formatAmount(m.unrealisedPnL, m.reportCurrency)}</div>
                   <div className="text-[11px] opacity-80">
                     {m.unrealisedPct}%
                   </div>
@@ -312,25 +492,147 @@ function MoversCard({
   );
 }
 
-function HoldingsTable({
+function RecentActivityCard({
+  trades,
+  dividends,
+}: {
+  trades: Trade[];
+  dividends: DividendEvent[];
+}) {
+  const items = React.useMemo(() => {
+    const tradeItems = trades.map((trade) => {
+      const quantity = Number(trade.quantity);
+      const price = Number(trade.price);
+      const fee = Number(trade.feeAmount || 0);
+      const amount = Number.isFinite(quantity * price + fee)
+        ? quantity * price + fee
+        : 0;
+      return {
+        key: trade.id,
+        date: trade.tradeDate,
+        title: `${trade.side === "buy" ? "Buy" : "Sell"} ${trade.symbol}`,
+        detail: `${trade.quantity} @ ${formatAmount(trade.price, trade.currency)}`,
+        amount: `${trade.side === "buy" ? "-" : "+"}${amount.toFixed(2)}`,
+        currency: trade.currency,
+        tone: trade.side === "buy" ? "neg" : "pos",
+      };
+    });
+    const dividendItems = dividends.map((dividend) => ({
+      key: dividend.id,
+      date: dividend.payDate,
+      title: `Dividend ${dividend.symbol}`,
+      detail: formatDate(dividend.payDate),
+      amount: dividend.totalAmount,
+      currency: dividend.currency,
+      tone: "pos",
+    }));
+    return [...tradeItems, ...dividendItems]
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 6);
+  }, [trades, dividends]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Recent activity</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {items.length === 0 ? (
+          <p className="text-fg-muted text-[13px]">No activity yet.</p>
+        ) : (
+          items.map((item) => (
+            <div
+              key={item.key}
+              className="flex items-center justify-between gap-3 text-[13px]"
+            >
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-fg truncate font-medium">
+                  {item.title}
+                </span>
+                <span className="text-fg-muted truncate text-[11px]">
+                  {item.detail}
+                </span>
+              </div>
+              <div className={"shrink-0 tabular-nums " + toneClass(item.tone)}>
+                {formatAmount(item.amount, item.currency)}
+              </div>
+            </div>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function HoldingsCard({
   holdings,
   slug,
+  filter,
+  onFilterChange,
 }: {
   holdings: Holding[];
   slug: string;
+  filter: string;
+  onFilterChange: (filter: string) => void;
 }) {
   const openHoldings = holdings.filter((h) => Number(h.quantity || 0) > 0);
-  if (openHoldings.length === 0) {
+  const classes = Array.from(
+    new Set(openHoldings.map((h) => h.assetClass).filter(Boolean))
+  ).sort();
+  const filters = ["all", ...classes];
+
+  return (
+    <Card>
+      <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <CardTitle>Holdings</CardTitle>
+        <div className="border-border bg-surface-subtle flex flex-wrap gap-1 rounded-[8px] border p-1">
+          {filters.map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => onFilterChange(option)}
+              className={
+                "h-7 rounded-[6px] px-2 text-[12px] font-medium transition-colors " +
+                (filter === option
+                  ? "bg-surface text-fg shadow-sm"
+                  : "text-fg-muted hover:text-fg")
+              }
+            >
+              {option === "all" ? "All" : formatAssetClass(option)}
+            </button>
+          ))}
+        </div>
+      </CardHeader>
+      <CardContent className="overflow-x-auto p-0">
+        <HoldingsTable holdings={openHoldings} slug={slug} filter={filter} />
+      </CardContent>
+    </Card>
+  );
+}
+
+function HoldingsTable({
+  holdings,
+  slug,
+  filter,
+}: {
+  holdings: Holding[];
+  slug: string;
+  filter: string;
+}) {
+  const visibleHoldings =
+    filter === "all"
+      ? holdings
+      : holdings.filter((h) => h.assetClass === filter);
+
+  if (visibleHoldings.length === 0) {
     return (
-      <p className="px-4 py-6 text-[13px] text-fg-muted">
-        No open holdings.
-      </p>
+      <p className="text-fg-muted px-4 py-6 text-[13px]">No open holdings.</p>
     );
   }
   return (
     <table className="w-full text-[13px]">
-      <thead className="text-[11px] text-fg-muted uppercase tracking-wide">
-        <tr className="border-b border-border">
+      <thead className="text-fg-muted text-[11px] tracking-wide uppercase">
+        <tr className="border-border border-b">
           <th className="px-4 py-2 text-left font-medium">Symbol</th>
           <th className="px-2 py-2 text-right font-medium">Qty</th>
           <th className="px-2 py-2 text-right font-medium">Price</th>
@@ -342,69 +644,67 @@ function HoldingsTable({
         </tr>
       </thead>
       <tbody>
-        {openHoldings.map((h) => {
+        {visibleHoldings.map((h) => {
           const unr = h.unrealisedPnLReport ?? "0";
           const tr = h.totalReturnReport ?? "0";
           return (
             <tr
               key={`${h.accountId}:${h.instrumentId}`}
-              className="border-b border-border last:border-b-0"
+              className="border-border border-b last:border-b-0"
             >
               <td className="px-4 py-2">
-                <div className="flex flex-col">
-                  <span className="font-medium text-fg">{h.symbol}</span>
-                  <span className="text-[11px] text-fg-muted">{h.name}</span>
+                <div className="flex min-w-[180px] flex-col">
+                  <span className="text-fg font-medium">{h.symbol}</span>
+                  <span className="text-fg-muted truncate text-[11px]">
+                    {h.name}
+                  </span>
                 </div>
               </td>
               <td className="px-2 py-2 text-right tabular-nums">
                 {h.quantity}
               </td>
-              <td className="px-2 py-2 text-right tabular-nums text-fg-muted">
+              <td className="text-fg-muted px-2 py-2 text-right tabular-nums">
                 {h.lastPrice
                   ? formatAmount(h.lastPrice, h.instrumentCurrency)
-                  : "—"}
+                  : "-"}
               </td>
               <td className="px-2 py-2 text-right tabular-nums">
                 {h.marketValueReport
                   ? formatAmount(h.marketValueReport, h.reportCurrency)
-                  : "—"}
+                  : "-"}
               </td>
-              <td className="px-2 py-2 text-right tabular-nums text-fg-muted">
+              <td className="text-fg-muted px-2 py-2 text-right tabular-nums">
                 {formatAmount(h.costBasisReport, h.reportCurrency)}
               </td>
               <td
                 className={
-                  "px-2 py-2 text-right tabular-nums " +
-                  (unr.trim().startsWith("-")
-                    ? "text-rose-500"
-                    : "text-emerald-500")
+                  "px-2 py-2 text-right tabular-nums " + toneClass(sign(unr))
                 }
               >
                 {h.unrealisedPnLReport
                   ? formatAmount(h.unrealisedPnLReport, h.reportCurrency)
-                  : "—"}
+                  : "-"}
               </td>
               <td
                 className={
-                  "px-2 py-2 text-right tabular-nums " +
-                  (tr.trim().startsWith("-")
-                    ? "text-rose-500"
-                    : "text-emerald-500")
+                  "px-2 py-2 text-right tabular-nums " + toneClass(sign(tr))
                 }
               >
                 {h.totalReturnReport
                   ? formatAmount(h.totalReturnReport, h.reportCurrency)
-                  : "—"}
+                  : "-"}
                 {h.totalReturnPercentReport ? (
-                  <span className="ml-1 text-[11px] text-fg-muted">
+                  <span className="text-fg-muted ml-1 text-[11px]">
                     ({h.totalReturnPercentReport}%)
                   </span>
                 ) : null}
               </td>
               <td className="px-4 py-2 text-right">
                 <Link
-                  href={`/w/${slug}/investments/instruments/${encodeURIComponent(h.symbol)}` as Route}
-                  className="inline-flex items-center gap-1 text-[12px] text-fg hover:underline"
+                  href={
+                    `/w/${slug}/investments/instruments/${encodeURIComponent(h.symbol)}` as Route
+                  }
+                  className="text-fg inline-flex items-center gap-1 text-[12px] hover:underline"
                 >
                   Drill <ArrowUpRight className="h-3 w-3" />
                 </Link>
@@ -415,4 +715,34 @@ function HoldingsTable({
       </tbody>
     </table>
   );
+}
+
+function sign(n: string): "pos" | "neg" | "neutral" {
+  const trimmed = n.trim();
+  if (trimmed.startsWith("-")) return "neg";
+  const value = Number(trimmed);
+  if (!Number.isFinite(value) || value === 0) return "neutral";
+  return "pos";
+}
+
+function toneClass(tone: "pos" | "neg" | "neutral" | string) {
+  if (tone === "pos") return "text-emerald-500";
+  if (tone === "neg") return "text-rose-500";
+  return "text-fg";
+}
+
+function formatAssetClass(value: string) {
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function compactCurrency(value: number, currency: string) {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
 }

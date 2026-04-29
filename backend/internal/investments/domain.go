@@ -147,6 +147,14 @@ type DashboardSummary struct {
 	Warnings               []string          `json:"warnings,omitempty"`
 }
 
+// PortfolioHistoryPoint is an aggregated portfolio valuation point in the
+// requested reporting currency.
+type PortfolioHistoryPoint struct {
+	Date           time.Time `json:"date"`
+	Value          string    `json:"value"`
+	ReportCurrency string    `json:"reportCurrency"`
+}
+
 // AllocationSlice is one entry in an exposure breakdown.
 type AllocationSlice struct {
 	Key   string `json:"key"`

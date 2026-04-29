@@ -20,6 +20,13 @@ type DashboardFilter struct {
 	ReportCurrency string // e.g. "CHF"
 }
 
+// DashboardHistoryFilter scopes the portfolio value history.
+type DashboardHistoryFilter struct {
+	AccountID      *uuid.UUID
+	ReportCurrency string
+	Range          string
+}
+
 // BuildDashboardSummary computes the headline numbers for the investment
 // dashboard, converting all per-position figures into ReportCurrency at the
 // most recent FX rate. Historical FX-by-trade-date is used for cost-basis to
@@ -234,6 +241,108 @@ func (s *Service) BuildDashboardSummary(ctx context.Context, workspaceID uuid.UU
 		TopMovers:              movers,
 		Warnings:               dedupe(warnings),
 	}, nil
+}
+
+// BuildDashboardHistory aggregates instrument value histories into a portfolio
+// line in the requested reporting currency. It replays the investment event
+// stream, so buys/sells and split corporate actions affect the time series.
+func (s *Service) BuildDashboardHistory(ctx context.Context, workspaceID uuid.UUID, f DashboardHistoryFilter) ([]PortfolioHistoryPoint, error) {
+	report := strings.ToUpper(strings.TrimSpace(f.ReportCurrency))
+	if report == "" {
+		if base, err := dbq.New(s.pool).GetWorkspaceBaseCurrency(ctx, workspaceID); err == nil {
+			report = base
+		}
+	}
+	if report == "" {
+		report = "CHF"
+	}
+
+	from := historyRangeStart(s.now(), f.Range)
+	positions, err := s.ListPositions(ctx, workspaceID, PositionFilter{AccountID: f.AccountID, OpenOnly: false})
+	if err != nil {
+		return nil, err
+	}
+
+	instruments := map[uuid.UUID]Instrument{}
+	for _, p := range positions {
+		if _, ok := instruments[p.InstrumentID]; ok {
+			continue
+		}
+		instruments[p.InstrumentID] = Instrument{
+			ID:         p.InstrumentID,
+			Symbol:     p.Symbol,
+			Name:       p.Name,
+			AssetClass: p.AssetClass,
+			Currency:   p.InstrumentCcy,
+			Active:     true,
+		}
+	}
+
+	byDate := map[time.Time]decimal.Decimal{}
+	for instrumentID, inst := range instruments {
+		trades, err := s.ListTrades(ctx, workspaceID, f.AccountID, &instrumentID)
+		if err != nil {
+			return nil, err
+		}
+		if len(trades) == 0 {
+			continue
+		}
+		corpActions, err := s.ListCorporateActions(ctx, workspaceID, instrumentID)
+		if err != nil {
+			return nil, err
+		}
+		history, err := s.instrumentValueHistory(ctx, inst, instrumentID, trades, corpActions, report)
+		if err != nil {
+			return nil, err
+		}
+		for _, point := range history {
+			d := dayUTC(point.Date)
+			if d.Before(from) || point.Value == nil {
+				continue
+			}
+			value, err := decimal.NewFromString(*point.Value)
+			if err != nil {
+				continue
+			}
+			byDate[d] = byDate[d].Add(value)
+		}
+	}
+
+	dates := make([]time.Time, 0, len(byDate))
+	for d := range byDate {
+		dates = append(dates, d)
+	}
+	sort.Slice(dates, func(i, j int) bool { return dates[i].Before(dates[j]) })
+
+	out := make([]PortfolioHistoryPoint, 0, len(dates))
+	for _, d := range dates {
+		out = append(out, PortfolioHistoryPoint{
+			Date:           d,
+			Value:          byDate[d].StringFixed(2),
+			ReportCurrency: report,
+		})
+	}
+	return out, nil
+}
+
+func historyRangeStart(now time.Time, raw string) time.Time {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "1W":
+		return dayUTC(now.AddDate(0, 0, -7))
+	case "3M":
+		return dayUTC(now.AddDate(0, -3, 0))
+	case "6M":
+		return dayUTC(now.AddDate(0, -6, 0))
+	case "YTD":
+		n := now.UTC()
+		return time.Date(n.Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
+	case "1Y":
+		return dayUTC(now.AddDate(-1, 0, 0))
+	case "ALL":
+		return time.Time{}
+	default:
+		return dayUTC(now.AddDate(0, -1, 0))
+	}
 }
 
 // fxOrIdentity returns FX rate for from->to at the given time, falling back

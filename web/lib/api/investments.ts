@@ -181,6 +181,12 @@ export type DashboardSummary = {
   warnings?: string[];
 };
 
+export type PortfolioHistoryPoint = {
+  date: string;
+  value: string;
+  reportCurrency: string;
+};
+
 export type HistoryDataPoint = {
   date: string;
   quantity: string;
@@ -213,18 +219,33 @@ export type InstrumentDetail = {
 // API
 // ---------------------------------------------------------------------------
 
-const root = (workspaceId: string) =>
-  `/api/v1/t/${workspaceId}/investments`;
+const root = (workspaceId: string) => `/api/v1/t/${workspaceId}/investments`;
 
 export async function fetchDashboard(
   workspaceId: string,
   opts: { accountId?: string; currency?: string } = {}
 ): Promise<DashboardSummary> {
   const qs: string[] = [];
-  if (opts.accountId) qs.push(`accountId=${encodeURIComponent(opts.accountId)}`);
+  if (opts.accountId)
+    qs.push(`accountId=${encodeURIComponent(opts.accountId)}`);
   if (opts.currency) qs.push(`currency=${encodeURIComponent(opts.currency)}`);
   const suffix = qs.length ? `?${qs.join("&")}` : "";
   return request<DashboardSummary>(`${root(workspaceId)}/dashboard${suffix}`);
+}
+
+export async function fetchDashboardHistory(
+  workspaceId: string,
+  opts: { accountId?: string; currency?: string; range?: string } = {}
+): Promise<PortfolioHistoryPoint[]> {
+  const qs: string[] = [];
+  if (opts.accountId)
+    qs.push(`accountId=${encodeURIComponent(opts.accountId)}`);
+  if (opts.currency) qs.push(`currency=${encodeURIComponent(opts.currency)}`);
+  if (opts.range) qs.push(`range=${encodeURIComponent(opts.range)}`);
+  const suffix = qs.length ? `?${qs.join("&")}` : "";
+  return request<PortfolioHistoryPoint[]>(
+    `${root(workspaceId)}/dashboard/history${suffix}`
+  );
 }
 
 export async function fetchPositions(
@@ -232,7 +253,8 @@ export async function fetchPositions(
   opts: { accountId?: string; status?: "open" | "closed"; search?: string } = {}
 ): Promise<Position[]> {
   const qs: string[] = [];
-  if (opts.accountId) qs.push(`accountId=${encodeURIComponent(opts.accountId)}`);
+  if (opts.accountId)
+    qs.push(`accountId=${encodeURIComponent(opts.accountId)}`);
   if (opts.status) qs.push(`status=${opts.status}`);
   if (opts.search) qs.push(`search=${encodeURIComponent(opts.search)}`);
   const suffix = qs.length ? `?${qs.join("&")}` : "";
@@ -314,7 +336,8 @@ export async function fetchTrades(
   opts: { accountId?: string; instrumentId?: string } = {}
 ): Promise<Trade[]> {
   const qs: string[] = [];
-  if (opts.accountId) qs.push(`accountId=${encodeURIComponent(opts.accountId)}`);
+  if (opts.accountId)
+    qs.push(`accountId=${encodeURIComponent(opts.accountId)}`);
   if (opts.instrumentId)
     qs.push(`instrumentId=${encodeURIComponent(opts.instrumentId)}`);
   const suffix = qs.length ? `?${qs.join("&")}` : "";
@@ -350,6 +373,19 @@ export async function deleteDividend(
   return request<void>(`${root(workspaceId)}/dividends/${dividendId}`, {
     method: "DELETE",
   });
+}
+
+export async function fetchDividends(
+  workspaceId: string,
+  opts: { accountId?: string; instrumentId?: string } = {}
+): Promise<DividendEvent[]> {
+  const qs: string[] = [];
+  if (opts.accountId)
+    qs.push(`accountId=${encodeURIComponent(opts.accountId)}`);
+  if (opts.instrumentId)
+    qs.push(`instrumentId=${encodeURIComponent(opts.instrumentId)}`);
+  const suffix = qs.length ? `?${qs.join("&")}` : "";
+  return request<DividendEvent[]>(`${root(workspaceId)}/dividends${suffix}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -463,7 +499,9 @@ export async function uploadInvestmentImport(
     investment?: { summary?: ImportSummary };
   };
   if (body.kind !== "investment" || !body.investment?.summary) {
-    throw new ApiError(400, { error: "file was not recognised as an investment import" });
+    throw new ApiError(400, {
+      error: "file was not recognised as an investment import",
+    });
   }
   return body.investment.summary;
 }
