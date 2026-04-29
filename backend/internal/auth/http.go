@@ -59,6 +59,9 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.With(reauth).Post("/me/mfa/passkeys/complete", h.completePasskeyEnrollment)
 	r.Get("/me/mfa/passkeys", h.listPasskeys)                       // read-only, no fresh reauth
 	r.With(reauth).Delete("/me/mfa/passkeys/{id}", h.deletePasskey) // mutation, fresh reauth required
+	// Changing the password while signed in: a stolen cookie shouldn't be able
+	// to silently rotate credentials, so gate behind a fresh re-auth.
+	r.With(reauth).Post("/me/password", h.changePassword)
 	// Reauth is a password/passkey gate — brute-force protection parallels /login.
 	r.With(RateLimitByIP(10, 10*time.Minute)).Post("/auth/reauth", h.reauth)
 	r.With(RateLimitByIP(10, 10*time.Minute)).Post("/auth/reauth/webauthn/begin", h.beginReauthWebauthn)
