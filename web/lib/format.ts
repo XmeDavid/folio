@@ -26,6 +26,33 @@ export function formatAmount(
   }
 }
 
+export function formatQuantity(
+  quantity: string | number | null | undefined,
+  opts: { maxFractionDigits?: number; locale?: string } = {}
+): string {
+  if (quantity == null || quantity === "") return "-";
+  const text = String(quantity).trim();
+  const match = text.match(/^([+-]?)(\d+)(?:\.(\d+))?$/);
+  if (!match) return text;
+
+  const maxFractionDigits = opts.maxFractionDigits ?? 4;
+  const rounded = roundToFixed(
+    match[2] ?? "0",
+    match[3] ?? "",
+    maxFractionDigits
+  );
+  const fraction = rounded.fraction.replace(/0+$/, "");
+  try {
+    const parts = new Intl.NumberFormat(opts.locale).formatToParts(12345.6);
+    const group = parts.find((part) => part.type === "group")?.value ?? ",";
+    const decimal = parts.find((part) => part.type === "decimal")?.value ?? ".";
+    const grouped = rounded.whole.replace(/\B(?=(\d{3})+(?!\d))/g, group);
+    return `${match[1] ?? ""}${grouped}${fraction ? `${decimal}${fraction}` : ""}`;
+  } catch {
+    return `${match[1] ?? ""}${rounded.whole}${fraction ? `.${fraction}` : ""}`;
+  }
+}
+
 const minorUnitsByCurrency = new Map<string, number>([
   ["BHD", 3],
   ["CLP", 0],

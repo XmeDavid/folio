@@ -19,6 +19,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { EmptyState, ErrorBanner, LoadingText } from "@/components/app/empty";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { QuantityText } from "@/components/investments/quantity-text";
 import {
   fetchDashboard,
   fetchDashboardHistory,
@@ -32,7 +33,7 @@ import {
   type Trade,
 } from "@/lib/api/investments";
 import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
-import { formatAmount, formatDate } from "@/lib/format";
+import { formatAmount, formatDate, formatQuantity } from "@/lib/format";
 
 const HISTORY_RANGES = ["1W", "1M", "3M", "6M", "YTD", "1Y", "ALL"] as const;
 type HistoryRange = (typeof HISTORY_RANGES)[number];
@@ -502,7 +503,7 @@ function RecentActivityCard({
         key: trade.id,
         date: trade.tradeDate,
         title: `${trade.side === "buy" ? "Buy" : "Sell"} ${trade.symbol}`,
-        detail: `${trade.quantity} @ ${formatAmount(trade.price, trade.currency)}`,
+        detail: `${formatQuantity(trade.quantity)} @ ${formatAmount(trade.price, trade.currency)}`,
         amount: `${trade.side === "buy" ? "-" : "+"}${amount.toFixed(2)}`,
         currency: trade.currency,
         tone: trade.side === "buy" ? "neg" : "pos",
@@ -652,7 +653,7 @@ function HoldingsTable({
                 </div>
               </td>
               <td className="px-2 py-2 text-right tabular-nums">
-                {h.quantity}
+                <QuantityText value={h.quantity} />
               </td>
               <td className="text-fg-muted px-2 py-2 text-right tabular-nums">
                 {h.lastPrice

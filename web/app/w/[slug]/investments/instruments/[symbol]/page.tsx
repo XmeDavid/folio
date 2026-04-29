@@ -5,10 +5,7 @@ import { use } from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowLeft,
-  Trash2,
-} from "lucide-react";
+import { ArrowLeft, Trash2 } from "lucide-react";
 import {
   CartesianGrid,
   Line,
@@ -22,6 +19,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { ErrorBanner, LoadingText } from "@/components/app/empty";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { QuantityText } from "@/components/investments/quantity-text";
 import {
   createCorporateAction,
   deleteCorporateAction,
@@ -40,7 +38,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DateInput } from "@/components/ui/date-input";
 import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
-import { formatAmount, formatDate } from "@/lib/format";
+import { formatAmount, formatDate, formatQuantity } from "@/lib/format";
 
 export default function InstrumentDetailPage({
   params,
@@ -112,7 +110,7 @@ export default function InstrumentDetailPage({
       <div className="flex flex-col gap-2">
         <Link
           href={`/w/${slug}/investments/positions` as Route}
-          className="inline-flex w-fit items-center gap-1 text-[12px] text-fg-muted hover:text-fg hover:underline"
+          className="text-fg-muted hover:text-fg inline-flex w-fit items-center gap-1 text-[12px] hover:underline"
         >
           <ArrowLeft className="h-3 w-3" /> Positions
         </Link>
@@ -142,8 +140,9 @@ export default function InstrumentDetailPage({
             <TradesCard
               trades={detail.trades}
               onDelete={(id) =>
-                window.confirm("Delete this trade? Position will be replayed.") &&
-                deleteTradeMutation.mutate(id)
+                window.confirm(
+                  "Delete this trade? Position will be replayed."
+                ) && deleteTradeMutation.mutate(id)
               }
             />
             <DividendsCard
@@ -233,7 +232,8 @@ function CorporateActionsCard({
         // Send the computed factor (new/old) as a high-precision string so
         // backend never has to interpret "ratio" semantics.
         factor:
-          factorComputed != null && (kind === "split" || kind === "reverse_split")
+          factorComputed != null &&
+          (kind === "split" || kind === "reverse_split")
             ? factorComputed.toString()
             : undefined,
         amount: amount || undefined,
@@ -257,9 +257,9 @@ function CorporateActionsCard({
         <CardTitle>Corporate actions</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <div className="rounded-[12px] border border-border bg-surface p-3 text-[13px]">
-          <p className="font-medium text-fg">Add a corporate action</p>
-          <p className="mt-1 text-[12px] text-fg-muted">
+        <div className="border-border bg-surface rounded-[12px] border p-3 text-[13px]">
+          <p className="text-fg font-medium">Add a corporate action</p>
+          <p className="text-fg-muted mt-1 text-[12px]">
             Total cost basis is preserved. For a 1-for-50 reverse split, enter{" "}
             <code className="font-mono">1</code> new for every{" "}
             <code className="font-mono">50</code> old. For a 4-for-1 forward
@@ -271,7 +271,7 @@ function CorporateActionsCard({
               <Label htmlFor="ca-kind">Kind</Label>
               <select
                 id="ca-kind"
-                className="rounded-[8px] border border-border bg-page px-3 py-1.5 text-[13px]"
+                className="border-border bg-page rounded-[8px] border px-3 py-1.5 text-[13px]"
                 value={kind}
                 onChange={(e) =>
                   switchKind(e.target.value as CorporateActionKind)
@@ -316,7 +316,7 @@ function CorporateActionsCard({
                   <span className="text-fg-muted">old</span>
                 </div>
                 {factorComputed != null && currentQuantity > 0 ? (
-                  <p className="mt-1 text-[12px] text-fg-muted">
+                  <p className="text-fg-muted mt-1 text-[12px]">
                     Your <strong className="text-fg">{currentQuantity}</strong>{" "}
                     shares will become{" "}
                     <strong className="text-fg">
@@ -377,13 +377,13 @@ function CorporateActionsCard({
         </div>
 
         {actions.length === 0 ? (
-          <p className="text-[13px] text-fg-muted">
+          <p className="text-fg-muted text-[13px]">
             No corporate actions on file for this instrument.
           </p>
         ) : (
           <table className="w-full text-[13px]">
-            <thead className="text-[11px] text-fg-muted uppercase tracking-wide">
-              <tr className="border-b border-border">
+            <thead className="text-fg-muted text-[11px] tracking-wide uppercase">
+              <tr className="border-border border-b">
                 <th className="px-2 py-2 text-left font-medium">Date</th>
                 <th className="px-2 py-2 text-left font-medium">Kind</th>
                 <th className="px-2 py-2 text-left font-medium">Detail</th>
@@ -392,12 +392,15 @@ function CorporateActionsCard({
             </thead>
             <tbody>
               {actions.map((a) => (
-                <tr key={a.id} className="border-b border-border last:border-b-0">
+                <tr
+                  key={a.id}
+                  className="border-border border-b last:border-b-0"
+                >
                   <td className="px-2 py-2">{a.effectiveDate.slice(0, 10)}</td>
                   <td className="px-2 py-2 capitalize">
                     {a.kind.replace("_", " ")}
                   </td>
-                  <td className="px-2 py-2 text-fg-muted">
+                  <td className="text-fg-muted px-2 py-2">
                     {(a.kind === "split" || a.kind === "reverse_split") &&
                     a.payload.factor
                       ? `factor ${String(a.payload.factor)}`
@@ -419,7 +422,7 @@ function CorporateActionsCard({
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     ) : (
-                      <span className="text-[11px] text-fg-faint">global</span>
+                      <span className="text-fg-faint text-[11px]">global</span>
                     )}
                   </td>
                 </tr>
@@ -494,7 +497,7 @@ function InstrumentSummary({ detail }: { detail: InstrumentDetail }) {
         />
         <Stat
           label="Open quantity"
-          value={totalQty.toString()}
+          value={formatQuantity(totalQty, { maxFractionDigits: 4 })}
           sub={`Cost ${formatAmount(totalCost.toString(), inst.currency)}`}
         />
         <Stat
@@ -506,7 +509,7 @@ function InstrumentSummary({ detail }: { detail: InstrumentDetail }) {
           }
           sub={
             haveAnyMarketValue
-              ? `${totalQty} × ${
+              ? `${formatQuantity(totalQty, { maxFractionDigits: 4 })} x ${
                   detail.lastQuote
                     ? formatAmount(
                         detail.lastQuote.price,
@@ -585,13 +588,13 @@ function Stat({
 }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <div className="text-[11px] font-medium tracking-wide text-fg-faint uppercase">
+      <div className="text-fg-faint text-[11px] font-medium tracking-wide uppercase">
         {label}
       </div>
       <div
         className={
           (mono ? "tabular-nums " : "") +
-          (bold ? "text-[15px] font-medium capitalize " : "text-[15px] ") +
+          (bold ? "text-[15px] font-medium capitalize" : "text-[15px]") +
           (accent === "pos"
             ? "text-emerald-500"
             : accent === "neg"
@@ -601,7 +604,7 @@ function Stat({
       >
         {value}
       </div>
-      {sub ? <div className="text-[11px] text-fg-muted">{sub}</div> : null}
+      {sub ? <div className="text-fg-muted text-[11px]">{sub}</div> : null}
     </div>
   );
 }
@@ -635,7 +638,7 @@ function HoldingsOverTime({
       <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle>Holding over time</CardTitle>
         <select
-          className="rounded-[8px] border border-border bg-surface px-2 py-1 text-[12px]"
+          className="border-border bg-surface rounded-[8px] border px-2 py-1 text-[12px]"
           value={reportCurrency}
           onChange={(e) => onReportCurrencyChange(e.target.value)}
         >
@@ -716,13 +719,13 @@ function TradesCard({
       </CardHeader>
       <CardContent className="overflow-x-auto p-0">
         {trades.length === 0 ? (
-          <p className="px-4 py-6 text-[13px] text-fg-muted">
+          <p className="text-fg-muted px-4 py-6 text-[13px]">
             No trades recorded.
           </p>
         ) : (
           <table className="w-full text-[13px]">
-            <thead className="text-[11px] text-fg-muted uppercase tracking-wide">
-              <tr className="border-b border-border">
+            <thead className="text-fg-muted text-[11px] tracking-wide uppercase">
+              <tr className="border-border border-b">
                 <th className="px-4 py-2 text-left font-medium">Date</th>
                 <th className="px-2 py-2 text-left font-medium">Side</th>
                 <th className="px-2 py-2 text-right font-medium">Qty</th>
@@ -735,7 +738,7 @@ function TradesCard({
               {trades.map((t) => (
                 <tr
                   key={t.id}
-                  className="border-b border-border last:border-b-0"
+                  className="border-border border-b last:border-b-0"
                 >
                   <td className="px-4 py-2">{formatDate(t.tradeDate)}</td>
                   <td className="px-2 py-2">
@@ -747,12 +750,12 @@ function TradesCard({
                     </Badge>
                   </td>
                   <td className="px-2 py-2 text-right tabular-nums">
-                    {t.quantity}
+                    <QuantityText value={t.quantity} />
                   </td>
                   <td className="px-2 py-2 text-right tabular-nums">
                     {formatAmount(t.price, t.currency)}
                   </td>
-                  <td className="px-2 py-2 text-right tabular-nums text-fg-muted">
+                  <td className="text-fg-muted px-2 py-2 text-right tabular-nums">
                     {formatAmount(t.feeAmount, t.feeCurrency)}
                   </td>
                   <td className="px-2 py-2 text-right">
@@ -788,13 +791,13 @@ function DividendsCard({
       </CardHeader>
       <CardContent className="overflow-x-auto p-0">
         {dividends.length === 0 ? (
-          <p className="px-4 py-6 text-[13px] text-fg-muted">
+          <p className="text-fg-muted px-4 py-6 text-[13px]">
             No dividend events recorded.
           </p>
         ) : (
           <table className="w-full text-[13px]">
-            <thead className="text-[11px] text-fg-muted uppercase tracking-wide">
-              <tr className="border-b border-border">
+            <thead className="text-fg-muted text-[11px] tracking-wide uppercase">
+              <tr className="border-border border-b">
                 <th className="px-4 py-2 text-left font-medium">Pay date</th>
                 <th className="px-2 py-2 text-right font-medium">Per unit</th>
                 <th className="px-2 py-2 text-right font-medium">Total</th>
@@ -806,16 +809,16 @@ function DividendsCard({
               {dividends.map((d) => (
                 <tr
                   key={d.id}
-                  className="border-b border-border last:border-b-0"
+                  className="border-border border-b last:border-b-0"
                 >
                   <td className="px-4 py-2">{formatDate(d.payDate)}</td>
                   <td className="px-2 py-2 text-right tabular-nums">
                     {formatAmount(d.amountPerUnit, d.currency)}
                   </td>
-                  <td className="px-2 py-2 text-right tabular-nums text-emerald-500">
+                  <td className="px-2 py-2 text-right text-emerald-500 tabular-nums">
                     {formatAmount(d.totalAmount, d.currency)}
                   </td>
-                  <td className="px-2 py-2 text-right tabular-nums text-fg-muted">
+                  <td className="text-fg-muted px-2 py-2 text-right tabular-nums">
                     {formatAmount(d.taxWithheld, d.currency)}
                   </td>
                   <td className="px-2 py-2 text-right">
