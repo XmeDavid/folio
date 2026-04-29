@@ -291,6 +291,168 @@ func TestInviteService_Revoke_NotFoundForWrongRouteWorkspace(t *testing.T) {
 	}
 }
 
+func TestInviteService_Resend_RotatesToken(t *testing.T) {
+	pool := testdb.Open(t)
+	svc := identity.NewInviteService(pool)
+	workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Resend1 "+t.Name())
+	inviter := testdb.CreateTestUser(t, pool, uniqueEmail(t, "alice"), true)
+	testdb.CreateTestMembership(t, pool, workspaceID, inviter, "owner")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `delete from workspace_invites where workspace_id = $1`, workspaceID)
+		cleanupMembership(t, workspaceID, inviter)
+	})
+
+	inv, originalPlaintext, err := svc.Create(context.Background(), workspaceID, inviter, uniqueEmail(t, "bob"), identity.RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var originalHash []byte
+	if err := pool.QueryRow(context.Background(),
+		`select token_hash from workspace_invites where id = $1`, inv.ID).Scan(&originalHash); err != nil {
+		t.Fatalf("read original hash: %v", err)
+	}
+
+	rotated, newPlaintext, err := svc.Resend(context.Background(), workspaceID, inv.ID)
+	if err != nil {
+		t.Fatalf("Resend: %v", err)
+	}
+	if newPlaintext == "" {
+		t.Fatal("expected non-empty new plaintext")
+	}
+	if newPlaintext == originalPlaintext {
+		t.Fatal("expected new plaintext to differ from original")
+	}
+	if rotated.ID != inv.ID {
+		t.Fatalf("rotated id = %v, want %v", rotated.ID, inv.ID)
+	}
+	if rotated.Email != inv.Email || rotated.Role != inv.Role {
+		t.Fatalf("rotated invite mutated identity fields: %+v", rotated)
+	}
+	var newHash []byte
+	if err := pool.QueryRow(context.Background(),
+		`select token_hash from workspace_invites where id = $1`, inv.ID).Scan(&newHash); err != nil {
+		t.Fatalf("read new hash: %v", err)
+	}
+	if string(newHash) == string(originalHash) {
+		t.Fatal("token_hash unchanged after Resend")
+	}
+
+	// The old plaintext should no longer accept (preview returns NotFound).
+	if _, err := svc.Preview(context.Background(), originalPlaintext); !errors.Is(err, identity.ErrInviteNotFound) {
+		t.Fatalf("old token preview = %v, want ErrInviteNotFound", err)
+	}
+	// The new plaintext should preview cleanly.
+	if _, err := svc.Preview(context.Background(), newPlaintext); err != nil {
+		t.Fatalf("new token preview: %v", err)
+	}
+}
+
+func TestInviteService_Resend_ExtendsExpiredInvite(t *testing.T) {
+	pool := testdb.Open(t)
+	svc := identity.NewInviteService(pool)
+	workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Resend2 "+t.Name())
+	inviter := testdb.CreateTestUser(t, pool, uniqueEmail(t, "alice"), true)
+	testdb.CreateTestMembership(t, pool, workspaceID, inviter, "owner")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `delete from workspace_invites where workspace_id = $1`, workspaceID)
+		cleanupMembership(t, workspaceID, inviter)
+	})
+
+	inv, _, err := svc.Create(context.Background(), workspaceID, inviter, uniqueEmail(t, "bob"), identity.RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Force-expire the invite.
+	if _, err := pool.Exec(context.Background(),
+		`update workspace_invites set expires_at = now() - interval '1 hour' where id = $1`, inv.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rotated, newPlaintext, err := svc.Resend(context.Background(), workspaceID, inv.ID)
+	if err != nil {
+		t.Fatalf("Resend on expired invite: %v", err)
+	}
+	if !rotated.ExpiresAt.After(inv.ExpiresAt) {
+		t.Fatalf("ExpiresAt did not advance: rotated=%v original=%v", rotated.ExpiresAt, inv.ExpiresAt)
+	}
+	// Preview against the new token should now succeed (no longer expired).
+	if _, err := svc.Preview(context.Background(), newPlaintext); err != nil {
+		t.Fatalf("preview after Resend: %v", err)
+	}
+}
+
+func TestInviteService_Resend_RejectsRevoked(t *testing.T) {
+	pool := testdb.Open(t)
+	svc := identity.NewInviteService(pool)
+	workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Resend3 "+t.Name())
+	inviter := testdb.CreateTestUser(t, pool, uniqueEmail(t, "alice"), true)
+	testdb.CreateTestMembership(t, pool, workspaceID, inviter, "owner")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `delete from workspace_invites where workspace_id = $1`, workspaceID)
+		cleanupMembership(t, workspaceID, inviter)
+	})
+
+	inv, _, err := svc.Create(context.Background(), workspaceID, inviter, uniqueEmail(t, "bob"), identity.RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Revoke(context.Background(), workspaceID, inv.ID, inviter); err != nil {
+		t.Fatalf("seed revoke: %v", err)
+	}
+	if _, _, err := svc.Resend(context.Background(), workspaceID, inv.ID); !errors.Is(err, identity.ErrInviteRevoked) {
+		t.Fatalf("want ErrInviteRevoked, got %v", err)
+	}
+}
+
+func TestInviteService_Resend_RejectsAccepted(t *testing.T) {
+	pool := testdb.Open(t)
+	svc := identity.NewInviteService(pool)
+	workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Resend4 "+t.Name())
+	inviter := testdb.CreateTestUser(t, pool, uniqueEmail(t, "alice"), true)
+	testdb.CreateTestMembership(t, pool, workspaceID, inviter, "owner")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `delete from workspace_invites where workspace_id = $1`, workspaceID)
+		cleanupMembership(t, workspaceID, inviter)
+	})
+
+	inv, _, err := svc.Create(context.Background(), workspaceID, inviter, uniqueEmail(t, "bob"), identity.RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Mark accepted directly to skip the email-match prerequisites.
+	if _, err := pool.Exec(context.Background(),
+		`update workspace_invites set accepted_at = now() where id = $1`, inv.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.Resend(context.Background(), workspaceID, inv.ID); !errors.Is(err, identity.ErrInviteAlreadyUsed) {
+		t.Fatalf("want ErrInviteAlreadyUsed, got %v", err)
+	}
+}
+
+func TestInviteService_Resend_NotFoundForWrongWorkspace(t *testing.T) {
+	pool := testdb.Open(t)
+	svc := identity.NewInviteService(pool)
+	workspaceID, _ := testdb.CreateTestWorkspace(t, pool, "Resend5a "+t.Name())
+	otherID, _ := testdb.CreateTestWorkspace(t, pool, "Resend5b "+t.Name())
+	inviter := testdb.CreateTestUser(t, pool, uniqueEmail(t, "alice"), true)
+	testdb.CreateTestMembership(t, pool, workspaceID, inviter, "owner")
+	testdb.CreateTestMembership(t, pool, otherID, inviter, "owner")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `delete from workspace_invites where workspace_id in ($1, $2)`, workspaceID, otherID)
+		_, _ = pool.Exec(context.Background(), `delete from workspace_memberships where user_id = $1`, inviter)
+		_, _ = pool.Exec(context.Background(), `delete from workspaces where id in ($1, $2)`, workspaceID, otherID)
+		_, _ = pool.Exec(context.Background(), `delete from users where id = $1`, inviter)
+	})
+
+	inv, _, err := svc.Create(context.Background(), workspaceID, inviter, uniqueEmail(t, "bob"), identity.RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.Resend(context.Background(), otherID, inv.ID); !errors.Is(err, identity.ErrInviteNotFound) {
+		t.Fatalf("want ErrInviteNotFound, got %v", err)
+	}
+}
+
 // silence the unused seed helpers — kept as placeholders for future
 // convenience helpers if test setup grows.
 var _ = seedInviteContext

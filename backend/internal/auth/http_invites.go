@@ -36,10 +36,14 @@ func NewInviteHandler(authSvc *Service, invites *identity.InviteService, mail ma
 // the workspace path. The caller wires RequireSession + RequireMembership
 // upstream. Role rules are enforced inside each handler because the "only
 // owners can invite owners" rule depends on the target role in the body.
-// RequireFreshReauth is deliberately deferred to Plan 4 (spec §0.2 adjust).
+// Resend is gated by RequireFreshReauth: rotating a pending invite's token
+// is a write action that should not be reachable from a stolen-but-stale
+// session cookie alone (mirrors the admin-invite handler).
 func (h *InviteHandler) MountWorkspaceInvites(r chi.Router) {
 	r.Post("/", h.createInvite)
 	r.Delete("/{inviteId}", h.revokeInvite)
+	fresh := RequireFreshReauth(h.auth.cfg.ReauthWindow)
+	r.With(fresh).Post("/{inviteId}/resend", h.resendInvite)
 }
 
 // MountPublicInvites mounts the two public invite endpoints at
@@ -94,10 +98,10 @@ func (h *InviteHandler) createInvite(w http.ResponseWriter, r *http.Request) {
 			Subject:  "You're invited to Folio",
 			Template: "invite",
 			Data: map[string]any{
-				"InviterName": inviter.DisplayName,
-				"WorkspaceName":  workspace.Name,
-				"Role":        string(inv.Role),
-				"AcceptURL":   inviteURL(plaintext),
+				"InviterName":   inviter.DisplayName,
+				"WorkspaceName": workspace.Name,
+				"Role":          string(inv.Role),
+				"AcceptURL":     inviteURL(plaintext),
 			},
 			WorkspaceID: workspace.ID.String(),
 		}); err != nil {
@@ -109,7 +113,19 @@ func (h *InviteHandler) createInvite(w http.ResponseWriter, r *http.Request) {
 		"member.invited", "invite", inv.ID, nil,
 		map[string]any{"email": inv.Email, "role": string(inv.Role)})
 
-	httpx.WriteJSON(w, http.StatusCreated, inv)
+	httpx.WriteJSON(w, http.StatusCreated, createInviteResp{
+		Invite:    inv,
+		AcceptURL: inviteURL(plaintext),
+	})
+}
+
+// createInviteResp wraps the invite plus the accept URL so the UI can offer
+// a "Copy link" affordance immediately after creation. The plaintext token
+// itself is intentionally not returned — only the full URL — symmetric with
+// how the admin platform-invite endpoint exposes its acceptUrl.
+type createInviteResp struct {
+	Invite    *identity.Invite `json:"invite"`
+	AcceptURL string           `json:"acceptUrl"`
 }
 
 func (h *InviteHandler) revokeInvite(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +153,61 @@ func (h *InviteHandler) revokeInvite(w http.ResponseWriter, r *http.Request) {
 	h.auth.WriteAudit(r.Context(), workspace.ID, requester.ID,
 		"member.invite_revoked", "invite", inviteID, nil, nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// resendInvite rotates a pending invite's token + expiry, re-emits the
+// invite email best-effort, and returns the fresh invite + new acceptUrl
+// so the UI can offer a copy-link affordance immediately. Gated by fresh
+// reauth (see MountWorkspaceInvites).
+func (h *InviteHandler) resendInvite(w http.ResponseWriter, r *http.Request) {
+	workspace := MustWorkspace(r)
+	requester := MustUser(r)
+	inviteID, err := uuid.Parse(chi.URLParam(r, "inviteId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "inviteId must be a UUID")
+		return
+	}
+	inv, plaintext, err := h.invites.Resend(r.Context(), workspace.ID, inviteID)
+	switch {
+	case errors.Is(err, identity.ErrInviteNotFound):
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "invite not found")
+		return
+	case errors.Is(err, identity.ErrInviteRevoked),
+		errors.Is(err, identity.ErrInviteAlreadyUsed):
+		httpx.WriteError(w, http.StatusGone, inviteErrCode(err), err.Error())
+		return
+	case err != nil:
+		httpx.WriteServiceError(w, err)
+		return
+	}
+
+	// Best-effort email re-send (mirror createInvite). A transient mailer
+	// outage shouldn't abort the resend — the UI surfaces the new
+	// acceptUrl directly so the inviter can share it manually.
+	if h.mail != nil {
+		if err := h.mail.Send(r.Context(), mailer.Message{
+			To:       inv.Email,
+			Subject:  "You're invited to Folio",
+			Template: "invite",
+			Data: map[string]any{
+				"InviterName":   requester.DisplayName,
+				"WorkspaceName": workspace.Name,
+				"Role":          string(inv.Role),
+				"AcceptURL":     inviteURL(plaintext),
+			},
+			WorkspaceID: workspace.ID.String(),
+		}); err != nil {
+			slog.Default().Warn("mailer.send_failed", "err", err, "invite_id", inv.ID)
+		}
+	}
+
+	h.auth.WriteAudit(r.Context(), workspace.ID, requester.ID,
+		"member.invite_resent", "invite", inv.ID, nil, nil)
+
+	httpx.WriteJSON(w, http.StatusOK, createInviteResp{
+		Invite:    inv,
+		AcceptURL: inviteURL(plaintext),
+	})
 }
 
 // inviteURL builds the accept-invite URL the recipient clicks. Reads

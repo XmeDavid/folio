@@ -157,7 +157,7 @@ func TestSignup_AdminBootstrapInsideTx_RollsBackOnError(t *testing.T) {
 			`delete from workspaces where id in (select last_workspace_id from users where email = $1)`, email)
 		_, _ = pool.Exec(ctx, `delete from users where email = $1`, email)
 	})
-	svc := NewService(pool, identity.NewService(pool), Config{
+	svc := NewService(pool, identity.NewService(pool), identity.NewPlatformInviteService(pool), Config{
 		Registration:  RegistrationOpen,
 		SecureCookies: false,
 		AdminBootstrapHook: func(ctx context.Context, tx pgx.Tx, userID uuid.UUID, userEmail string) error {
@@ -196,7 +196,7 @@ func TestSignup_AdminBootstrapGranted_FirstResponseHasIsAdmin(t *testing.T) {
 			`delete from workspaces where id in (select last_workspace_id from users where email = $1)`, email)
 		_, _ = pool.Exec(ctx, `delete from users where email = $1`, email)
 	})
-	svc := NewService(pool, identity.NewService(pool), Config{
+	svc := NewService(pool, identity.NewService(pool), identity.NewPlatformInviteService(pool), Config{
 		Registration:  RegistrationOpen,
 		SecureCookies: false,
 		AdminBootstrapHook: func(ctx context.Context, tx pgx.Tx, userID uuid.UUID, userEmail string) error {
@@ -227,7 +227,7 @@ func TestSignup_InviteOnlyAllowsFirstUserWithoutInvite(t *testing.T) {
 			`delete from workspaces where id in (select last_workspace_id from users where email = $1)`, email)
 		_, _ = pool.Exec(ctx, `delete from users where email = $1`, email)
 	})
-	svc := NewService(pool, identity.NewService(pool), Config{
+	svc := NewService(pool, identity.NewService(pool), identity.NewPlatformInviteService(pool), Config{
 		Registration:  RegistrationInviteOnly,
 		SecureCookies: false,
 	})
@@ -253,7 +253,7 @@ func TestSignup_InviteOnlyRequiresInviteAfterFirstUser(t *testing.T) {
 		ctx := context.Background()
 		_, _ = pool.Exec(ctx, `delete from users where email in ($1, $2)`, email, existingEmail)
 	})
-	svc := NewService(pool, identity.NewService(pool), Config{
+	svc := NewService(pool, identity.NewService(pool), identity.NewPlatformInviteService(pool), Config{
 		Registration:  RegistrationInviteOnly,
 		SecureCookies: false,
 	})

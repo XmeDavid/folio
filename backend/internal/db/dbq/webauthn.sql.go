@@ -12,6 +12,21 @@ import (
 	"github.com/google/uuid"
 )
 
+const deletePasskeyForUser = `-- name: DeletePasskeyForUser :exec
+DELETE FROM webauthn_credentials
+WHERE id = $1 AND user_id = $2
+`
+
+type DeletePasskeyForUserParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeletePasskeyForUser(ctx context.Context, arg DeletePasskeyForUserParams) error {
+	_, err := q.db.Exec(ctx, deletePasskeyForUser, arg.ID, arg.UserID)
+	return err
+}
+
 const insertWebAuthnCredential = `-- name: InsertWebAuthnCredential :exec
 INSERT INTO webauthn_credentials (id, user_id, credential_id, public_key, sign_count, transports, label, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -40,6 +55,39 @@ func (q *Queries) InsertWebAuthnCredential(ctx context.Context, arg InsertWebAut
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const listPasskeysForUser = `-- name: ListPasskeysForUser :many
+SELECT id, label, created_at
+FROM webauthn_credentials
+WHERE user_id = $1
+ORDER BY created_at DESC
+`
+
+type ListPasskeysForUserRow struct {
+	ID        uuid.UUID `json:"id"`
+	Label     *string   `json:"label"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (q *Queries) ListPasskeysForUser(ctx context.Context, userID uuid.UUID) ([]ListPasskeysForUserRow, error) {
+	rows, err := q.db.Query(ctx, listPasskeysForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPasskeysForUserRow{}
+	for rows.Next() {
+		var i ListPasskeysForUserRow
+		if err := rows.Scan(&i.ID, &i.Label, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listWebAuthnCredentials = `-- name: ListWebAuthnCredentials :many

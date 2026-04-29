@@ -26,6 +26,22 @@ FROM workspace_invites
 WHERE id = $1 AND workspace_id = $2
 FOR UPDATE;
 
+-- name: GetInviteForResend :one
+SELECT invited_by_user_id, email, role::text AS role, revoked_at, accepted_at
+FROM workspace_invites
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;
+
+-- name: RotateWorkspaceInviteToken :one
+UPDATE workspace_invites
+SET token_hash = $2,
+    expires_at = $3
+WHERE id = $1
+  AND revoked_at IS NULL
+  AND accepted_at IS NULL
+RETURNING id, workspace_id, email, role::text AS role, invited_by_user_id,
+          created_at, expires_at;
+
 -- name: MarkInviteAccepted :exec
 UPDATE workspace_invites SET accepted_at = now() WHERE id = $1;
 

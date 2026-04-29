@@ -57,8 +57,9 @@ func NewRouter(d Deps) http.Handler {
 
 	identitySvc := identity.NewService(d.DB)
 	inviteSvc := identity.NewInviteService(d.DB)
+	platformInviteSvc := identity.NewPlatformInviteService(d.DB)
 	adminSvc := admin.NewService(d.DB).WithJobs(d.Jobs).WithMailer(d.Mailer)
-	authSvc := auth.NewService(d.DB, identitySvc, auth.Config{
+	authSvc := auth.NewService(d.DB, identitySvc, platformInviteSvc, auth.Config{
 		Registration:       auth.RegistrationMode(os.Getenv("REGISTRATION_MODE")),
 		AppURL:             d.Cfg.AppURL,
 		SecretKey:          d.Cfg.EncryptionKey,
@@ -74,6 +75,7 @@ func NewRouter(d Deps) http.Handler {
 	authH := auth.NewHandler(authSvc)
 	inviteH := auth.NewInviteHandler(authSvc, inviteSvc, d.Mailer)
 	adminH := admin.NewHandler(adminSvc)
+	adminInviteH := auth.NewAdminInviteHandler(authSvc, platformInviteSvc, d.Mailer)
 
 	accountsSvc := accounts.NewService(d.DB)
 	accountsH := accounts.NewHandler(accountsSvc)
@@ -108,6 +110,9 @@ func NewRouter(d Deps) http.Handler {
 		// Public invite surface: GET /auth/invites/{token} (no auth),
 		// POST /auth/invites/{token}/accept (RequireSession).
 		inviteH.MountPublicInvites(r)
+		// Public platform invite preview: GET /auth/platform-invites/{token}.
+		// Sanitised metadata only; no auth required.
+		adminInviteH.MountPublic(r)
 
 		// Authenticated, non-workspace-scoped: /me, POST /workspaces
 		r.Group(func(r chi.Router) {
@@ -119,6 +124,7 @@ func NewRouter(d Deps) http.Handler {
 			r.Use(authSvc.RequireSession)
 			r.Use(authSvc.RequireAdmin)
 			adminH.Mount(r, auth.RequireFreshReauth(authSvc.Config().ReauthWindow))
+			adminInviteH.MountAdmin(r, auth.RequireFreshReauth(authSvc.Config().ReauthWindow))
 		})
 
 		// Restore is workspace-scoped but must see soft-deleted workspaces, so it

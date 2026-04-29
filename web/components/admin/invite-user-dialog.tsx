@@ -1,76 +1,42 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { FormError } from "@/components/ui/form-error";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import {
-  ApiError,
-  createInvite,
-  type MemberRole,
-  type WorkspaceInviteCreated,
-} from "@/lib/api/client";
+  useCreateAdminInvite,
+  type PlatformInviteCreated,
+} from "@/lib/admin/client";
+import { ApiError } from "@/lib/api/client";
 import { friendlyError } from "@/lib/api/errors";
 
 type Stage = "form" | "success";
 
-export function NewInviteDialog({
+export function InviteUserDialog({
   open,
   onClose,
-  workspaceId,
-  canInviteOwners,
 }: {
   open: boolean;
   onClose: () => void;
-  workspaceId: string;
-  canInviteOwners: boolean;
 }) {
   if (!open) return null;
   // Mounted only while open; unmount-on-close gives us a fresh state machine
   // for every re-open without needing setState-in-effect resets.
-  return (
-    <NewInviteDialogContent
-      onClose={onClose}
-      workspaceId={workspaceId}
-      canInviteOwners={canInviteOwners}
-    />
-  );
+  return <InviteUserDialogContent onClose={onClose} />;
 }
 
-function NewInviteDialogContent({
-  onClose,
-  workspaceId,
-  canInviteOwners,
-}: {
-  onClose: () => void;
-  workspaceId: string;
-  canInviteOwners: boolean;
-}) {
-  const qc = useQueryClient();
+function InviteUserDialogContent({ onClose }: { onClose: () => void }) {
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<MemberRole>("member");
   const [stage, setStage] = useState<Stage>("form");
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<WorkspaceInviteCreated | null>(null);
+  const [created, setCreated] = useState<PlatformInviteCreated | null>(null);
   const [copied, setCopied] = useState(false);
   const emailInputRef = useRef<HTMLInputElement>(null);
   const linkInputRef = useRef<HTMLInputElement>(null);
 
-  const create = useMutation({
-    mutationFn: () => createInvite(workspaceId, { email, role }),
-    onSuccess: async (data) => {
-      await qc.invalidateQueries({ queryKey: ["members", workspaceId] });
-      setError(null);
-      setCreated(data);
-      setStage("success");
-    },
-    onError: (err) => {
-      setError(formatError(err));
-    },
-  });
+  const create = useCreateAdminInvite();
 
   // Autofocus the email input once mounted.
   useEffect(() => {
@@ -87,7 +53,18 @@ function NewInviteDialogContent({
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    create.mutate();
+    create.mutate(
+      { email: email.trim() === "" ? undefined : email.trim() },
+      {
+        onSuccess: (data) => {
+          setCreated(data);
+          setStage("success");
+        },
+        onError: (err) => {
+          setError(formatError(err));
+        },
+      }
+    );
   };
 
   const handleCopy = async () => {
@@ -110,7 +87,7 @@ function NewInviteDialogContent({
     <div
       role="dialog"
       aria-modal="true"
-      aria-labelledby="new-invite-dialog-title"
+      aria-labelledby="invite-user-dialog-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={closeAndReset}
     >
@@ -119,46 +96,28 @@ function NewInviteDialogContent({
         onClick={(e) => e.stopPropagation()}
       >
         <h3
-          id="new-invite-dialog-title"
+          id="invite-user-dialog-title"
           className="text-[15px] font-semibold text-fg"
         >
-          {stage === "form" ? "New invite" : "Invite created"}
+          {stage === "form" ? "Invite user" : "Invite created"}
         </h3>
 
         {stage === "form" ? (
           <form onSubmit={submit} className="mt-4 flex flex-col gap-4">
-            <Field label="Email" htmlFor="new-invite-email">
+            <Field
+              label="Email (optional)"
+              htmlFor="invite-user-email"
+              hint="Leave blank to create an open invite that anyone with the link can accept."
+            >
               <Input
-                id="new-invite-email"
+                id="invite-user-email"
                 ref={emailInputRef}
                 type="email"
-                required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="name@example.com"
                 autoComplete="off"
               />
-            </Field>
-
-            <Field
-              label="Role"
-              htmlFor="new-invite-role"
-              hint={
-                !canInviteOwners
-                  ? "Only owners can invite other owners."
-                  : undefined
-              }
-            >
-              <Select
-                id="new-invite-role"
-                value={role}
-                onChange={(e) => setRole(e.target.value as MemberRole)}
-              >
-                <option value="member">member</option>
-                {canInviteOwners ? (
-                  <option value="owner">owner</option>
-                ) : null}
-              </Select>
             </Field>
 
             {error ? <FormError>{error}</FormError> : null}
@@ -173,7 +132,7 @@ function NewInviteDialogContent({
                 Cancel
               </Button>
               <Button type="submit" disabled={create.isPending}>
-                {create.isPending ? "Sending…" : "Send invite"}
+                {create.isPending ? "Creating…" : "Create invite"}
               </Button>
             </div>
           </form>
@@ -181,12 +140,12 @@ function NewInviteDialogContent({
           <div className="mt-4 flex flex-col gap-4">
             <Field
               label="Accept link"
-              htmlFor="new-invite-accept-url"
-              hint="Send this link to the invitee. We've also emailed it to them, but the email may not arrive if the mailer isn't configured."
+              htmlFor="invite-user-accept-url"
+              hint="This link is shown only once. Send it to the user by your preferred channel — Folio's mailer may not be configured."
             >
               <div className="flex gap-2">
                 <Input
-                  id="new-invite-accept-url"
+                  id="invite-user-accept-url"
                   ref={linkInputRef}
                   readOnly
                   value={created?.acceptUrl ?? ""}

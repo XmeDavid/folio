@@ -25,18 +25,18 @@ const (
 
 // Config is the Service's knobs.
 type Config struct {
-	SessionIdle        time.Duration // default 14*24h
-	SessionAbsolute    time.Duration // default 90*24h
-	Registration       RegistrationMode
-	BootstrapEmail     string // ADMIN_BOOTSTRAP_EMAIL; plan 5 consumes this
-	AppURL             string
-	SecretKey          []byte
-	MFAChallengeTTL    time.Duration
-	ReauthWindow       time.Duration
-	WebAuthnRPID       string
-	WebAuthnRPName     string
-	WebAuthnOrigins    []string
-	Jobs               *jobs.Client
+	SessionIdle     time.Duration // default 14*24h
+	SessionAbsolute time.Duration // default 90*24h
+	Registration    RegistrationMode
+	BootstrapEmail  string // ADMIN_BOOTSTRAP_EMAIL; plan 5 consumes this
+	AppURL          string
+	SecretKey       []byte
+	MFAChallengeTTL time.Duration
+	ReauthWindow    time.Duration
+	WebAuthnRPID    string
+	WebAuthnRPName  string
+	WebAuthnOrigins []string
+	Jobs            *jobs.Client
 	// AdminBootstrapHook, when set, runs inside the Signup transaction so a
 	// grant failure rolls the whole signup back. Use a pgx.Tx-scoped writer
 	// (see admin.EnsureBootstrapAdminTx).
@@ -50,15 +50,19 @@ type Config struct {
 // Service wraps the db pool and the identity.Service. Handlers call Signup,
 // Login, Logout; middleware reads sessions directly from the pool.
 type Service struct {
-	pool     *pgxpool.Pool
-	identity *identity.Service
-	cfg      Config
-	now      func() time.Time
-	webauthn *webauthn.WebAuthn
+	pool            *pgxpool.Pool
+	identity        *identity.Service
+	platformInvites *identity.PlatformInviteService
+	cfg             Config
+	now             func() time.Time
+	webauthn        *webauthn.WebAuthn
 }
 
 // NewService constructs a Service with sensible defaults filled in.
-func NewService(pool *pgxpool.Pool, identitySvc *identity.Service, cfg Config) *Service {
+func NewService(pool *pgxpool.Pool, identitySvc *identity.Service, platformInviteSvc *identity.PlatformInviteService, cfg Config) *Service {
+	if platformInviteSvc == nil {
+		panic("auth.NewService: platformInvites is required")
+	}
 	if cfg.SessionIdle == 0 {
 		cfg.SessionIdle = 14 * 24 * time.Hour
 	}
@@ -101,7 +105,7 @@ func NewService(pool *pgxpool.Pool, identitySvc *identity.Service, cfg Config) *
 	}
 	// SecureCookies is a required knob: zero-value (false) is only acceptable
 	// when the caller explicitly passes it (e.g. APP_ENV=development).
-	return &Service{pool: pool, identity: identitySvc, cfg: cfg, now: time.Now, webauthn: wa}
+	return &Service{pool: pool, identity: identitySvc, platformInvites: platformInviteSvc, cfg: cfg, now: time.Now, webauthn: wa}
 }
 
 func (s *Service) Config() Config {

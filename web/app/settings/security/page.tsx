@@ -2,27 +2,83 @@
 
 import { useState } from "react";
 import { startRegistration } from "@simplewebauthn/browser";
-import { KeyRound, RefreshCcw, ShieldCheck, Smartphone } from "lucide-react";
+import { KeyRound, Lock, RefreshCcw, ShieldCheck, Smartphone } from "lucide-react";
 import Image from "next/image";
 import {
   beginPasskeyEnrollment,
+  changePassword,
   completePasskeyEnrollment,
   confirmTOTP,
+  deletePasskey,
+  disableTOTP,
   enrollTOTP,
   fetchMFAStatus,
+  listPasskeys,
   regenerateRecoveryCodes,
   type TOTPSetup,
+  ApiError,
 } from "@/lib/api/client";
+import { formatDate } from "@/lib/format";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 export default function SecuritySettingsPage() {
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["mfa-status"], queryFn: fetchMFAStatus });
+  const { data: passkeys } = useQuery({ queryKey: ["passkeys"], queryFn: listPasskeys });
   const [setup, setSetup] = useState<TOTPSetup | null>(null);
   const [code, setCode] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Two-press inline confirmation, indexed by passkey id (matches the TOTP
+  // disable pattern in this same screen).
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Password change form state. Kept local so the inputs can be cleared on
+  // success without round-tripping through React Query.
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNext, setPwNext] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwError, setPwError] = useState<string | null>(null);
+  const [pwSuccess, setPwSuccess] = useState<string | null>(null);
+
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPwError(null);
+    setPwSuccess(null);
+    if (!pwCurrent || !pwNext || !pwConfirm) {
+      setPwError("All three fields are required.");
+      return;
+    }
+    if (pwNext !== pwConfirm) {
+      setPwError("New password and confirmation do not match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await changePassword({ current: pwCurrent, next: pwNext });
+      setPwCurrent("");
+      setPwNext("");
+      setPwConfirm("");
+      setPwSuccess("Password changed. Other sessions have been signed out for safety.");
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 401 || err.status === 403) {
+          setPwError("This action requires recent sign-in. Sign out and back in to continue.");
+        } else if (err.status === 400 || err.status === 422) {
+          // Surface the typed validation message (e.g. policy violations,
+          // "current password is incorrect") verbatim.
+          setPwError(err.body?.error ?? "Could not change password.");
+        } else {
+          setPwError(err.body?.error ?? "Could not change password.");
+        }
+      } else {
+        setPwError(err instanceof Error ? err.message : "Could not change password.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function startTOTP() {
     setBusy(true);
@@ -58,10 +114,64 @@ export default function SecuritySettingsPage() {
       const { options, session } = await beginPasskeyEnrollment();
       const credential = await startRegistration({ optionsJSON: options as never });
       await completePasskeyEnrollment(session, credential);
-      await qc.invalidateQueries({ queryKey: ["mfa-status"] });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["mfa-status"] }),
+        qc.invalidateQueries({ queryKey: ["passkeys"] }),
+      ]);
       setMessage("Passkey added.");
     } catch {
       setMessage("Passkey enrollment was cancelled or failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeletePasskey(id: string) {
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
+    setConfirmDeleteId(null);
+    setBusy(true);
+    setMessage(null);
+    try {
+      await deletePasskey(id);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["mfa-status"] }),
+        qc.invalidateQueries({ queryKey: ["passkeys"] }),
+      ]);
+      setMessage("Passkey removed.");
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        setMessage("This action requires recent sign-in. Sign out and back in to continue.");
+      } else {
+        setMessage(err instanceof Error ? err.message : "Failed to remove passkey.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const [confirmDisable, setConfirmDisable] = useState(false);
+
+  async function handleDisableTOTP() {
+    if (!confirmDisable) {
+      setConfirmDisable(true);
+      return;
+    }
+    setConfirmDisable(false);
+    setBusy(true);
+    setMessage(null);
+    try {
+      await disableTOTP();
+      await qc.invalidateQueries({ queryKey: ["mfa-status"] });
+      setMessage("Authenticator removed.");
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        setMessage("This action requires recent sign-in. Sign out and back in to continue.");
+      } else {
+        setMessage(err instanceof Error ? err.message : "Failed to disable authenticator.");
+      }
     } finally {
       setBusy(false);
     }
@@ -87,6 +197,58 @@ export default function SecuritySettingsPage() {
       </header>
 
       <section className="rounded-lg border bg-card p-4">
+        <div className="flex items-start gap-3">
+          <Lock className="mt-0.5 size-4 text-muted-foreground" aria-hidden="true" />
+          <div className="flex-1">
+            <h2 className="font-medium">Password</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Changing your password signs out every other device.
+            </p>
+          </div>
+        </div>
+        <form onSubmit={handleChangePassword} className="mt-4 flex flex-col gap-3 border-t pt-4">
+          <label className="flex flex-col gap-1 text-sm">
+            <span>Current password</span>
+            <input
+              type="password"
+              autoComplete="current-password"
+              className="rounded border px-3 py-2"
+              value={pwCurrent}
+              onChange={(e) => setPwCurrent(e.target.value)}
+              required
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span>New password</span>
+            <input
+              type="password"
+              autoComplete="new-password"
+              className="rounded border px-3 py-2"
+              value={pwNext}
+              onChange={(e) => setPwNext(e.target.value)}
+              required
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span>Confirm new password</span>
+            <input
+              type="password"
+              autoComplete="new-password"
+              className="rounded border px-3 py-2"
+              value={pwConfirm}
+              onChange={(e) => setPwConfirm(e.target.value)}
+              required
+            />
+          </label>
+          {pwError ? <p className="text-sm text-danger">{pwError}</p> : null}
+          {pwSuccess ? <p className="text-sm text-muted-foreground">{pwSuccess}</p> : null}
+          <button className="w-fit rounded bg-foreground px-3 py-2 text-sm text-background" disabled={busy}>
+            Change password
+          </button>
+        </form>
+      </section>
+
+      <section className="rounded-lg border bg-card p-4">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="font-medium">Authenticator app</h2>
@@ -94,10 +256,20 @@ export default function SecuritySettingsPage() {
               {data?.totpEnrolled ? "Enabled" : "Not enabled"}
             </p>
           </div>
-          <button className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm" onClick={startTOTP} disabled={busy}>
-            <Smartphone className="size-4" aria-hidden="true" />
-            Set up
-          </button>
+          {data?.totpEnrolled ? (
+            <button
+              className={`inline-flex items-center gap-2 rounded border px-3 py-2 text-sm ${confirmDisable ? "border-danger text-danger" : ""}`}
+              onClick={handleDisableTOTP}
+              disabled={busy}
+            >
+              {confirmDisable ? "Confirm disable?" : "Disable"}
+            </button>
+          ) : (
+            <button className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm" onClick={startTOTP} disabled={busy}>
+              <Smartphone className="size-4" aria-hidden="true" />
+              Set up
+            </button>
+          )}
         </div>
         {setup ? (
           <form onSubmit={finishTOTP} className="mt-4 flex flex-col gap-3 border-t pt-4">
@@ -120,13 +292,43 @@ export default function SecuritySettingsPage() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="font-medium">Passkeys</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{data?.passkeyCount ?? 0} registered</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {(passkeys?.length ?? data?.passkeyCount ?? 0)} registered
+            </p>
           </div>
           <button className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm" onClick={addPasskey} disabled={busy}>
             <KeyRound className="size-4" aria-hidden="true" />
             Add
           </button>
         </div>
+        {passkeys && passkeys.length > 0 ? (
+          <ul className="mt-4 flex flex-col divide-y border-t">
+            {passkeys.map((pk) => {
+              const isConfirming = confirmDeleteId === pk.id;
+              return (
+                <li key={pk.id} className="flex items-center justify-between gap-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{pk.label || "Unnamed passkey"}</p>
+                    <p className="text-xs text-muted-foreground">Added {formatDate(pk.createdAt)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className={`inline-flex items-center gap-2 rounded border px-3 py-2 text-sm ${isConfirming ? "border-danger text-danger" : ""}`}
+                    onClick={() => handleDeletePasskey(pk.id)}
+                    onBlur={() => isConfirming && setConfirmDeleteId(null)}
+                    disabled={busy}
+                  >
+                    {isConfirming ? "Confirm remove?" : "Remove"}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : passkeys ? (
+          <p className="mt-4 border-t pt-4 text-sm text-muted-foreground">
+            No passkeys yet. Add one to sign in without a password.
+          </p>
+        ) : null}
       </section>
 
       <section className="rounded-lg border bg-card p-4">
