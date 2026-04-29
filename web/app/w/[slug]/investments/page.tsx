@@ -186,9 +186,9 @@ function SummaryGrid({
 }) {
   const stats = [
     {
-      label: "Market value",
-      value: formatAmount(summary.totalMarketValue, reportCcy),
-      sub: `${summary.openPositionsCount} open / ${summary.staleQuotes} stale / ${summary.missingQuotes} missing`,
+      label: "Cost basis",
+      value: formatAmount(summary.totalCostBasis, reportCcy),
+      sub: `${summary.openPositionsCount} open positions`,
       tone: "neutral" as const,
     },
     {
