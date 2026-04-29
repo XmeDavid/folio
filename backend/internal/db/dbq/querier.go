@@ -58,6 +58,7 @@ type Querier interface {
 	DeleteLotsForPosition(ctx context.Context, arg DeleteLotsForPositionParams) error
 	DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error
 	DeleteOtherSessionsByUser(ctx context.Context, arg DeleteOtherSessionsByUserParams) error
+	DeletePasskeyForUser(ctx context.Context, arg DeletePasskeyForUserParams) error
 	DeleteRecoveryCodesByUser(ctx context.Context, userID uuid.UUID) error
 	DeleteSessionByID(ctx context.Context, id string) error
 	DeleteSessionByIDReturningUserID(ctx context.Context, id string) (uuid.UUID, error)
@@ -177,6 +178,7 @@ type Querier interface {
 	ListMembersWithUser(ctx context.Context, workspaceID uuid.UUID) ([]ListMembersWithUserRow, error)
 	ListOpenPositionInstruments(ctx context.Context, workspaceID uuid.UUID) ([]ListOpenPositionInstrumentsRow, error)
 	ListOpenPositionInstrumentsWithPrice(ctx context.Context, workspaceID uuid.UUID) ([]ListOpenPositionInstrumentsWithPriceRow, error)
+	ListPasskeysForUser(ctx context.Context, userID uuid.UUID) ([]ListPasskeysForUserRow, error)
 	ListPendingInvites(ctx context.Context, workspaceID uuid.UUID) ([]ListPendingInvitesRow, error)
 	ListPlatformInvitesActive(ctx context.Context) ([]PlatformInvite, error)
 	ListPlatformInvitesAll(ctx context.Context, arg ListPlatformInvitesAllParams) ([]PlatformInvite, error)

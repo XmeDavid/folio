@@ -9,3 +9,13 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
 -- name: UpdateWebAuthnSignCount :exec
 UPDATE webauthn_credentials SET sign_count = $2
 WHERE user_id = $1 AND credential_id = $3;
+
+-- name: ListPasskeysForUser :many
+SELECT id, label, created_at
+FROM webauthn_credentials
+WHERE user_id = $1
+ORDER BY created_at DESC;
+
+-- name: DeletePasskeyForUser :exec
+DELETE FROM webauthn_credentials
+WHERE id = $1 AND user_id = $2;
