@@ -338,6 +338,13 @@ paths:
             transactions are considered categorized via their lines and are
             excluded.
           schema: { type: boolean, default: false }
+        - name: excludeInvestments
+          in: query
+          description: |
+            When true, omit transactions booked on `brokerage`-kind accounts.
+            Investment moves are surfaced in the Investments tab; setting
+            this keeps the regular ledger uncluttered.
+          schema: { type: boolean, default: false }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 500, default: 100 }

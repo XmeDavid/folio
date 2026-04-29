@@ -616,6 +616,7 @@ type TransactionsQuery = {
   minAmount?: string;
   maxAmount?: string;
   uncategorized?: boolean;
+  excludeInvestments?: boolean;
   limit?: number;
   offset?: number;
 };

@@ -42,8 +42,16 @@ export default function WorkspaceDashboardPage({
     enabled: !!workspaceId,
   });
   const transactions = useQuery({
-    queryKey: ["transactions", workspaceId, { limit: 12 }],
-    queryFn: () => fetchTransactions(workspaceId!, { limit: 12 }),
+    queryKey: [
+      "transactions",
+      workspaceId,
+      { limit: 12, excludeInvestments: true },
+    ],
+    queryFn: () =>
+      fetchTransactions(workspaceId!, {
+        limit: 12,
+        excludeInvestments: true,
+      }),
     enabled: !!workspaceId,
   });
 

@@ -428,8 +428,12 @@ type ListFilter struct {
 	MinAmount     *decimal.Decimal
 	MaxAmount     *decimal.Decimal
 	Uncategorized bool
-	Limit         int
-	Offset        int
+	// ExcludeInvestmentAccounts hides transactions booked on investment
+	// (brokerage-kind) accounts. Those moves are surfaced in the Investments
+	// tab; opting in keeps the regular ledger uncluttered.
+	ExcludeInvestmentAccounts bool
+	Limit                     int
+	Offset                    int
 }
 
 // List returns transactions for workspaceID matching f. Ordered by booked_at desc.
@@ -491,6 +495,10 @@ func (s *Service) List(ctx context.Context, workspaceID uuid.UUID, f ListFilter)
 		// NULL, per spec §5.3.
 		clauses = append(clauses,
 			"category_id is null and not exists (select 1 from transaction_lines tl where tl.transaction_id = transactions.id)")
+	}
+	if f.ExcludeInvestmentAccounts {
+		clauses = append(clauses,
+			"not exists (select 1 from accounts a where a.id = transactions.account_id and a.kind = 'brokerage')")
 	}
 	limitPH := next(f.Limit)
 	offsetPH := next(f.Offset)

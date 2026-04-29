@@ -102,6 +102,9 @@ export default function TransactionsPage({
       fetchTransactions(workspaceId!, {
         ...filters,
         status: filters.status || undefined,
+        // Investment moves live in the Investments tab; only surface them
+        // here when the user explicitly filters by a specific account.
+        excludeInvestments: !filters.accountId,
         limit: pageSize + 1,
         offset: page * pageSize,
       }),
@@ -574,11 +577,13 @@ function TransactionFiltersPanel({
             }
           >
             <option value="">All accounts</option>
-            {accounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name}
-              </option>
-            ))}
+            {accounts
+              .filter((account) => account.kind !== "brokerage")
+              .map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
           </Select>
         </label>
         <label className="text-fg-muted flex flex-col gap-1.5 text-[12px] font-medium">

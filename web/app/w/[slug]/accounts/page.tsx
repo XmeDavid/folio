@@ -88,11 +88,22 @@ export default function AccountsPage({
         description="Every balance in Folio lives on an account. Start with checking or cash; credit cards and liabilities come next."
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => setImporting((v) => !v)}>
+            <Button
+              onClick={() => {
+                setImporting((v) => !v);
+                setCreating(false);
+              }}
+            >
               <FileUp className="h-4 w-4" />
               {importing ? "Close" : "Import"}
             </Button>
-            <Button onClick={() => setCreating((v) => !v)}>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setCreating((v) => !v);
+                setImporting(false);
+              }}
+            >
               <Plus className="h-4 w-4" />
               {creating ? "Close" : "Add account"}
             </Button>
@@ -678,7 +689,7 @@ function AccountList({
     null
   );
   const [draftGroupName, setDraftGroupName] = React.useState("");
-  const [collapsedBuckets, setCollapsedBuckets] = React.useState<Set<string>>(
+  const [expandedBuckets, setExpandedBuckets] = React.useState<Set<string>>(
     () => new Set()
   );
   const [dragging, setDragging] = React.useState<
@@ -784,7 +795,7 @@ function AccountList({
   };
 
   const toggleBucket = (key: string) => {
-    setCollapsedBuckets((current) => {
+    setExpandedBuckets((current) => {
       const next = new Set(current);
       if (next.has(key)) {
         next.delete(key);
@@ -898,7 +909,7 @@ function AccountList({
           const groupIndex = bucket.group
             ? sortedGroups.findIndex((group) => group.id === bucket.group?.id)
             : -1;
-          const collapsed = collapsedBuckets.has(bucket.key);
+          const collapsed = !expandedBuckets.has(bucket.key);
           return (
             <section
               key={bucket.key}

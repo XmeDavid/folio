@@ -137,6 +137,9 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	if strings.EqualFold(q.Get("uncategorized"), "true") {
 		f.Uncategorized = true
 	}
+	if strings.EqualFold(q.Get("excludeInvestments"), "true") {
+		f.ExcludeInvestmentAccounts = true
+	}
 	if raw := q.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 {

@@ -593,6 +593,12 @@ export interface paths {
                      *     excluded.
                      */
                     uncategorized?: boolean;
+                    /**
+                     * @description When true, omit transactions booked on `brokerage`-kind accounts.
+                     *     Investment moves are surfaced in the Investments tab; setting
+                     *     this keeps the regular ledger uncluttered.
+                     */
+                    excludeInvestments?: boolean;
                     limit?: number;
                     offset?: number;
                 };
