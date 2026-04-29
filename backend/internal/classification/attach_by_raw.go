@@ -82,8 +82,7 @@ func (s *Service) findMerchantByCanonical(ctx context.Context, workspaceID uuid.
 
 func (s *Service) findMerchantByAlias(ctx context.Context, workspaceID uuid.UUID, raw string) (*Merchant, error) {
 	row := s.pool.QueryRow(ctx,
-		`select m.id, m.workspace_id, m.canonical_name, m.logo_url, m.default_category_id,
-		        m.industry, m.website, m.notes, m.archived_at, m.created_at, m.updated_at
+		`select `+merchantColsM+`
 		 from merchants m
 		 join merchant_aliases a on a.merchant_id = m.id and a.workspace_id = m.workspace_id
 		 where a.workspace_id = $1 and a.raw_pattern = $2 and m.archived_at is null`,

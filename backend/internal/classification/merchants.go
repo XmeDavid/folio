@@ -150,6 +150,14 @@ const merchantCols = `
 	industry, website, notes, archived_at, created_at, updated_at
 `
 
+// merchantColsM is the same column list as merchantCols, prefixed with the
+// "m." table alias for use in joins. Keep this in sync with merchantCols
+// and scanMerchant: the column count and order must match exactly.
+const merchantColsM = `
+	m.id, m.workspace_id, m.canonical_name, m.logo_url, m.default_category_id,
+	m.industry, m.website, m.notes, m.archived_at, m.created_at, m.updated_at
+`
+
 func scanMerchant(r interface{ Scan(dest ...any) error }, m *Merchant) error {
 	return r.Scan(
 		&m.ID, &m.WorkspaceID, &m.CanonicalName, &m.LogoURL, &m.DefaultCategoryID,
