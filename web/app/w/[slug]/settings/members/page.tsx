@@ -13,6 +13,7 @@ import {
   type MemberRole,
   type MemberWithUser,
 } from "@/lib/api/client";
+import { friendlyError } from "@/lib/api/errors";
 
 export default function MembersSettingsPage({
   params,
@@ -212,16 +213,7 @@ function MemberRow({
 
 function formatError(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.status === 403 && err.body?.code === "reauth_required") {
-      return "Re-authentication required. Please sign in again.";
-    }
-    if (
-      err.status === 422 &&
-      (err.body?.code === "last_owner" || err.body?.code === "last_workspace")
-    ) {
-      return err.body?.error ?? "Not allowed: this would leave the workspace in an invalid state.";
-    }
-    return err.body?.error ?? err.message;
+    return friendlyError(err.body?.code, err.body?.error ?? err.message);
   }
   return (err as Error)?.message ?? "Request failed";
 }

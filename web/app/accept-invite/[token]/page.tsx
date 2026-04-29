@@ -14,6 +14,7 @@ import {
   type InvitePreview,
   type PlatformInvitePreview,
 } from "@/lib/api/client";
+import { friendlyError } from "@/lib/api/errors";
 import { useIdentity, type Me } from "@/lib/hooks/use-identity";
 
 type Resolved =
@@ -222,10 +223,7 @@ export default function AcceptInvitePage({
 
 function formatError(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.status === 403 && err.body?.code === "reauth_required") {
-      return "Re-authentication required. Please sign in again.";
-    }
-    return err.body?.error ?? err.message;
+    return friendlyError(err.body?.code, err.body?.error ?? err.message);
   }
   return (err as Error)?.message ?? "Request failed";
 }

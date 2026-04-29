@@ -13,6 +13,7 @@ import {
   type MemberRole,
   type WorkspaceInviteCreated,
 } from "@/lib/api/client";
+import { friendlyError } from "@/lib/api/errors";
 
 type Stage = "form" | "success";
 
@@ -217,10 +218,7 @@ function NewInviteDialogContent({
 
 function formatError(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.status === 403 && err.body?.code === "reauth_required") {
-      return "Re-authentication required. Please sign in again.";
-    }
-    return err.body?.error ?? err.message;
+    return friendlyError(err.body?.code, err.body?.error ?? err.message);
   }
   return (err as Error)?.message ?? "Request failed";
 }

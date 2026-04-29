@@ -9,6 +9,8 @@ import {
   useCreateAdminInvite,
   type PlatformInviteCreated,
 } from "@/lib/admin/client";
+import { ApiError } from "@/lib/api/client";
+import { friendlyError } from "@/lib/api/errors";
 
 type Stage = "form" | "success";
 
@@ -174,9 +176,8 @@ function InviteUserDialogContent({ onClose }: { onClose: () => void }) {
 }
 
 function formatError(err: unknown): string {
-  const e = err as { status?: number; code?: string; message?: string };
-  if (e?.status === 403 && e?.code === "reauth_required") {
-    return "This action requires recent sign-in. Sign out and back in to continue.";
+  if (err instanceof ApiError) {
+    return friendlyError(err.body?.code, err.body?.error ?? err.message);
   }
-  return e?.message ?? "Request failed";
+  return (err as Error)?.message ?? "Request failed";
 }
