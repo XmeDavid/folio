@@ -34,7 +34,7 @@ func testMFAService(t *testing.T) (*Service, context.Context) {
 	})
 	return NewService(pool, identity.NewService(pool), Config{
 		Registration:  RegistrationOpen,
-		SecretKey:     []byte("0123456789abcdef0123456789abcdef"),
+		SecretKey:     []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
 		SecureCookies: false,
 	}), ctx
 }
