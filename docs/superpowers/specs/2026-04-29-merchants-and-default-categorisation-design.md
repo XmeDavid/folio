@@ -19,7 +19,7 @@ Make merchants a first-class navigation surface and the default driver of transa
 - **One transaction → at most one merchant.** Auto-created at import from `counterparty_raw`. Optional when there is no counterparty (transfers, ATM, fees).
 - **Manual user intent always wins** over automatic behavior. Category writes from import / merchant-default / merge cascade only happen when the field is empty *or* equals the value being replaced — never silently overwrite a user-chosen category.
 - **Stateless cascade rule.** "Apply to all" means "update transactions whose category equals the merchant's previous default." No `category_source` audit column is needed.
-- **Imports are deterministic.** Exact-string match on `counterparty_raw` looking up `merchants.canonical_name` ∪ `merchant_aliases.raw_alias`. No fuzzy normalisation in v1.
+- **Imports are deterministic.** Exact-string match on `counterparty_raw` looking up `merchants.canonical_name` ∪ `merchant_aliases.raw_pattern`. No fuzzy normalisation in v1.
 - **Aliases capture user cleanup.** Renaming or merging a merchant stores the prior name(s) so future imports of the same raw bank string land on the right merchant without manual intervention.
 
 ## 3. Out of scope (v1)
@@ -58,14 +58,17 @@ Constraint to add (if not already present): `UNIQUE (workspace_id, canonical_nam
 id           uuid pk
 workspace_id uuid not null
 merchant_id  uuid not null  references merchants(id) on delete cascade
-raw_alias    text not null
+raw_pattern  text not null
+is_regex     boolean not null default false
 created_at   timestamptz default now()
 
-UNIQUE (workspace_id, raw_alias)
+UNIQUE (workspace_id, raw_pattern)
 INDEX  (merchant_id)
 ```
 
-Each `raw_alias` value can map to at most one merchant in a workspace.
+Each `raw_pattern` value can map to at most one merchant in a workspace.
+
+> **Naming note:** the column is `raw_pattern` (not `raw_alias`) because the table was created earlier as part of the classification migration (`backend/db/migrations/20260424000003_classification.sql`) with a forward-compatibility `is_regex` flag alongside it. In v1 `is_regex` is always `false` and is **not** exposed on the API (see §3 and §12) — the entire matching path is exact-string equality on `raw_pattern`. The column and flag are reserved for a possible v2 regex-aliases feature; we adopted the existing schema rather than rename it.
 
 ### 4.3 Transactions (no schema change)
 
@@ -88,7 +91,7 @@ attach_by_raw(workspace_id, raw):
         select m.* from merchants m
         join merchant_aliases a on a.merchant_id = m.id
         where a.workspace_id = $w
-          and a.raw_alias = $raw
+          and a.raw_pattern = $raw
           and m.archived_at is null
         limit 1
 
@@ -123,7 +126,7 @@ if merchant != null:
 In one transaction:
 
 1. Read current `canonical_name`. No-op if unchanged.
-2. Insert old `canonical_name` into `merchant_aliases` with `ON CONFLICT (workspace_id, raw_alias) DO NOTHING`.
+2. Insert old `canonical_name` into `merchant_aliases` with `ON CONFLICT (workspace_id, raw_pattern) DO NOTHING`.
 3. Update `merchants.canonical_name`.
 4. On unique-violation against another active merchant: return **409** with `{ code: "merchant_name_conflict", existingMerchantId }`. Frontend can offer "Merge into that merchant instead?"
 
@@ -162,18 +165,18 @@ In one DB transaction:
 1. Read source `canonical_name` and `default_category_id` as `source_old_default`.
 2. Reparent aliases:
    ```sql
-   INSERT INTO merchant_aliases (workspace_id, merchant_id, raw_alias)
-   SELECT workspace_id, $target, raw_alias
+   INSERT INTO merchant_aliases (workspace_id, merchant_id, raw_pattern)
+   SELECT workspace_id, $target, raw_pattern
    FROM merchant_aliases
    WHERE merchant_id = $source
-   ON CONFLICT (workspace_id, raw_alias) DO NOTHING;
+   ON CONFLICT (workspace_id, raw_pattern) DO NOTHING;
    DELETE FROM merchant_aliases WHERE merchant_id = $source;
    ```
 3. Capture source canonical name as alias of target:
    ```sql
-   INSERT INTO merchant_aliases (workspace_id, merchant_id, raw_alias)
+   INSERT INTO merchant_aliases (workspace_id, merchant_id, raw_pattern)
    VALUES ($w, $target, $source_canonical_name)
-   ON CONFLICT (workspace_id, raw_alias) DO NOTHING;
+   ON CONFLICT (workspace_id, raw_pattern) DO NOTHING;
    ```
 4. Reassign transactions, capturing IDs into application memory (the Go service holds `movedIDs []uuid.UUID` from `RETURNING id`):
    ```sql
@@ -224,7 +227,7 @@ PATCH  /api/v1/merchants/{id}                           update (canonicalName/de
 DELETE /api/v1/merchants/{id}                           archive
 
 GET    /api/v1/merchants/{id}/aliases                   list aliases
-POST   /api/v1/merchants/{id}/aliases                   { rawAlias }
+POST   /api/v1/merchants/{id}/aliases                   { rawPattern }
 DELETE /api/v1/merchants/{id}/aliases/{aliasId}         remove
 
 POST   /api/v1/merchants/{id}/merge/preview             { targetId } → counts

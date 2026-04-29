@@ -16,14 +16,15 @@ import (
 )
 
 // MerchantAlias is the wire representation of a merchant_aliases row.
-// is_regex is always false in v1 — the column is preserved in the schema
-// for future regex-pattern support but not yet exposed to the API.
+// IsRegex is always false in v1 — the column is preserved in the schema
+// for future regex-pattern support but is not exposed on the API
+// (json:"-"). The field stays on the struct so the DB scan still works.
 type MerchantAlias struct {
 	ID          uuid.UUID `json:"id"`
 	WorkspaceID uuid.UUID `json:"workspaceId"`
 	MerchantID  uuid.UUID `json:"merchantId"`
 	RawPattern  string    `json:"rawPattern"`
-	IsRegex     bool      `json:"isRegex"`
+	IsRegex     bool      `json:"-"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
 

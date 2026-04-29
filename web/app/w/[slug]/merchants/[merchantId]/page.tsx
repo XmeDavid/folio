@@ -588,11 +588,6 @@ function MerchantAliasesPanel({
             >
               <span className="truncate font-mono text-[12px] text-fg">
                 {alias.rawPattern}
-                {alias.isRegex ? (
-                  <Badge variant="info" className="ml-2">
-                    regex
-                  </Badge>
-                ) : null}
               </span>
               <Button
                 variant="ghost"

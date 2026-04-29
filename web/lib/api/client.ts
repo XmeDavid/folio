@@ -932,7 +932,6 @@ export type MerchantAlias = {
   workspaceId: string;
   merchantId: string;
   rawPattern: string;
-  isRegex: boolean;
   createdAt: string;
 };
 
