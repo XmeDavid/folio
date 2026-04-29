@@ -23,22 +23,22 @@ const PlatformInviteLifetime = 14 * 24 * time.Hour
 // Email is nullable (open invite). The plaintext token is never stored or
 // returned by reads — only by Create.
 type PlatformInvite struct {
-	ID         uuid.UUID
-	Email      *string
-	CreatedBy  uuid.UUID
-	CreatedAt  time.Time
-	ExpiresAt  time.Time
-	AcceptedAt *time.Time
-	AcceptedBy *uuid.UUID
-	RevokedAt  *time.Time
-	RevokedBy  *uuid.UUID
+	ID         uuid.UUID  `json:"id"`
+	Email      *string    `json:"email"`
+	CreatedBy  uuid.UUID  `json:"createdBy"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	ExpiresAt  time.Time  `json:"expiresAt"`
+	AcceptedAt *time.Time `json:"acceptedAt,omitempty"`
+	AcceptedBy *uuid.UUID `json:"acceptedBy,omitempty"`
+	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
+	RevokedBy  *uuid.UUID `json:"revokedBy,omitempty"`
 }
 
 // PlatformInvitePreview is the no-auth preview payload. Intentionally lean —
 // admin invites are deliberately low-context and do not surface the inviter.
 type PlatformInvitePreview struct {
-	Email     *string
-	ExpiresAt time.Time
+	Email     *string   `json:"email"`
+	ExpiresAt time.Time `json:"expiresAt"`
 }
 
 // PlatformInviteService owns writes to platform_invites.
