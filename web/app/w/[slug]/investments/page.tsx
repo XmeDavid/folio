@@ -36,6 +36,8 @@ import { formatAmount, formatDate } from "@/lib/format";
 
 const HISTORY_RANGES = ["1W", "1M", "3M", "6M", "YTD", "1Y", "ALL"] as const;
 type HistoryRange = (typeof HISTORY_RANGES)[number];
+const HISTORY_STALE_MS = 5 * 60 * 1000;
+const HISTORY_GC_MS = 15 * 60 * 1000;
 
 export default function InvestmentsDashboardPage({
   params,
@@ -70,7 +72,71 @@ export default function InvestmentsDashboardPage({
         range: historyRange,
       }),
     enabled: !!workspaceId,
+    staleTime: HISTORY_STALE_MS,
+    gcTime: HISTORY_GC_MS,
   });
+
+  React.useEffect(() => {
+    if (!workspaceId || !historyQuery.isSuccess) return;
+    let cancelled = false;
+    const ranges = HISTORY_RANGES.filter((range) => range !== historyRange);
+    const preload = () => {
+      if (cancelled) return;
+      ranges.forEach((range, index) => {
+        window.setTimeout(() => {
+          if (cancelled) return;
+          void queryClient.prefetchQuery({
+            queryKey: [
+              "investments",
+              "dashboard-history",
+              workspaceId,
+              reportCcy,
+              range,
+            ],
+            queryFn: () =>
+              fetchDashboardHistory(workspaceId, {
+                currency: reportCcy,
+                range,
+              }),
+            staleTime: HISTORY_STALE_MS,
+            gcTime: HISTORY_GC_MS,
+          });
+        }, index * 250);
+      });
+    };
+
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (
+        cb: IdleRequestCallback,
+        opts?: IdleRequestOptions
+      ) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    const scheduledWithIdle =
+      typeof idleWindow.requestIdleCallback === "function";
+    const idleHandle = scheduledWithIdle
+      ? idleWindow.requestIdleCallback!(preload, { timeout: 2500 })
+      : window.setTimeout(preload, 1500);
+
+    return () => {
+      cancelled = true;
+      if (
+        scheduledWithIdle &&
+        typeof idleWindow.cancelIdleCallback === "function"
+      ) {
+        idleWindow.cancelIdleCallback(idleHandle);
+      } else {
+        window.clearTimeout(idleHandle);
+      }
+    };
+  }, [
+    historyQuery.dataUpdatedAt,
+    historyQuery.isSuccess,
+    historyRange,
+    queryClient,
+    reportCcy,
+    workspaceId,
+  ]);
 
   const tradesQuery = useQuery({
     queryKey: ["investments", "trades", workspaceId],

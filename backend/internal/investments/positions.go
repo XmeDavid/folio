@@ -185,7 +185,11 @@ func (s *Service) RefreshPosition(ctx context.Context, workspaceID, accountID, i
 		}); err != nil {
 			return fmt.Errorf("delete investment_position: %w", err)
 		}
-		return tx.Commit(ctx)
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		s.invalidateDashboardHistory(workspaceID)
+		return nil
 	}
 
 	if err := qtx.UpsertInvestmentPosition(ctx, dbq.UpsertInvestmentPositionParams{
@@ -258,7 +262,11 @@ func (s *Service) RefreshPosition(ctx context.Context, workspaceID, accountID, i
 		}
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	s.invalidateDashboardHistory(workspaceID)
+	return nil
 }
 
 func nilIfZero(s, fallback string) string {
@@ -284,6 +292,7 @@ func (s *Service) RefreshAllPositions(ctx context.Context, workspaceID uuid.UUID
 	if err := s.refreshLatestPrices(ctx, workspaceID); err != nil {
 		return 0, err
 	}
+	s.invalidateDashboardHistory(workspaceID)
 	return len(pairs), nil
 }
 

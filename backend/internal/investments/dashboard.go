@@ -27,6 +27,13 @@ type DashboardHistoryFilter struct {
 	Range          string
 }
 
+type dashboardHistoryCacheEntry struct {
+	ExpiresAt time.Time
+	Points    []PortfolioHistoryPoint
+}
+
+const dashboardHistoryCacheTTL = 10 * time.Minute
+
 // BuildDashboardSummary computes the headline numbers for the investment
 // dashboard, converting all per-position figures into ReportCurrency at the
 // most recent FX rate. Historical FX-by-trade-date is used for cost-basis to
@@ -258,6 +265,11 @@ func (s *Service) BuildDashboardHistory(ctx context.Context, workspaceID uuid.UU
 	}
 
 	from := historyRangeStart(s.now(), f.Range)
+	cacheKey := dashboardHistoryCacheKey(workspaceID, f.AccountID, report)
+	if points, ok := s.cachedDashboardHistory(cacheKey, from); ok {
+		return points, nil
+	}
+
 	positions, err := s.ListPositions(ctx, workspaceID, PositionFilter{AccountID: f.AccountID, OpenOnly: false})
 	if err != nil {
 		return nil, err
@@ -297,7 +309,7 @@ func (s *Service) BuildDashboardHistory(ctx context.Context, workspaceID uuid.UU
 		}
 		for _, point := range history {
 			d := dayUTC(point.Date)
-			if d.Before(from) || point.Value == nil {
+			if point.Value == nil {
 				continue
 			}
 			value, err := decimal.NewFromString(*point.Value)
@@ -322,7 +334,57 @@ func (s *Service) BuildDashboardHistory(ctx context.Context, workspaceID uuid.UU
 			ReportCurrency: report,
 		})
 	}
-	return out, nil
+	s.storeDashboardHistory(cacheKey, out)
+	return filterDashboardHistory(out, from), nil
+}
+
+func dashboardHistoryCacheKey(workspaceID uuid.UUID, accountID *uuid.UUID, report string) string {
+	account := "all"
+	if accountID != nil {
+		account = accountID.String()
+	}
+	return workspaceID.String() + ":" + account + ":" + report
+}
+
+func (s *Service) cachedDashboardHistory(key string, from time.Time) ([]PortfolioHistoryPoint, bool) {
+	s.historyCacheMu.Lock()
+	defer s.historyCacheMu.Unlock()
+	entry, ok := s.historyCache[key]
+	if !ok || !s.now().Before(entry.ExpiresAt) {
+		return nil, false
+	}
+	return filterDashboardHistory(entry.Points, from), true
+}
+
+func (s *Service) storeDashboardHistory(key string, points []PortfolioHistoryPoint) {
+	s.historyCacheMu.Lock()
+	defer s.historyCacheMu.Unlock()
+	s.historyCache[key] = dashboardHistoryCacheEntry{
+		ExpiresAt: s.now().Add(dashboardHistoryCacheTTL),
+		Points:    append([]PortfolioHistoryPoint(nil), points...),
+	}
+}
+
+func (s *Service) invalidateDashboardHistory(workspaceID uuid.UUID) {
+	prefix := workspaceID.String() + ":"
+	s.historyCacheMu.Lock()
+	defer s.historyCacheMu.Unlock()
+	for key := range s.historyCache {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.historyCache, key)
+		}
+	}
+}
+
+func filterDashboardHistory(points []PortfolioHistoryPoint, from time.Time) []PortfolioHistoryPoint {
+	out := make([]PortfolioHistoryPoint, 0, len(points))
+	for _, point := range points {
+		if !from.IsZero() && dayUTC(point.Date).Before(from) {
+			continue
+		}
+		out = append(out, point)
+	}
+	return out
 }
 
 func historyRangeStart(now time.Time, raw string) time.Time {

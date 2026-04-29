@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,15 +24,22 @@ import (
 
 // Service is the investments service.
 type Service struct {
-	pool *pgxpool.Pool
-	md   *marketdata.Service
-	now  func() time.Time
+	pool           *pgxpool.Pool
+	md             *marketdata.Service
+	now            func() time.Time
+	historyCacheMu sync.Mutex
+	historyCache   map[string]dashboardHistoryCacheEntry
 }
 
 // NewService returns a Service. md may be nil; in that case price/FX
 // reads return cached rows only.
 func NewService(pool *pgxpool.Pool, md *marketdata.Service) *Service {
-	return &Service{pool: pool, md: md, now: time.Now}
+	return &Service{
+		pool:         pool,
+		md:           md,
+		now:          time.Now,
+		historyCache: map[string]dashboardHistoryCacheEntry{},
+	}
 }
 
 // SetClock overrides the clock for tests.
