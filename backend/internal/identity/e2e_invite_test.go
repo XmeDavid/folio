@@ -106,22 +106,29 @@ func TestE2E_InviteRoundTrip(t *testing.T) {
 		"/api/v1/t/"+aliceWorkspaceID+"/invites",
 		`{"email":"`+bobEmail+`","role":"member"}`,
 		http.StatusCreated)
-	var invite struct {
-		ID    string `json:"id"`
-		Email string `json:"email"`
+	var inviteResp struct {
+		Invite struct {
+			ID    string `json:"id"`
+			Email string `json:"email"`
+		} `json:"invite"`
+		AcceptURL string `json:"acceptUrl"`
 	}
-	mustJSON(t, inviteBody, &invite)
-	if invite.Email != bobEmail {
-		t.Fatalf("invite email = %q, want %q", invite.Email, bobEmail)
+	mustJSON(t, inviteBody, &inviteResp)
+	if inviteResp.Invite.Email != bobEmail {
+		t.Fatalf("invite email = %q, want %q", inviteResp.Invite.Email, bobEmail)
+	}
+	if inviteResp.AcceptURL == "" {
+		t.Fatalf("expected acceptUrl in response, got empty")
 	}
 
-	// --- 3. Mailer captured the invite URL ----------------------------------
+	// --- 3. Mailer captured the invite (URL is also returned in the
+	// createInvite response now; we extract the plaintext from there so the
+	// test doesn't depend on the mailer template's data-key name).
 	sent := mockMail.Sent()
 	if len(sent) != 1 {
 		t.Fatalf("expected 1 email, got %d", len(sent))
 	}
-	raw, _ := sent[0].Data["inviteURL"].(string)
-	plaintext := extractInviteToken(t, raw)
+	plaintext := extractInviteToken(t, inviteResp.AcceptURL)
 
 	// --- 4. Unauthenticated preview works -----------------------------------
 	previewBody := doRaw(t, srv, &sessionJar{}, http.MethodGet,

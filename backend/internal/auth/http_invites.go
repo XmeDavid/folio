@@ -109,7 +109,19 @@ func (h *InviteHandler) createInvite(w http.ResponseWriter, r *http.Request) {
 		"member.invited", "invite", inv.ID, nil,
 		map[string]any{"email": inv.Email, "role": string(inv.Role)})
 
-	httpx.WriteJSON(w, http.StatusCreated, inv)
+	httpx.WriteJSON(w, http.StatusCreated, createInviteResp{
+		Invite:    inv,
+		AcceptURL: inviteURL(plaintext),
+	})
+}
+
+// createInviteResp wraps the invite plus the accept URL so the UI can offer
+// a "Copy link" affordance immediately after creation. The plaintext token
+// itself is intentionally not returned — only the full URL — symmetric with
+// how the admin platform-invite endpoint exposes its acceptUrl.
+type createInviteResp struct {
+	Invite    *identity.Invite `json:"invite"`
+	AcceptURL string           `json:"acceptUrl"`
 }
 
 func (h *InviteHandler) revokeInvite(w http.ResponseWriter, r *http.Request) {
