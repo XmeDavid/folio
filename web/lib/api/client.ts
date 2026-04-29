@@ -186,6 +186,13 @@ export async function changePassword(input: {
   });
 }
 
+export async function updateProfile(input: { displayName?: string }): Promise<void> {
+  return request<void>("/api/v1/me", {
+    method: "PATCH",
+    json: input,
+  });
+}
+
 /**
  * updateLastWorkspace records the user's most recently used workspace so the
  * next /login lands them back where they left off. Throws on failure; the
