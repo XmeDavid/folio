@@ -899,6 +899,59 @@ export type Merchant = {
   updatedAt: string;
 };
 
+export type MerchantCreateInput = {
+  canonicalName: string;
+  defaultCategoryId?: string | null;
+  industry?: string | null;
+  website?: string | null;
+  notes?: string | null;
+  logoUrl?: string | null;
+};
+
+export type MerchantPatchInput = {
+  canonicalName?: string | null;
+  defaultCategoryId?: string | null;
+  industry?: string | null;
+  website?: string | null;
+  notes?: string | null;
+  logoUrl?: string | null;
+  archived?: boolean;
+  /** When `defaultCategoryId` is changing AND cascade is true, the server
+   *  also re-categorises every transaction whose merchant_id matches this
+   *  merchant and whose category_id equals the merchant's PREVIOUS default. */
+  cascade?: boolean;
+};
+
+export type MerchantPatchResult = {
+  merchant: Merchant;
+  cascadedTransactionCount?: number;
+};
+
+export type MerchantAlias = {
+  id: string;
+  workspaceId: string;
+  merchantId: string;
+  rawPattern: string;
+  isRegex: boolean;
+  createdAt: string;
+};
+
+export type MergePreview = {
+  sourceCanonicalName: string;
+  targetCanonicalName: string;
+  movedCount: number;
+  capturedAliasCount: number;
+  cascadedCountIfApplied: number;
+  blankFillFields: string[];
+};
+
+export type MergeResult = {
+  target: Merchant;
+  movedCount: number;
+  cascadedCount: number;
+  capturedAliasCount: number;
+};
+
 export async function fetchCategories(
   workspaceId: string,
   opts: { includeArchived?: boolean } = {}
@@ -950,6 +1003,99 @@ export async function fetchMerchants(
       includeArchived: opts.includeArchived,
     })}`,
     { method: "GET" }
+  );
+}
+
+export async function fetchMerchant(
+  workspaceId: string,
+  id: string
+): Promise<Merchant> {
+  return request<Merchant>(`/api/v1/t/${workspaceId}/merchants/${id}`, {
+    method: "GET",
+  });
+}
+
+export async function createMerchant(
+  workspaceId: string,
+  body: MerchantCreateInput
+): Promise<Merchant> {
+  return request<Merchant>(`/api/v1/t/${workspaceId}/merchants`, {
+    method: "POST",
+    json: body,
+  });
+}
+
+export async function updateMerchant(
+  workspaceId: string,
+  merchantId: string,
+  body: MerchantPatchInput
+): Promise<MerchantPatchResult> {
+  return request<MerchantPatchResult>(
+    `/api/v1/t/${workspaceId}/merchants/${merchantId}`,
+    { method: "PATCH", json: body }
+  );
+}
+
+export async function archiveMerchant(
+  workspaceId: string,
+  merchantId: string
+): Promise<void> {
+  return request<void>(`/api/v1/t/${workspaceId}/merchants/${merchantId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function listMerchantAliases(
+  workspaceId: string,
+  merchantId: string
+): Promise<MerchantAlias[]> {
+  return request<MerchantAlias[]>(
+    `/api/v1/t/${workspaceId}/merchants/${merchantId}/aliases`,
+    { method: "GET" }
+  );
+}
+
+export async function addMerchantAlias(
+  workspaceId: string,
+  merchantId: string,
+  body: { rawPattern: string }
+): Promise<MerchantAlias> {
+  return request<MerchantAlias>(
+    `/api/v1/t/${workspaceId}/merchants/${merchantId}/aliases`,
+    { method: "POST", json: body }
+  );
+}
+
+export async function removeMerchantAlias(
+  workspaceId: string,
+  merchantId: string,
+  aliasId: string
+): Promise<void> {
+  return request<void>(
+    `/api/v1/t/${workspaceId}/merchants/${merchantId}/aliases/${aliasId}`,
+    { method: "DELETE" }
+  );
+}
+
+export async function previewMergeMerchants(
+  workspaceId: string,
+  sourceMerchantId: string,
+  body: { targetId: string }
+): Promise<MergePreview> {
+  return request<MergePreview>(
+    `/api/v1/t/${workspaceId}/merchants/${sourceMerchantId}/merge/preview`,
+    { method: "POST", json: body }
+  );
+}
+
+export async function mergeMerchants(
+  workspaceId: string,
+  sourceMerchantId: string,
+  body: { targetId: string; applyTargetDefault: boolean }
+): Promise<MergeResult> {
+  return request<MergeResult>(
+    `/api/v1/t/${workspaceId}/merchants/${sourceMerchantId}/merge`,
+    { method: "POST", json: body }
   );
 }
 
