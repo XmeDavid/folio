@@ -40,6 +40,22 @@ INSERT INTO source_refs (
   @import_batch_id, @external_id, @raw_payload::jsonb, @observed_at
 );
 
+-- name: ListWorkspaceExternalIDs :many
+-- Surface every (provider, external_id) tuple already present in the
+-- workspace so classify can dedup re-imports across accounts. The
+-- source_refs unique index is workspace-scoped, but the per-account
+-- existing-row check used at classify time misses rows attached to a
+-- different account (e.g. an earlier import that targeted a different
+-- account, or a rerun that picked "create_account" instead of merging
+-- into the prior target). Without this lookup the apply would attempt
+-- to insert a duplicate source_ref and the whole file would 23505 out.
+SELECT external_id::text AS external_id
+FROM source_refs
+WHERE workspace_id = @workspace_id
+  AND entity_type = 'transaction'
+  AND provider = @provider
+  AND external_id IS NOT NULL;
+
 -- name: InsertImportAccount :exec
 INSERT INTO accounts (
   id, workspace_id, name, kind, currency, institution,

@@ -198,6 +198,15 @@ type Querier interface {
 	ListTouchedInvestmentPairs(ctx context.Context, workspaceID uuid.UUID) ([]ListTouchedInvestmentPairsRow, error)
 	ListUnconsumedRecoveryCodes(ctx context.Context, userID uuid.UUID) ([]ListUnconsumedRecoveryCodesRow, error)
 	ListWebAuthnCredentials(ctx context.Context, userID uuid.UUID) ([]ListWebAuthnCredentialsRow, error)
+	// Surface every (provider, external_id) tuple already present in the
+	// workspace so classify can dedup re-imports across accounts. The
+	// source_refs unique index is workspace-scoped, but the per-account
+	// existing-row check used at classify time misses rows attached to a
+	// different account (e.g. an earlier import that targeted a different
+	// account, or a rerun that picked "create_account" instead of merging
+	// into the prior target). Without this lookup the apply would attempt
+	// to insert a duplicate source_ref and the whole file would 23505 out.
+	ListWorkspaceExternalIDs(ctx context.Context, arg ListWorkspaceExternalIDsParams) ([]string, error)
 	ListWorkspacesWithRoleByUser(ctx context.Context, userID uuid.UUID) ([]ListWorkspacesWithRoleByUserRow, error)
 	LoadCorporateActionEvents(ctx context.Context, arg LoadCorporateActionEventsParams) ([]LoadCorporateActionEventsRow, error)
 	LoadDividendEvents(ctx context.Context, arg LoadDividendEventsParams) ([]LoadDividendEventsRow, error)

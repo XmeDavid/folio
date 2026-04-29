@@ -255,6 +255,48 @@ func (q *Queries) ListImportAccountMatches(ctx context.Context, workspaceID uuid
 	return items, nil
 }
 
+const listWorkspaceExternalIDs = `-- name: ListWorkspaceExternalIDs :many
+SELECT external_id::text AS external_id
+FROM source_refs
+WHERE workspace_id = $1
+  AND entity_type = 'transaction'
+  AND provider = $2
+  AND external_id IS NOT NULL
+`
+
+type ListWorkspaceExternalIDsParams struct {
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	Provider    *string   `json:"provider"`
+}
+
+// Surface every (provider, external_id) tuple already present in the
+// workspace so classify can dedup re-imports across accounts. The
+// source_refs unique index is workspace-scoped, but the per-account
+// existing-row check used at classify time misses rows attached to a
+// different account (e.g. an earlier import that targeted a different
+// account, or a rerun that picked "create_account" instead of merging
+// into the prior target). Without this lookup the apply would attempt
+// to insert a duplicate source_ref and the whole file would 23505 out.
+func (q *Queries) ListWorkspaceExternalIDs(ctx context.Context, arg ListWorkspaceExternalIDsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceExternalIDs, arg.WorkspaceID, arg.Provider)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var external_id string
+		if err := rows.Scan(&external_id); err != nil {
+			return nil, err
+		}
+		items = append(items, external_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const loadExistingTransactions = `-- name: LoadExistingTransactions :many
 SELECT t.id, t.booked_at, t.posted_at, t.amount::text AS amount, t.currency,
        coalesce(t.description, t.counterparty_raw, '')::text AS description,

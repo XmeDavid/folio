@@ -86,6 +86,11 @@ func (s *Service) Apply(ctx context.Context, workspaceID, accountID, userID uuid
 		return nil, err
 	}
 	classified := classify(parsed, existing)
+	taken, err := s.workspaceExternalIDs(ctx, workspaceID, parsed.Profile)
+	if err != nil {
+		return nil, err
+	}
+	filterByWorkspaceExternalIDs(&classified, taken)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -230,11 +235,24 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 				return nil, err
 			}
 		}
+		classified := classify(sub, existing)
+		// Workspace-wide source_ref dedup. The unique index on source_refs
+		// is workspace-scoped, but the per-account `existing` query above
+		// only sees the destination account. Without this extra check, an
+		// importable row whose external_id already exists on a different
+		// account in the same workspace would 23505 at insert time and
+		// roll the whole file back. Move those rows from `importable` to
+		// `duplicates` so they're tallied honestly in the result.
+		taken, err := s.workspaceExternalIDs(ctx, workspaceID, sub.Profile)
+		if err != nil {
+			return nil, err
+		}
+		filterByWorkspaceExternalIDs(&classified, taken)
 		planned = append(planned, plannedGroup{
 			in:         group,
 			parsed:     sub,
 			accountID:  accountID,
-			classified: classify(sub, existing),
+			classified: classified,
 		})
 	}
 
@@ -345,6 +363,48 @@ func (s *Service) ApplyMultiPlan(ctx context.Context, workspaceID, userID uuid.U
 		out.Files = append(out.Files, entry)
 	}
 	return out, nil
+}
+
+// workspaceExternalIDs returns the set of source_ref external_ids already
+// present in the workspace for the given file profile. Used at classify
+// time to skip rows whose source_ref would collide with an existing one
+// in a different account (e.g. a previous import that targeted a now-
+// deleted-and-recreated account). Without this, the unique index on
+// source_refs throws 23505 mid-apply and rolls the whole file back.
+func (s *Service) workspaceExternalIDs(ctx context.Context, workspaceID uuid.UUID, profile string) (map[string]struct{}, error) {
+	provider := incomingProvider(profile)
+	rows, err := dbq.New(s.pool).ListWorkspaceExternalIDs(ctx, dbq.ListWorkspaceExternalIDsParams{
+		WorkspaceID: workspaceID,
+		Provider:    &provider,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list workspace external ids: %w", err)
+	}
+	out := make(map[string]struct{}, len(rows))
+	for _, id := range rows {
+		out[id] = struct{}{}
+	}
+	return out, nil
+}
+
+// filterByWorkspaceExternalIDs reclassifies any importable rows whose
+// external_id is already represented somewhere in the workspace as
+// duplicates. Mutates classified in place.
+func filterByWorkspaceExternalIDs(classified *classifiedRows, taken map[string]struct{}) {
+	if len(taken) == 0 {
+		return
+	}
+	kept := classified.importable[:0]
+	for _, tx := range classified.importable {
+		if tx.ExternalID != "" {
+			if _, hit := taken[tx.ExternalID]; hit {
+				classified.duplicates = append(classified.duplicates, tx)
+				continue
+			}
+		}
+		kept = append(kept, tx)
+	}
+	classified.importable = kept
 }
 
 // backfillOpeningIfEarlier moves an account's opening-balance anchor (and
