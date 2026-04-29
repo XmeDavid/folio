@@ -7,9 +7,9 @@ import type { Route } from "next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, LineChart, RefreshCcw } from "lucide-react";
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
-  Line,
-  LineChart as RechartsLineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -409,10 +409,35 @@ function PerformanceCard({
             </p>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <RechartsLineChart
+              <AreaChart
                 data={chartData}
                 margin={{ top: 12, right: 12, bottom: 0, left: 0 }}
               >
+                <defs>
+                  <linearGradient
+                    id="portfolioValueFill"
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
+                    <stop
+                      offset="0%"
+                      stopColor="var(--color-accent)"
+                      stopOpacity={0.24}
+                    />
+                    <stop
+                      offset="72%"
+                      stopColor="var(--color-accent)"
+                      stopOpacity={0.04}
+                    />
+                    <stop
+                      offset="100%"
+                      stopColor="var(--color-accent)"
+                      stopOpacity={0}
+                    />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid stroke="var(--color-border)" vertical={false} />
                 <XAxis
                   dataKey="date"
@@ -447,15 +472,17 @@ function PerformanceCard({
                   ]}
                   labelFormatter={(value) => formatDate(String(value))}
                 />
-                <Line
+                <Area
                   type="monotone"
                   dataKey="value"
                   stroke="var(--color-accent)"
                   strokeWidth={2}
+                  fill="url(#portfolioValueFill)"
+                  fillOpacity={1}
                   dot={false}
                   activeDot={{ r: 4 }}
                 />
-              </RechartsLineChart>
+              </AreaChart>
             </ResponsiveContainer>
           )}
         </div>
