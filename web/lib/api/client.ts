@@ -176,6 +176,16 @@ export async function reauth(password: string, code?: string): Promise<void> {
   });
 }
 
+export async function changePassword(input: {
+  current: string;
+  next: string;
+}): Promise<void> {
+  return request<void>("/api/v1/me/password", {
+    method: "POST",
+    json: input,
+  });
+}
+
 /**
  * updateLastWorkspace records the user's most recently used workspace so the
  * next /login lands them back where they left off. Throws on failure; the

@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { startRegistration } from "@simplewebauthn/browser";
-import { KeyRound, RefreshCcw, ShieldCheck, Smartphone } from "lucide-react";
+import { KeyRound, Lock, RefreshCcw, ShieldCheck, Smartphone } from "lucide-react";
 import Image from "next/image";
 import {
   beginPasskeyEnrollment,
+  changePassword,
   completePasskeyEnrollment,
   confirmTOTP,
   deletePasskey,
@@ -32,6 +33,52 @@ export default function SecuritySettingsPage() {
   // Two-press inline confirmation, indexed by passkey id (matches the TOTP
   // disable pattern in this same screen).
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Password change form state. Kept local so the inputs can be cleared on
+  // success without round-tripping through React Query.
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNext, setPwNext] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwError, setPwError] = useState<string | null>(null);
+  const [pwSuccess, setPwSuccess] = useState<string | null>(null);
+
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPwError(null);
+    setPwSuccess(null);
+    if (!pwCurrent || !pwNext || !pwConfirm) {
+      setPwError("All three fields are required.");
+      return;
+    }
+    if (pwNext !== pwConfirm) {
+      setPwError("New password and confirmation do not match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await changePassword({ current: pwCurrent, next: pwNext });
+      setPwCurrent("");
+      setPwNext("");
+      setPwConfirm("");
+      setPwSuccess("Password changed. Other sessions have been signed out for safety.");
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 401 || err.status === 403) {
+          setPwError("This action requires recent sign-in. Sign out and back in to continue.");
+        } else if (err.status === 400 || err.status === 422) {
+          // Surface the typed validation message (e.g. policy violations,
+          // "current password is incorrect") verbatim.
+          setPwError(err.body?.error ?? "Could not change password.");
+        } else {
+          setPwError(err.body?.error ?? "Could not change password.");
+        }
+      } else {
+        setPwError(err instanceof Error ? err.message : "Could not change password.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function startTOTP() {
     setBusy(true);
@@ -148,6 +195,58 @@ export default function SecuritySettingsPage() {
         <ShieldCheck className="size-6" aria-hidden="true" />
         <h1 className="text-2xl font-semibold">Security</h1>
       </header>
+
+      <section className="rounded-lg border bg-card p-4">
+        <div className="flex items-start gap-3">
+          <Lock className="mt-0.5 size-4 text-muted-foreground" aria-hidden="true" />
+          <div className="flex-1">
+            <h2 className="font-medium">Password</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Changing your password signs out every other device.
+            </p>
+          </div>
+        </div>
+        <form onSubmit={handleChangePassword} className="mt-4 flex flex-col gap-3 border-t pt-4">
+          <label className="flex flex-col gap-1 text-sm">
+            <span>Current password</span>
+            <input
+              type="password"
+              autoComplete="current-password"
+              className="rounded border px-3 py-2"
+              value={pwCurrent}
+              onChange={(e) => setPwCurrent(e.target.value)}
+              required
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span>New password</span>
+            <input
+              type="password"
+              autoComplete="new-password"
+              className="rounded border px-3 py-2"
+              value={pwNext}
+              onChange={(e) => setPwNext(e.target.value)}
+              required
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span>Confirm new password</span>
+            <input
+              type="password"
+              autoComplete="new-password"
+              className="rounded border px-3 py-2"
+              value={pwConfirm}
+              onChange={(e) => setPwConfirm(e.target.value)}
+              required
+            />
+          </label>
+          {pwError ? <p className="text-sm text-danger">{pwError}</p> : null}
+          {pwSuccess ? <p className="text-sm text-muted-foreground">{pwSuccess}</p> : null}
+          <button className="w-fit rounded bg-foreground px-3 py-2 text-sm text-background" disabled={busy}>
+            Change password
+          </button>
+        </form>
+      </section>
 
       <section className="rounded-lg border bg-card p-4">
         <div className="flex items-start justify-between gap-4">
