@@ -19,7 +19,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
@@ -29,21 +28,6 @@ import (
 	"github.com/xmedavid/folio/backend/internal/money"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
-
-// decimalToNumeric converts a decimal.Decimal to pgtype.Numeric for sqlc params.
-func decimalToNumeric(d decimal.Decimal) pgtype.Numeric {
-	var n pgtype.Numeric
-	_ = n.Scan(d.String())
-	return n
-}
-
-// nilableString converts an empty string to nil for nullable text columns.
-func nilableString(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
 
 // DefaultListLimit and MaxListLimit bound the GET /transactions page size.
 const (

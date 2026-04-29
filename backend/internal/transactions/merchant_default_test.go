@@ -30,8 +30,6 @@ func seedAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, workspac
 	return id
 }
 
-func ptrStr(s string) *string { return &s }
-
 // TestCreate_AttachesMerchantFromCounterpartyRaw covers the happy-path of
 // create-with-counterparty: when no merchantId is passed but counterpartyRaw
 // is non-empty, the service resolves (or creates) a merchant and writes its
@@ -292,5 +290,4 @@ func TestUpdate_AttachingMerchantDoesNotOverrideExistingCategory(t *testing.T) {
 	if defaultCat.ID == existingCat.ID {
 		t.Fatal("test setup bug: defaultCat and existingCat are the same")
 	}
-	_ = ptrStr // keep helper available for future test additions
 }
