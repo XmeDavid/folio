@@ -75,14 +75,31 @@ WHERE workspace_id = @workspace_id
   AND external_id IS NOT NULL;
 
 -- name: InsertImportAccount :exec
+-- close_date and archived_at are nullable; when both are NULL the new
+-- account behaves identically to pre-archived-import rows. They get
+-- populated when the consolidated export's metadata says the upstream
+-- sub-account is already closed (e.g. an old `Dollar (USD)` pocket
+-- closed in 2021), so the imported row lands in Folio already
+-- archived and stays out of the active list.
 INSERT INTO accounts (
   id, workspace_id, name, kind, currency, institution,
-  open_date, opening_balance, opening_balance_date,
-  include_in_networth, include_in_savings_rate
+  open_date, close_date, opening_balance, opening_balance_date,
+  include_in_networth, include_in_savings_rate, archived_at
 ) VALUES (
   @id, @workspace_id, @name, @kind::account_kind, @currency, @institution,
-  @open_date, @opening_balance::numeric, @opening_balance_date, true, @include_in_savings_rate
+  @open_date, @close_date, @opening_balance::numeric, @opening_balance_date,
+  true, @include_in_savings_rate, @archived_at
 );
+
+-- name: ArchiveImportAccount :exec
+-- Apply-time archive for already-closed Revolut sub-accounts when we're
+-- merging into a pre-existing account that didn't have its close_date
+-- recorded yet. Idempotent — leaves rows alone if either field is
+-- already populated.
+UPDATE accounts
+SET close_date = coalesce(close_date, @close_date::date),
+    archived_at = coalesce(archived_at, @archived_at::timestamptz)
+WHERE workspace_id = @workspace_id AND id = @id;
 
 -- name: UnarchiveAccount :exec
 -- Opt-in reactivate: clear archived_at when the user explicitly

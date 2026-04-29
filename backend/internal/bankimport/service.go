@@ -286,6 +286,10 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 
 	out := &ApplyResult{BatchID: batchID}
 	for _, group := range planned {
+		// Pull the consolidated parser's per-section closure date out of
+		// any tx in the group (all rows of a section share the same hint).
+		// Empty string means the upstream account is still active.
+		closeDate := groupCloseDate(group.parsed)
 		accountID := group.accountID
 		if accountID == uuid.Nil {
 			// Multi-file imports preview every file before applying any of
@@ -316,7 +320,7 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 				filterByWorkspaceExternalIDs(&reclassified, taken)
 				group.classified = reclassified
 			} else {
-				accountID, err = s.createImportAccountTx(ctx, q, workspaceID, parsed.Institution, group.in)
+				accountID, err = s.createImportAccountTx(ctx, q, workspaceID, parsed.Institution, group.in, closeDate)
 				if err != nil {
 					return nil, err
 				}
@@ -337,6 +341,24 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 		ids, err := s.insertImportableTx(ctx, q, workspaceID, accountID, batchID, incomingProvider(group.parsed.Profile), group.classified.importable)
 		if err != nil {
 			return nil, err
+		}
+		// Merge-case archive: the create branch above already populated
+		// close_date + archived_at for fresh inserts; if we landed on an
+		// existing account that hasn't been archived yet, propagate the
+		// closure metadata now (idempotent — the SQL UPDATE keeps any
+		// pre-existing close_date / archived_at value).
+		if closeDate != "" {
+			if t, perr := time.Parse(dateOnly, closeDate); perr == nil {
+				archivedTS := s.now().UTC()
+				if err := q.ArchiveImportAccount(ctx, dbq.ArchiveImportAccountParams{
+					WorkspaceID: workspaceID,
+					ID:          accountID,
+					CloseDate:   t,
+					ArchivedAt:  archivedTS,
+				}); err != nil {
+					return nil, fmt.Errorf("archive import account: %w", err)
+				}
+			}
 		}
 		out.InsertedCount += len(ids)
 		out.DuplicateCount += len(group.classified.duplicates)
@@ -393,6 +415,21 @@ func (s *Service) ApplyMultiPlan(ctx context.Context, workspaceID, userID uuid.U
 		out.Files = append(out.Files, entry)
 	}
 	return out, nil
+}
+
+// groupCloseDate returns the consolidated parser's per-section closure
+// date for the group's transactions, in YYYY-MM-DD form. All rows in a
+// group came from the same Revolut sub-account, so any tx's hint is
+// authoritative — we look at the first parsed row that carries the tag.
+// Returns the empty string when no transaction tagged a closure date,
+// which is the common case (account still open upstream).
+func groupCloseDate(parsed ParsedFile) string {
+	for _, tx := range parsed.Transactions {
+		if v := tx.Raw["section_close_date"]; v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // lookupExistingAccount returns the id of an account in the workspace
@@ -540,7 +577,7 @@ func (s *Service) retireMMFSummaries(ctx context.Context, q *dbq.Queries, worksp
 	return nil
 }
 
-func (s *Service) createImportAccountTx(ctx context.Context, q *dbq.Queries, workspaceID uuid.UUID, institution string, group ApplyPlanGroup) (uuid.UUID, error) {
+func (s *Service) createImportAccountTx(ctx context.Context, q *dbq.Queries, workspaceID uuid.UUID, institution string, group ApplyPlanGroup, closeDate string) (uuid.UUID, error) {
 	openDate, _ := time.Parse(dateOnly, group.OpenDate)
 	openingBalanceDate, _ := time.Parse(dateOnly, group.OpeningBalanceDate)
 	accountID := uuidx.New()
@@ -552,6 +589,19 @@ func (s *Service) createImportAccountTx(ctx context.Context, q *dbq.Queries, wor
 	}
 	openingTS := time.Date(openingBalanceDate.Year(), openingBalanceDate.Month(), openingBalanceDate.Day(), 0, 0, 0, 0, time.UTC)
 	includeInSavingsRate := group.Kind == "checking" || group.Kind == "savings" || group.Kind == "cash"
+	// Closure metadata: when the consolidated export tells us this sub-
+	// account is already closed, populate close_date and archive on insert
+	// so the imported row doesn't show up in the active accounts list.
+	var closeDatePtr *time.Time
+	var archivedAtPtr *time.Time
+	if closeDate != "" {
+		if t, err := time.Parse(dateOnly, closeDate); err == nil {
+			tcp := t
+			closeDatePtr = &tcp
+			archivedTS := s.now().UTC()
+			archivedAtPtr = &archivedTS
+		}
+	}
 	if err := q.InsertImportAccount(ctx, dbq.InsertImportAccountParams{
 		ID:                   accountID,
 		WorkspaceID:          workspaceID,
@@ -560,9 +610,11 @@ func (s *Service) createImportAccountTx(ctx context.Context, q *dbq.Queries, wor
 		Currency:             strings.ToUpper(strings.TrimSpace(group.Currency)),
 		Institution:          instPtr,
 		OpenDate:             openDate,
+		CloseDate:            closeDatePtr,
 		OpeningBalance:       stringToNumeric(strings.TrimSpace(group.OpeningBalance)),
 		OpeningBalanceDate:   openingBalanceDate,
 		IncludeInSavingsRate: includeInSavingsRate,
+		ArchivedAt:           archivedAtPtr,
 	}); err != nil {
 		return uuid.Nil, fmt.Errorf("insert import account: %w", err)
 	}

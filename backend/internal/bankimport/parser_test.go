@@ -133,6 +133,73 @@ func TestRevolutBankingAndConsolidatedShareFingerprint(t *testing.T) {
 	}
 }
 
+// TestParseRevolutConsolidatedTagsClosedSectionsWithCloseDate locks in the
+// summaries-block scan that powers auto-archive: when a section's metadata
+// includes a non-empty "Data de encerramento", every transaction emitted
+// for that section carries `Raw["section_close_date"]` in YYYY-MM-DD form.
+// Active sections (no closure cell) must not have the tag set so the
+// apply path's idempotent archive UPDATE doesn't accidentally close
+// active accounts.
+func TestParseRevolutConsolidatedTagsClosedSectionsWithCloseDate(t *testing.T) {
+	content := strings.Join([]string{
+		// === Summaries block ===
+		`"Contas-correntes Resumos",,,,,,,,`,
+		`,,,,,,,,`,
+		`"Dollar (USD)",,,,,,,,`,
+		`,,,,,,,,`,
+		`"Dados da conta-corrente",,,,,,,,`,
+		`"Número de conta",N/A,"Data de abertura",21/09/2020,,,,,`,
+		`"Modalidades de participação","Pessoa singular","Data de encerramento",05/05/2021,,,,,`,
+		`,,,,,,,,`,
+		`"Conta Pessoal (CHF)",,,,,,,,`,
+		`,,,,,,,,`,
+		`"Dados da conta-corrente",,,,,,,,`,
+		`"Número de conta","CH00","Data de abertura",18/04/2019,,,,,`,
+		`"Modalidades de participação","Pessoa singular","Data de encerramento",,,,,,`,
+		`,,,,,,,,`,
+		// === Transactions block ===
+		`"Contas-correntes Extratos de operações",,,,,,,,`,
+		`"Dollar (USD)",,,,,,,,`,
+		`"Extrato de operações",,,,,,,,`,
+		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo,Imposto retido,Outros impostos,Comissões`,
+		`21/09/2020,"Carregamento de subconta",Outros,"88,72$","88,72$","0,00$","0,00$","0,00$"`,
+		`Total,,,"88,72$",,"0,00$","0,00$","0,00$"`,
+		`---------,,,,,,,,`,
+		`"Conta Pessoal (CHF)",,,,,,,,`,
+		`"Extrato de operações",,,,,,,,`,
+		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo,Imposto retido,Outros impostos,Comissões`,
+		`07/05/2025,Migros,Outros,"-1,65 CHF","-1,65 CHF","0,00 CHF","0,00 CHF","0,00 CHF"`,
+		`Total,,,"-1,65 CHF",,"0,00 CHF","0,00 CHF","0,00 CHF"`,
+		`---------,,,,,,,,`,
+		``,
+	}, "\n")
+	parsed, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	var sawClosedTag, sawOpenTag bool
+	for _, tx := range parsed.Transactions {
+		if tx.AccountHint == "Dollar" {
+			if got := tx.Raw["section_close_date"]; got != "2021-05-05" {
+				t.Errorf("Dollar tx section_close_date = %q, want 2021-05-05", got)
+			}
+			sawClosedTag = true
+		}
+		if tx.AccountHint == "Conta Pessoal" {
+			if got := tx.Raw["section_close_date"]; got != "" {
+				t.Errorf("Conta Pessoal tx must not have section_close_date set, got %q", got)
+			}
+			sawOpenTag = true
+		}
+	}
+	if !sawClosedTag {
+		t.Fatal("did not see a Dollar tx in parsed transactions")
+	}
+	if !sawOpenTag {
+		t.Fatal("did not see a Conta Pessoal tx in parsed transactions")
+	}
+}
+
 func TestParseRevolutConsolidatedEmitsPockets(t *testing.T) {
 	content := strings.Join([]string{
 		`"Contas-correntes Extratos de operações",,,,,,,,`,

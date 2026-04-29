@@ -325,6 +325,13 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 	if startIdx < 0 {
 		return ParsedFile{}, httpx.NewValidationError("Revolut consolidated CSV is missing the transactions section")
 	}
+	// Pre-scan the summaries block (records before the tx anchor) for any
+	// section's "Data de encerramento" / "Account close date" — Revolut
+	// records the closure date in account-level metadata, not as a
+	// transaction. The apply path reads it via Raw["section_close_date"]
+	// to auto-archive imported accounts that are already closed upstream
+	// (e.g. an old `Dollar (USD)` pocket the user closed years ago).
+	closureDates := parseConsolidatedClosureDates(records[:startIdx], lang)
 	// Walk sections within the current-accounts transactions block, stopping
 	// at the next top-level category (Flexible Cash Funds, Investments, etc.).
 	endIdx := len(records)
@@ -367,6 +374,7 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 		var prevBal decimal.Decimal
 		var prevDate time.Time
 		havePrev := true
+		closeDate := closureDates[sec.name+"|"+sec.currency]
 		for _, row := range sec.dataRows {
 			tx, ok, rowErr := parseConsolidatedTxRow(row, sec.accountHint, sec.currency, sec.columns, lang)
 			if rowErr != nil {
@@ -375,6 +383,9 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 			if !ok {
 				skippedRows++
 				continue
+			}
+			if closeDate != "" {
+				tx.Raw["section_close_date"] = closeDate
 			}
 			out.Transactions = append(out.Transactions, tx)
 
@@ -442,6 +453,74 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 	}
 	finalizeParsed(&out)
 	return out, nil
+}
+
+// parseConsolidatedClosureDates walks the per-account metadata blocks that
+// sit above the transactions section in the consolidated export and pulls
+// the "Data de encerramento" / "Account close date" cell for each
+// (name, currency) pair. Used downstream to auto-archive imported
+// accounts that Revolut already closed — without it, a closed sub-
+// account like a 2020 `Dollar (USD)` pocket lands as an active row in
+// the user's Accounts list and stays cluttering the default view.
+//
+// Date strings are normalised to YYYY-MM-DD so the apply path can hand
+// them straight to Postgres without re-parsing.
+func parseConsolidatedClosureDates(records [][]string, lang consolidatedLang) map[string]string {
+	out := map[string]string{}
+	var name, ccy string
+	closureLabels := []string{"Data de encerramento", "Account close date"}
+	for _, row := range records {
+		if len(row) == 0 {
+			continue
+		}
+		first := strings.TrimSpace(row[0])
+		if m := consolidatedSectionHeader.FindStringSubmatch(first); m != nil && allBlank(row[1:]) {
+			name, ccy = strings.TrimSpace(m[1]), strings.TrimSpace(m[2])
+			continue
+		}
+		if name == "" {
+			continue
+		}
+		for i, cell := range row {
+			label := strings.TrimSpace(cell)
+			if !slicesContainsFold(closureLabels, label) {
+				continue
+			}
+			if i+1 >= len(row) {
+				continue
+			}
+			val := strings.TrimSpace(row[i+1])
+			if val == "" {
+				continue
+			}
+			iso, ok := normaliseConsolidatedDate(val, lang)
+			if !ok {
+				continue
+			}
+			out[name+"|"+ccy] = iso
+		}
+	}
+	return out
+}
+
+func slicesContainsFold(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if strings.EqualFold(s, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// normaliseConsolidatedDate accepts the same locale-dependent date forms as
+// parseConsolidatedDate but returns them as YYYY-MM-DD. Returns ok=false
+// when the cell isn't actually a date (e.g. "N/A" for never-closed rows).
+func normaliseConsolidatedDate(raw string, lang consolidatedLang) (string, bool) {
+	t, err := parseConsolidatedDate(raw, lang)
+	if err != nil {
+		return "", false
+	}
+	return t.Format(dateOnly), true
 }
 
 // cryptoOpKind identifies which sub-table of the Cripto section a row came

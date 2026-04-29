@@ -37,6 +37,11 @@ type Querier interface {
 	AdminSetUserAdmin(ctx context.Context, arg AdminSetUserAdminParams) error
 	AdminUserHasTOTP(ctx context.Context, userID uuid.UUID) (bool, error)
 	ArchiveCategory(ctx context.Context, arg ArchiveCategoryParams) (int64, error)
+	// Apply-time archive for already-closed Revolut sub-accounts when we're
+	// merging into a pre-existing account that didn't have its close_date
+	// recorded yet. Idempotent — leaves rows alone if either field is
+	// already populated.
+	ArchiveImportAccount(ctx context.Context, arg ArchiveImportAccountParams) error
 	ArchiveTag(ctx context.Context, arg ArchiveTagParams) (int64, error)
 	// Move the opening-balance anchor back when a later import lands rows that
 	// pre-date the existing one (e.g. a savings-statement import covering a
@@ -161,6 +166,12 @@ type Querier interface {
 	InsertCorporateAction(ctx context.Context, arg InsertCorporateActionParams) (InsertCorporateActionRow, error)
 	InsertDividendEvent(ctx context.Context, arg InsertDividendEventParams) (InsertDividendEventRow, error)
 	InsertDividendEventExec(ctx context.Context, arg InsertDividendEventExecParams) error
+	// close_date and archived_at are nullable; when both are NULL the new
+	// account behaves identically to pre-archived-import rows. They get
+	// populated when the consolidated export's metadata says the upstream
+	// sub-account is already closed (e.g. an old `Dollar (USD)` pocket
+	// closed in 2021), so the imported row lands in Folio already
+	// archived and stays out of the active list.
 	InsertImportAccount(ctx context.Context, arg InsertImportAccountParams) error
 	InsertImportBatch(ctx context.Context, arg InsertImportBatchParams) error
 	InsertImportTransaction(ctx context.Context, arg InsertImportTransactionParams) error
