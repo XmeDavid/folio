@@ -8,10 +8,12 @@ import {
   beginPasskeyEnrollment,
   completePasskeyEnrollment,
   confirmTOTP,
+  disableTOTP,
   enrollTOTP,
   fetchMFAStatus,
   regenerateRecoveryCodes,
   type TOTPSetup,
+  ApiError,
 } from "@/lib/api/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -67,6 +69,31 @@ export default function SecuritySettingsPage() {
     }
   }
 
+  const [confirmDisable, setConfirmDisable] = useState(false);
+
+  async function handleDisableTOTP() {
+    if (!confirmDisable) {
+      setConfirmDisable(true);
+      return;
+    }
+    setConfirmDisable(false);
+    setBusy(true);
+    setMessage(null);
+    try {
+      await disableTOTP();
+      await qc.invalidateQueries({ queryKey: ["mfa-status"] });
+      setMessage("Authenticator removed.");
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        setMessage("This action requires recent sign-in. Sign out and back in to continue.");
+      } else {
+        setMessage(err instanceof Error ? err.message : "Failed to disable authenticator.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function rotateRecoveryCodes() {
     setBusy(true);
     setMessage(null);
@@ -94,10 +121,20 @@ export default function SecuritySettingsPage() {
               {data?.totpEnrolled ? "Enabled" : "Not enabled"}
             </p>
           </div>
-          <button className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm" onClick={startTOTP} disabled={busy}>
-            <Smartphone className="size-4" aria-hidden="true" />
-            Set up
-          </button>
+          {data?.totpEnrolled ? (
+            <button
+              className={`inline-flex items-center gap-2 rounded border px-3 py-2 text-sm ${confirmDisable ? "border-danger text-danger" : ""}`}
+              onClick={handleDisableTOTP}
+              disabled={busy}
+            >
+              {confirmDisable ? "Confirm disable?" : "Disable"}
+            </button>
+          ) : (
+            <button className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm" onClick={startTOTP} disabled={busy}>
+              <Smartphone className="size-4" aria-hidden="true" />
+              Set up
+            </button>
+          )}
         </div>
         {setup ? (
           <form onSubmit={finishTOTP} className="mt-4 flex flex-col gap-3 border-t pt-4">
