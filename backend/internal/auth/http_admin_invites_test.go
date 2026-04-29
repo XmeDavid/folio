@@ -58,7 +58,7 @@ func setupAdminInviteFixture(t *testing.T) *adminInviteFixture {
 		`)
 	})
 
-	svc := NewService(pool, identity.NewService(pool), Config{
+	svc := NewService(pool, identity.NewService(pool), identity.NewPlatformInviteService(pool), Config{
 		Registration:  RegistrationOpen,
 		SecretKey:     []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
 		SecureCookies: false,

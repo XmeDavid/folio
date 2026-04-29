@@ -193,42 +193,58 @@ func (s *Service) Signup(ctx context.Context, raw SignupInput) (*SignupResult, e
 		return nil, err
 	}
 
-	// Consume an invite if one was supplied. The invite must match the
-	// signup email (spec §4.2). Verification is bypassed on purpose: signing
-	// up with an invite token sent to this email proves the address.
+	// Consume an invite if one was supplied. We try the workspace_invites
+	// table first (a workspace invite adds the user to the inviter's
+	// workspace). If no row matches the token hash, fall through to the
+	// platform_invites table (a platform invite just bypasses the invite-only
+	// gate; no extra membership is granted). The invite must match the signup
+	// email (spec §4.2). Verification is bypassed on purpose: signing up with
+	// an invite token sent to this email proves the address.
 	if in.InviteToken != "" {
-		inv, err := q.GetWorkspaceInviteByTokenHash(ctx, identity.HashInviteToken(in.InviteToken))
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, identity.ErrInviteNotFound
+		hash := identity.HashInviteToken(in.InviteToken)
+		inv, wsErr := q.GetWorkspaceInviteByTokenHash(ctx, hash)
+		switch {
+		case wsErr == nil:
+			if inv.RevokedAt != nil {
+				return nil, identity.ErrInviteRevoked
 			}
-			return nil, fmt.Errorf("select invite: %w", err)
-		}
-		if inv.RevokedAt != nil {
-			return nil, identity.ErrInviteRevoked
-		}
-		if inv.AcceptedAt != nil {
-			return nil, identity.ErrInviteAlreadyUsed
-		}
-		if inv.ExpiresAt.Before(s.now()) {
-			return nil, identity.ErrInviteExpired
-		}
-		if strings.ToLower(inv.Email) != strings.ToLower(in.Email) {
-			return nil, identity.ErrInviteEmailMismatch
-		}
-		if err := q.InsertInvitedMembership(ctx, dbq.InsertInvitedMembershipParams{
-			WorkspaceID: inv.WorkspaceID, UserID: userID,
-			Column3: dbq.WorkspaceRole(inv.Role),
-		}); err != nil {
-			return nil, fmt.Errorf("insert invited membership: %w", err)
-		}
-		if err := q.AcceptWorkspaceInvite(ctx, inv.ID); err != nil {
-			return nil, fmt.Errorf("consume invite: %w", err)
-		}
-		if err := writeAuditTx(ctx, tx, &inv.WorkspaceID, &userID, "member.invite_accepted",
-			"invite", inv.ID, nil, map[string]any{"role": inv.Role, "email": inv.Email},
-			in.IP, in.UserAgent); err != nil {
-			return nil, err
+			if inv.AcceptedAt != nil {
+				return nil, identity.ErrInviteAlreadyUsed
+			}
+			if inv.ExpiresAt.Before(s.now()) {
+				return nil, identity.ErrInviteExpired
+			}
+			if strings.ToLower(inv.Email) != strings.ToLower(in.Email) {
+				return nil, identity.ErrInviteEmailMismatch
+			}
+			if err := q.InsertInvitedMembership(ctx, dbq.InsertInvitedMembershipParams{
+				WorkspaceID: inv.WorkspaceID, UserID: userID,
+				Column3: dbq.WorkspaceRole(inv.Role),
+			}); err != nil {
+				return nil, fmt.Errorf("insert invited membership: %w", err)
+			}
+			if err := q.AcceptWorkspaceInvite(ctx, inv.ID); err != nil {
+				return nil, fmt.Errorf("consume invite: %w", err)
+			}
+			if err := writeAuditTx(ctx, tx, &inv.WorkspaceID, &userID, "member.invite_accepted",
+				"invite", inv.ID, nil, map[string]any{"role": inv.Role, "email": inv.Email},
+				in.IP, in.UserAgent); err != nil {
+				return nil, err
+			}
+		case errors.Is(wsErr, pgx.ErrNoRows):
+			// Not a workspace invite — try the platform invite table.
+			if err := s.platformInvites.AcceptTx(ctx, tx, in.InviteToken, in.Email, userID); err != nil {
+				// Sentinel errors (ErrInviteNotFound / Revoked / Expired /
+				// AlreadyUsed / EmailMismatch) propagate as-is.
+				return nil, err
+			}
+			if err := writeAuditTx(ctx, tx, nil, &userID, "user.signup_via_platform_invite",
+				"platform_invite", userID, nil, map[string]any{"email": in.Email},
+				in.IP, in.UserAgent); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, fmt.Errorf("select workspace invite: %w", wsErr)
 		}
 	}
 

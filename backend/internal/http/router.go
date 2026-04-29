@@ -56,8 +56,9 @@ func NewRouter(d Deps) http.Handler {
 
 	identitySvc := identity.NewService(d.DB)
 	inviteSvc := identity.NewInviteService(d.DB)
+	platformInviteSvc := identity.NewPlatformInviteService(d.DB)
 	adminSvc := admin.NewService(d.DB).WithJobs(d.Jobs).WithMailer(d.Mailer)
-	authSvc := auth.NewService(d.DB, identitySvc, auth.Config{
+	authSvc := auth.NewService(d.DB, identitySvc, platformInviteSvc, auth.Config{
 		Registration:       auth.RegistrationMode(os.Getenv("REGISTRATION_MODE")),
 		AppURL:             d.Cfg.AppURL,
 		SecretKey:          d.Cfg.EncryptionKey,
@@ -73,7 +74,6 @@ func NewRouter(d Deps) http.Handler {
 	authH := auth.NewHandler(authSvc)
 	inviteH := auth.NewInviteHandler(authSvc, inviteSvc, d.Mailer)
 	adminH := admin.NewHandler(adminSvc)
-	platformInviteSvc := identity.NewPlatformInviteService(d.DB)
 	adminInviteH := auth.NewAdminInviteHandler(authSvc, platformInviteSvc, d.Mailer)
 
 	accountsSvc := accounts.NewService(d.DB)
