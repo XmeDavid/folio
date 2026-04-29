@@ -319,10 +319,11 @@ function HoldingsTable({
   holdings: Holding[];
   slug: string;
 }) {
-  if (holdings.length === 0) {
+  const openHoldings = holdings.filter((h) => Number(h.quantity || 0) > 0);
+  if (openHoldings.length === 0) {
     return (
       <p className="px-4 py-6 text-[13px] text-fg-muted">
-        No holdings yet.
+        No open holdings.
       </p>
     );
   }
@@ -341,7 +342,7 @@ function HoldingsTable({
         </tr>
       </thead>
       <tbody>
-        {holdings.map((h) => {
+        {openHoldings.map((h) => {
           const unr = h.unrealisedPnLReport ?? "0";
           const tr = h.totalReturnReport ?? "0";
           return (
