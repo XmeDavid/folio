@@ -312,6 +312,20 @@ export async function previewInvite(token: string): Promise<InvitePreview> {
   );
 }
 
+export type PlatformInvitePreview = {
+  email: string | null;
+  expiresAt: string;
+};
+
+export async function previewPlatformInvite(
+  token: string
+): Promise<PlatformInvitePreview> {
+  return request<PlatformInvitePreview>(
+    `/api/v1/auth/platform-invites/${encodeURIComponent(token)}`,
+    { method: "GET" }
+  );
+}
+
 export async function acceptInvite(
   token: string
 ): Promise<InviteAcceptResponse> {

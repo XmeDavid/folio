@@ -7,11 +7,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ApiError,
   acceptInvite,
+  logout,
   previewInvite,
+  previewPlatformInvite,
   fetchMe,
   type InvitePreview,
+  type PlatformInvitePreview,
 } from "@/lib/api/client";
 import { useIdentity, type Me } from "@/lib/hooks/use-identity";
+
+type Resolved =
+  | { kind: "workspace"; data: InvitePreview }
+  | { kind: "platform"; data: PlatformInvitePreview };
 
 export default function AcceptInvitePage({
   params,
@@ -23,9 +30,23 @@ export default function AcceptInvitePage({
   const identity = useIdentity();
   const qc = useQueryClient();
 
-  const preview = useQuery<InvitePreview, ApiError>({
+  const preview = useQuery<Resolved, ApiError>({
     queryKey: ["invitePreview", token],
-    queryFn: () => previewInvite(token),
+    queryFn: async () => {
+      try {
+        const data = await previewInvite(token);
+        return { kind: "workspace", data };
+      } catch (err) {
+        if (
+          err instanceof ApiError &&
+          (err.status === 404 || err.status === 410)
+        ) {
+          const data = await previewPlatformInvite(token);
+          return { kind: "platform", data };
+        }
+        throw err;
+      }
+    },
     retry: false,
   });
 
@@ -37,7 +58,10 @@ export default function AcceptInvitePage({
         queryKey: ["me"],
         queryFn: fetchMe,
       });
-      const workspaceId = preview.data?.workspaceId;
+      const workspaceId =
+        preview.data?.kind === "workspace"
+          ? preview.data.data.workspaceId
+          : undefined;
       const target = fresh.workspaces.find((t) => t.id === workspaceId);
       if (target) {
         router.push(`/w/${target.slug}` as Route);
@@ -47,15 +71,28 @@ export default function AcceptInvitePage({
     },
   });
 
+  const signOut = useMutation<unknown, unknown, void>({
+    mutationFn: logout,
+    onSettled: async () => {
+      qc.setQueryData(["me"], undefined);
+      await qc.invalidateQueries({ queryKey: ["me"] });
+      router.replace(`/accept-invite/${token}` as Route);
+    },
+  });
+
   // Redirect unauthenticated visitors to /signup with invite context.
   useEffect(() => {
     if (identity.status !== "unauthenticated") return;
     if (!preview.data) return;
-    const search = new URLSearchParams({
-      inviteToken: token,
-      email: preview.data.email,
-    });
-    router.replace(`/signup?${search.toString()}` as Route);
+    const params = new URLSearchParams({ inviteToken: token });
+    const inviteEmail =
+      preview.data.kind === "workspace"
+        ? preview.data.data.email
+        : preview.data.data.email;
+    if (inviteEmail) {
+      params.set("email", inviteEmail);
+    }
+    router.replace(`/signup?${params.toString()}` as Route);
   }, [identity.status, preview.data, router, token]);
 
   if (preview.isLoading || identity.status === "loading") {
@@ -91,7 +128,46 @@ export default function AcceptInvitePage({
     );
   }
 
-  const invite = preview.data;
+  // Platform invite — authenticated user. Friendly already-signed-in card.
+  if (preview.data.kind === "platform") {
+    const me = identity.data.user;
+    return (
+      <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-6 p-6">
+        <div>
+          <h1 className="text-2xl font-semibold">You&rsquo;re already signed in</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Platform invites are for new accounts. You&rsquo;re currently signed
+            in as <strong>{me.email}</strong>. Sign out to use this invite, or
+            just continue using your existing workspace.
+          </p>
+        </div>
+        {signOut.isError ? (
+          <p className="text-sm text-red-600">
+            {formatError(signOut.error)}
+          </p>
+        ) : null}
+        <div className="flex flex-col gap-2">
+          <a
+            href="/workspaces"
+            className="rounded bg-foreground px-3 py-2 text-center text-background"
+          >
+            Go to my workspaces
+          </a>
+          <button
+            type="button"
+            disabled={signOut.isPending}
+            onClick={() => signOut.mutate()}
+            className="rounded border px-3 py-2 disabled:opacity-60"
+          >
+            {signOut.isPending ? "Signing out…" : "Sign out"}
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  // Workspace invite — authenticated user.
+  const invite = preview.data.data;
   const me = identity.data.user;
   const emailMatches = me.email.toLowerCase() === invite.email.toLowerCase();
 
