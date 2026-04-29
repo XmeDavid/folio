@@ -63,6 +63,39 @@ func (q *Queries) GetInviteForAccept(ctx context.Context, tokenHash []byte) (Get
 	return i, err
 }
 
+const getInviteForResend = `-- name: GetInviteForResend :one
+SELECT invited_by_user_id, email, role::text AS role, revoked_at, accepted_at
+FROM workspace_invites
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE
+`
+
+type GetInviteForResendParams struct {
+	ID          uuid.UUID `json:"id"`
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+}
+
+type GetInviteForResendRow struct {
+	InvitedByUserID uuid.UUID  `json:"invited_by_user_id"`
+	Email           string     `json:"email"`
+	Role            string     `json:"role"`
+	RevokedAt       *time.Time `json:"revoked_at"`
+	AcceptedAt      *time.Time `json:"accepted_at"`
+}
+
+func (q *Queries) GetInviteForResend(ctx context.Context, arg GetInviteForResendParams) (GetInviteForResendRow, error) {
+	row := q.db.QueryRow(ctx, getInviteForResend, arg.ID, arg.WorkspaceID)
+	var i GetInviteForResendRow
+	err := row.Scan(
+		&i.InvitedByUserID,
+		&i.Email,
+		&i.Role,
+		&i.RevokedAt,
+		&i.AcceptedAt,
+	)
+	return i, err
+}
+
 const getInviteForRevoke = `-- name: GetInviteForRevoke :one
 SELECT invited_by_user_id, revoked_at, accepted_at
 FROM workspace_invites
@@ -256,6 +289,48 @@ UPDATE workspace_invites SET revoked_at = now() WHERE id = $1
 func (q *Queries) MarkInviteRevoked(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, markInviteRevoked, id)
 	return err
+}
+
+const rotateWorkspaceInviteToken = `-- name: RotateWorkspaceInviteToken :one
+UPDATE workspace_invites
+SET token_hash = $2,
+    expires_at = $3
+WHERE id = $1
+  AND revoked_at IS NULL
+  AND accepted_at IS NULL
+RETURNING id, workspace_id, email, role::text AS role, invited_by_user_id,
+          created_at, expires_at
+`
+
+type RotateWorkspaceInviteTokenParams struct {
+	ID        uuid.UUID `json:"id"`
+	TokenHash []byte    `json:"token_hash"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type RotateWorkspaceInviteTokenRow struct {
+	ID              uuid.UUID `json:"id"`
+	WorkspaceID     uuid.UUID `json:"workspace_id"`
+	Email           string    `json:"email"`
+	Role            string    `json:"role"`
+	InvitedByUserID uuid.UUID `json:"invited_by_user_id"`
+	CreatedAt       time.Time `json:"created_at"`
+	ExpiresAt       time.Time `json:"expires_at"`
+}
+
+func (q *Queries) RotateWorkspaceInviteToken(ctx context.Context, arg RotateWorkspaceInviteTokenParams) (RotateWorkspaceInviteTokenRow, error) {
+	row := q.db.QueryRow(ctx, rotateWorkspaceInviteToken, arg.ID, arg.TokenHash, arg.ExpiresAt)
+	var i RotateWorkspaceInviteTokenRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Email,
+		&i.Role,
+		&i.InvitedByUserID,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
 }
 
 const upsertMembershipOnInvite = `-- name: UpsertMembershipOnInvite :exec

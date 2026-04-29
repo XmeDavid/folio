@@ -91,6 +91,7 @@ type Querier interface {
 	GetInstrumentCurrency(ctx context.Context, id uuid.UUID) (string, error)
 	GetInvestmentTrade(ctx context.Context, arg GetInvestmentTradeParams) (GetInvestmentTradeRow, error)
 	GetInviteForAccept(ctx context.Context, tokenHash []byte) (GetInviteForAcceptRow, error)
+	GetInviteForResend(ctx context.Context, arg GetInviteForResendParams) (GetInviteForResendRow, error)
 	GetInviteForRevoke(ctx context.Context, arg GetInviteForRevokeParams) (GetInviteForRevokeRow, error)
 	GetInvitePreview(ctx context.Context, tokenHash []byte) (GetInvitePreviewRow, error)
 	GetMFAChallengeByID(ctx context.Context, id uuid.UUID) (GetMFAChallengeByIDRow, error)
@@ -211,6 +212,7 @@ type Querier interface {
 	ReorderAccount(ctx context.Context, arg ReorderAccountParams) (int64, error)
 	ReorderAccountGroup(ctx context.Context, arg ReorderAccountGroupParams) (int64, error)
 	RestoreWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
+	RotateWorkspaceInviteToken(ctx context.Context, arg RotateWorkspaceInviteTokenParams) (RotateWorkspaceInviteTokenRow, error)
 	SearchInstruments(ctx context.Context, arg SearchInstrumentsParams) ([]SearchInstrumentsRow, error)
 	SoftDeleteWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
 	StampRuleLastMatchedAt(ctx context.Context, arg StampRuleLastMatchedAtParams) error
