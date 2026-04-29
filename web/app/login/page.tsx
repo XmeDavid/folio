@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import { useQueryClient } from "@tanstack/react-query";
 import { startAuthentication } from "@simplewebauthn/browser";
+import type { Me } from "@/lib/hooks/use-identity";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -57,11 +58,14 @@ export default function LoginPage() {
         headers: { "X-Folio-Request": "1" },
       });
       if (meRes.ok) {
-        const me = (await meRes.json()) as {
-          workspaces: Array<{ slug: string }>;
-        };
-        const slug = me.workspaces?.[0]?.slug;
-        router.push((slug ? `/w/${slug}` : "/workspaces") as Route);
+        const me = (await meRes.json()) as Me;
+        // Prefer the user's last-used workspace if it's still in their list;
+        // otherwise fall back to the first membership, then to /workspaces.
+        const last = me.user?.lastWorkspaceId
+          ? me.workspaces.find((w) => w.id === me.user.lastWorkspaceId)
+          : null;
+        const target = last ?? me.workspaces?.[0];
+        router.push((target ? `/w/${target.slug}` : "/workspaces") as Route);
       } else {
         router.push("/workspaces" as Route);
       }

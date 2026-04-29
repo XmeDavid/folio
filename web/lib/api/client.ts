@@ -158,6 +158,18 @@ export async function reauth(password: string, code?: string): Promise<void> {
   });
 }
 
+/**
+ * updateLastWorkspace records the user's most recently used workspace so the
+ * next /login lands them back where they left off. Throws on failure; the
+ * workspace switcher catches and swallows so navigation isn't blocked.
+ */
+export async function updateLastWorkspace(workspaceId: string): Promise<void> {
+  return request<void>("/api/v1/me/last-workspace", {
+    method: "PATCH",
+    json: { workspaceId },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Workspace
 // ---------------------------------------------------------------------------
