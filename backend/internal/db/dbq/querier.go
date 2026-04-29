@@ -84,6 +84,15 @@ type Querier interface {
 	DeleteTransaction(ctx context.Context, arg DeleteTransactionParams) (int64, error)
 	DeleteTransactionTag(ctx context.Context, arg DeleteTransactionTagParams) error
 	DividendExists(ctx context.Context, arg DividendExistsParams) (bool, error)
+	// Lookup an account by exact (name, kind, currency) within a workspace.
+	// Used at apply time to merge create_account requests into an account
+	// that another file in the same multi-apply batch already created — the
+	// preview step ran before any apply committed, so the wizard couldn't
+	// see same-batch siblings as candidates and the user's plan defaults to
+	// create. Without this divert the second create attempt produces a
+	// duplicate account with the same name. Archived rows are included so
+	// a re-import resurfaces the prior account instead of cloning around it.
+	FindAccountByNameKindCurrency(ctx context.Context, arg FindAccountByNameKindCurrencyParams) (uuid.UUID, error)
 	FindBrokerageAccount(ctx context.Context, arg FindBrokerageAccountParams) (FindBrokerageAccountRow, error)
 	FindInstrumentByISIN(ctx context.Context, isin *string) (FindInstrumentByISINRow, error)
 	FindInstrumentBySymbolAndExchange(ctx context.Context, arg FindInstrumentBySymbolAndExchangeParams) (FindInstrumentBySymbolAndExchangeRow, error)

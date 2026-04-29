@@ -41,6 +41,44 @@ func (q *Queries) AccountHasSavingsStatementRows(ctx context.Context, arg Accoun
 	return exists_, err
 }
 
+const findAccountByNameKindCurrency = `-- name: FindAccountByNameKindCurrency :one
+SELECT id
+FROM accounts
+WHERE workspace_id = $1
+  AND lower(name) = lower($2)
+  AND kind = $3::account_kind
+  AND currency = $4
+ORDER BY archived_at NULLS FIRST, created_at
+LIMIT 1
+`
+
+type FindAccountByNameKindCurrencyParams struct {
+	WorkspaceID uuid.UUID   `json:"workspace_id"`
+	Name        string      `json:"name"`
+	Kind        AccountKind `json:"kind"`
+	Currency    string      `json:"currency"`
+}
+
+// Lookup an account by exact (name, kind, currency) within a workspace.
+// Used at apply time to merge create_account requests into an account
+// that another file in the same multi-apply batch already created — the
+// preview step ran before any apply committed, so the wizard couldn't
+// see same-batch siblings as candidates and the user's plan defaults to
+// create. Without this divert the second create attempt produces a
+// duplicate account with the same name. Archived rows are included so
+// a re-import resurfaces the prior account instead of cloning around it.
+func (q *Queries) FindAccountByNameKindCurrency(ctx context.Context, arg FindAccountByNameKindCurrencyParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, findAccountByNameKindCurrency,
+		arg.WorkspaceID,
+		arg.Name,
+		arg.Kind,
+		arg.Currency,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getAccountCurrency = `-- name: GetAccountCurrency :one
 SELECT currency FROM accounts WHERE workspace_id = $1 AND id = $2
 `

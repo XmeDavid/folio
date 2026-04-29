@@ -40,6 +40,24 @@ INSERT INTO source_refs (
   @import_batch_id, @external_id, @raw_payload::jsonb, @observed_at
 );
 
+-- name: FindAccountByNameKindCurrency :one
+-- Lookup an account by exact (name, kind, currency) within a workspace.
+-- Used at apply time to merge create_account requests into an account
+-- that another file in the same multi-apply batch already created — the
+-- preview step ran before any apply committed, so the wizard couldn't
+-- see same-batch siblings as candidates and the user's plan defaults to
+-- create. Without this divert the second create attempt produces a
+-- duplicate account with the same name. Archived rows are included so
+-- a re-import resurfaces the prior account instead of cloning around it.
+SELECT id
+FROM accounts
+WHERE workspace_id = @workspace_id
+  AND lower(name) = lower(@name)
+  AND kind = @kind::account_kind
+  AND currency = @currency
+ORDER BY archived_at NULLS FIRST, created_at
+LIMIT 1;
+
 -- name: ListWorkspaceExternalIDs :many
 -- Surface every (provider, external_id) tuple already present in the
 -- workspace so classify can dedup re-imports across accounts. The

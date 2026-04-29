@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -287,9 +288,38 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 	for _, group := range planned {
 		accountID := group.accountID
 		if accountID == uuid.Nil {
-			accountID, err = s.createImportAccountTx(ctx, q, workspaceID, parsed.Institution, group.in)
+			// Multi-file imports preview every file before applying any of
+			// them, so a "create_account" plan from file 2 is unaware that
+			// file 1 (already applied earlier in this loop) just created an
+			// account it should merge into. Re-check by exact (name, kind,
+			// currency) here and divert to import_to_account when a match
+			// shows up — otherwise the user gets two duplicate accounts
+			// like "Revolut Flexible Cash Funds EUR" sitting side by side.
+			merged, err := s.lookupExistingAccount(ctx, q, workspaceID, group.in)
 			if err != nil {
 				return nil, err
+			}
+			if merged != uuid.Nil {
+				accountID = merged
+				// Reload existing rows for the now-known account and
+				// re-classify so the importable list is properly deduped
+				// against the file-1 transactions just inserted.
+				existing, err := s.loadExisting(ctx, workspaceID, accountID, group.parsed)
+				if err != nil {
+					return nil, err
+				}
+				reclassified := classify(group.parsed, existing)
+				taken, err := s.workspaceExternalIDs(ctx, workspaceID, group.parsed.Profile)
+				if err != nil {
+					return nil, err
+				}
+				filterByWorkspaceExternalIDs(&reclassified, taken)
+				group.classified = reclassified
+			} else {
+				accountID, err = s.createImportAccountTx(ctx, q, workspaceID, parsed.Institution, group.in)
+				if err != nil {
+					return nil, err
+				}
 			}
 		} else if group.in.Reactivate {
 			// Opt-in reactivate: clear archived_at when the user explicitly
@@ -363,6 +393,35 @@ func (s *Service) ApplyMultiPlan(ctx context.Context, workspaceID, userID uuid.U
 		out.Files = append(out.Files, entry)
 	}
 	return out, nil
+}
+
+// lookupExistingAccount returns the id of an account in the workspace
+// whose (name, kind, currency) exactly match the requested create-account
+// plan. Returns uuid.Nil if nothing matches. Used at apply time to merge
+// same-batch creates that the preview step couldn't deduplicate; without
+// it a multi-file import where file 1 creates "Revolut Flexible Cash
+// Funds EUR" and file 2's plan also says create_account would emit a
+// second identically-named account.
+func (s *Service) lookupExistingAccount(ctx context.Context, q *dbq.Queries, workspaceID uuid.UUID, group ApplyPlanGroup) (uuid.UUID, error) {
+	name := strings.TrimSpace(group.Name)
+	kind := strings.TrimSpace(group.Kind)
+	currency := strings.ToUpper(strings.TrimSpace(group.Currency))
+	if name == "" || kind == "" || currency == "" {
+		return uuid.Nil, nil
+	}
+	id, err := q.FindAccountByNameKindCurrency(ctx, dbq.FindAccountByNameKindCurrencyParams{
+		WorkspaceID: workspaceID,
+		Name:        name,
+		Kind:        dbq.AccountKind(kind),
+		Currency:    currency,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, nil
+		}
+		return uuid.Nil, fmt.Errorf("lookup existing account: %w", err)
+	}
+	return id, nil
 }
 
 // workspaceExternalIDs returns the set of source_ref external_ids already
