@@ -120,6 +120,12 @@ func (s *Service) Apply(ctx context.Context, workspaceID, accountID, userID uuid
 		return nil, err
 	}
 
+	if parsed.Profile == "revolut_savings_statement" && parsed.DateFrom != nil && parsed.DateTo != nil {
+		if err := s.retireMMFSummaries(ctx, q, workspaceID, accountID, *parsed.DateFrom, *parsed.DateTo); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit import: %w", err)
 	}
@@ -288,12 +294,44 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 			if err := s.retireExplainedSynthetics(ctx, q, workspaceID, accountID, *group.parsed.DateFrom, *group.parsed.DateTo); err != nil {
 				return nil, err
 			}
+			if group.parsed.Profile == "revolut_savings_statement" {
+				if err := s.retireMMFSummaries(ctx, q, workspaceID, accountID, *group.parsed.DateFrom, *group.parsed.DateTo); err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit import plan: %w", err)
 	}
 	return out, nil
+}
+
+// retireMMFSummaries voids consolidated-MMF "net interest" rows in a
+// destination account when a higher-fidelity savings-statement import
+// covers the same date range. The savings statement breaks each day's
+// activity into separate Interest PAID + Service Fee rows (plus BUY/SELL/
+// reinvestment events the consolidated drops entirely), so the older
+// summary rows would double-count if left in place.
+func (s *Service) retireMMFSummaries(ctx context.Context, q *dbq.Queries, workspaceID, accountID uuid.UUID, dateFrom, dateTo time.Time) error {
+	rows, err := q.LoadMMFSummaryCandidates(ctx, dbq.LoadMMFSummaryCandidatesParams{
+		WorkspaceID: workspaceID,
+		AccountID:   accountID,
+		DateFrom:    dateFrom,
+		DateTo:      dateTo,
+	})
+	if err != nil {
+		return fmt.Errorf("load mmf summary candidates: %w", err)
+	}
+	for _, r := range rows {
+		if err := q.VoidTransaction(ctx, dbq.VoidTransactionParams{
+			ID:          r.ID,
+			WorkspaceID: workspaceID,
+		}); err != nil {
+			return fmt.Errorf("void mmf summary %s: %w", r.ID, err)
+		}
+	}
+	return nil
 }
 
 func (s *Service) createImportAccountTx(ctx context.Context, q *dbq.Queries, workspaceID uuid.UUID, institution string, group ApplyPlanGroup) (uuid.UUID, error) {
@@ -435,6 +473,7 @@ type importAccountMatch struct {
 	ID          uuid.UUID
 	Name        string
 	Currency    string
+	Kind        string
 	Institution *string
 	Archived    bool
 }
@@ -512,7 +551,7 @@ func (s *Service) currencyGroups(ctx context.Context, workspaceID uuid.UUID, par
 			ImportableCount:    len(sub.Transactions),
 			SampleTransactions: samples,
 		}
-		candidates := importCandidates(accounts, parsed.Institution, k.currency)
+		candidates := importCandidates(accounts, parsed.Institution, k.currency, kind)
 		for i := range candidates {
 			existing, err := s.loadExisting(ctx, workspaceID, candidates[i].ID, sub)
 			if err != nil {
@@ -614,6 +653,7 @@ func (s *Service) loadImportAccountMatches(ctx context.Context, workspaceID uuid
 			ID:          r.ID,
 			Name:        r.Name,
 			Currency:    r.Currency,
+			Kind:        string(r.Kind),
 			Institution: r.Institution,
 			Archived:    r.ArchivedAt != nil,
 		})
@@ -621,10 +661,20 @@ func (s *Service) loadImportAccountMatches(ctx context.Context, workspaceID uuid
 	return out, nil
 }
 
-func importCandidates(accounts []importAccountMatch, institution, currency string) []AccountCandidate {
+// importCandidates filters known accounts down to viable import targets for
+// a group. Currency must match exactly. Kind compatibility is grouped:
+// cash-like (checking, savings, cash) and investment-like (brokerage,
+// crypto_wallet, asset, pillar_3a, pillar_2) are kept separate so MMF
+// interest rows from a Flexible Cash Funds (brokerage) group don't
+// auto-import into a Conta Pessoal (checking) account just because it's
+// the only matching-currency account in the workspace.
+func importCandidates(accounts []importAccountMatch, institution, currency, suggestedKind string) []AccountCandidate {
 	var matches []AccountCandidate
 	for _, account := range accounts {
 		if account.Currency != currency {
+			continue
+		}
+		if !accountKindsCompatible(account.Kind, suggestedKind) {
 			continue
 		}
 		if institution != "" {
@@ -639,6 +689,21 @@ func importCandidates(accounts []importAccountMatch, institution, currency strin
 		matches = append(matches, c)
 	}
 	return matches
+}
+
+func accountKindsCompatible(existing, suggested string) bool {
+	if suggested == "" || existing == "" {
+		return true
+	}
+	cash := map[string]bool{"checking": true, "savings": true, "cash": true}
+	invest := map[string]bool{"brokerage": true, "crypto_wallet": true, "asset": true, "pillar_3a": true, "pillar_2": true}
+	if cash[existing] && cash[suggested] {
+		return true
+	}
+	if invest[existing] && invest[suggested] {
+		return true
+	}
+	return existing == suggested
 }
 
 func (s *Service) accountCurrency(ctx context.Context, workspaceID, accountID uuid.UUID) (string, error) {
@@ -806,7 +871,15 @@ func conflictByStableFields(incoming ParsedTransaction, existing []existingTx) (
 			return previewConflict("description_mismatch", incoming, e), true
 		}
 	}
-	// Pass 2: review-window drift on amount+currency, regardless of description.
+	// Pass 2: review-window drift on amount+currency. Originally fired
+	// regardless of description, but that produced false positives whenever
+	// two unrelated transactions of the same amount happened within 7 days
+	// of each other (e.g. a +1 "Carregamento" 2 days before a +1 "Balance
+	// migration"). The auto-apply path drops conflicts silently, so a false
+	// match here is a real row vanishing from the ledger. Require the
+	// descriptions to agree (after normalization) before treating drifted
+	// rows as the same transaction. If descriptions don't agree, we trust
+	// that the row is genuinely new and let it import.
 	for _, e := range existing {
 		if e.Synthetic {
 			continue
@@ -814,9 +887,13 @@ func conflictByStableFields(incoming ParsedTransaction, existing []existingTx) (
 		if fuzzyStableMatch(incoming, e, autoDedupDays) {
 			continue // already handled
 		}
-		if fuzzyStableMatch(incoming, e, reviewDedupDays) {
-			return previewConflict("date_drift", incoming, e), true
+		if !fuzzyStableMatch(incoming, e, reviewDedupDays) {
+			continue
 		}
+		if incomingDesc != "" && normalizeDescription(e.Description) != incomingDesc {
+			continue
+		}
+		return previewConflict("date_drift", incoming, e), true
 	}
 	return ConflictPreview{}, false
 }
@@ -924,6 +1001,16 @@ func (s *Service) retireExplainedSynthetics(ctx context.Context, q *dbq.Queries,
 	if len(candidates) == 0 {
 		return nil
 	}
+	// Walk synthetics in date order so consume-once is deterministic and
+	// each banking row goes to the earliest synthetic whose gap window
+	// covers it. Two synthetics with the same residual (e.g. multiple
+	// missing -15 REVX transfers across consecutive days) would otherwise
+	// each match the same single explaining row, double-retiring and
+	// shifting the running balance.
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].bookedAt.Before(candidates[j].bookedAt)
+	})
+	consumed := map[uuid.UUID]struct{}{}
 	for _, c := range candidates {
 		// Search the entire gap interval (gapStart..bookedAt) plus the
 		// review-window slop on either side. The synthetic represents a
@@ -952,6 +1039,9 @@ func (s *Service) retireExplainedSynthetics(ctx context.Context, q *dbq.Queries,
 		}
 		var existing []existingTx
 		for _, r := range realRows {
+			if _, taken := consumed[r.ID]; taken {
+				continue
+			}
 			d, err := decimal.NewFromString(r.Amount)
 			if err != nil {
 				continue
@@ -965,8 +1055,12 @@ func (s *Service) retireExplainedSynthetics(ctx context.Context, q *dbq.Queries,
 				Description: r.Description,
 			})
 		}
-		if !residualExplainedByExisting(c.bookedAt, c.gapStart, c.currency, c.residual, existing) {
+		ok, used := matchResidualSubset(c.bookedAt, c.gapStart, c.currency, c.residual, existing)
+		if !ok {
 			continue
+		}
+		for _, idx := range used {
+			consumed[existing[idx].ID] = struct{}{}
 		}
 		if err := q.VoidTransaction(ctx, dbq.VoidTransactionParams{
 			ID:          c.id,

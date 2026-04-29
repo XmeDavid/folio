@@ -96,3 +96,103 @@ func TestSyntheticDoesNotAbsorbRealRows(t *testing.T) {
 		t.Fatal("real banking row must not be marked as conflict against a synthetic")
 	}
 }
+
+// TestDateDriftConflictRequiresDescriptionMatch covers the GBP -1 regression:
+// "+1 Balance migration" arriving 2 days after an unrelated "+1 Carregamento"
+// should NOT be silently dropped as a date_drift conflict. The pass2 conflict
+// originally fired on (amount, currency, ±7d) regardless of description,
+// which classified two separate transactions of the same amount as the same
+// row and dropped the second.
+func TestDateDriftConflictRequiresDescriptionMatch(t *testing.T) {
+	day := func(s string) time.Time {
+		t, _ := time.Parse("2006-01-02", s)
+		return t
+	}
+	descIncoming := "Balance migration to another region or legal entity"
+	incoming := ParsedTransaction{
+		BookedAt:    day("2026-01-21"),
+		Amount:      decimal.RequireFromString("1"),
+		Currency:    "GBP",
+		Description: &descIncoming,
+	}
+	existing := []existingTx{
+		{
+			ID:          uuid.New(),
+			BookedAt:    day("2026-01-19"), // 2 days earlier — inside review window, outside auto window
+			Amount:      decimal.RequireFromString("1"),
+			Currency:    "GBP",
+			Description: "Carregamento com cartão *2835",
+		},
+	}
+	if _, ok := conflictByStableFields(incoming, existing); ok {
+		t.Fatal("rows with clearly different descriptions must not be marked as date_drift conflicts")
+	}
+
+	// Sanity: when descriptions agree, pass2 still fires.
+	descMatch := "Carregamento com cartão *2835"
+	incoming2 := ParsedTransaction{
+		BookedAt:    day("2026-01-21"),
+		Amount:      decimal.RequireFromString("1"),
+		Currency:    "GBP",
+		Description: &descMatch,
+	}
+	if _, ok := conflictByStableFields(incoming2, existing); !ok {
+		t.Fatal("matching-description ±7d drift should still raise a date_drift conflict")
+	}
+}
+
+// TestMatchResidualSubsetReturnsSubset locks in the API contract used by
+// retireExplainedSynthetics' consume-once policy: the matcher must report
+// which existing-row indices made up the matching subset so the caller can
+// strike them off the pool before evaluating the next synthetic.
+func TestMatchResidualSubsetReturnsSubset(t *testing.T) {
+	day := func(s string) time.Time {
+		t, _ := time.Parse("2006-01-02", s)
+		return t
+	}
+	syntheticDate := day("2025-12-03")
+	residual := decimal.RequireFromString("-15")
+
+	existing := []existingTx{
+		{ID: uuid.New(), BookedAt: day("2025-11-30"), Amount: decimal.RequireFromString("-7"), Currency: "EUR"},
+		{ID: uuid.New(), BookedAt: day("2025-12-01"), Amount: decimal.RequireFromString("-15"), Currency: "EUR"}, // exact single-row match
+		{ID: uuid.New(), BookedAt: day("2025-12-02"), Amount: decimal.RequireFromString("-8"), Currency: "EUR"},
+	}
+	ok, used := matchResidualSubset(syntheticDate, time.Time{}, "EUR", residual, existing)
+	if !ok {
+		t.Fatal("expected a match")
+	}
+	// Single-row exact match preferred over subset-sum solutions.
+	if len(used) != 1 || used[0] != 1 {
+		t.Fatalf("expected single-row match at index 1, got %v", used)
+	}
+}
+
+// TestImportCandidatesFiltersByKind covers the GBP=2.4 / USD=29.46 leak:
+// Flexible Cash Funds (brokerage) interest rows were auto-imported into
+// Conta Pessoal (checking) accounts because they were the only same-
+// currency targets. The wizard should not propose mixing brokerage rows
+// into a cash account or vice versa.
+func TestImportCandidatesFiltersByKind(t *testing.T) {
+	cashAcct := importAccountMatch{
+		ID: uuid.New(), Name: "Conta Pessoal GBP", Currency: "GBP", Kind: "checking",
+	}
+	brokerageAcct := importAccountMatch{
+		ID: uuid.New(), Name: "Flexible Cash Funds GBP", Currency: "GBP", Kind: "brokerage",
+	}
+	accounts := []importAccountMatch{cashAcct, brokerageAcct}
+
+	cashCands := importCandidates(accounts, "Revolut", "GBP", "checking")
+	if len(cashCands) != 1 || cashCands[0].ID != cashAcct.ID {
+		t.Fatalf("checking group: expected only cash account, got %+v", cashCands)
+	}
+	brokerCands := importCandidates(accounts, "Revolut", "GBP", "brokerage")
+	if len(brokerCands) != 1 || brokerCands[0].ID != brokerageAcct.ID {
+		t.Fatalf("brokerage group: expected only brokerage account, got %+v", brokerCands)
+	}
+	// Crypto wallet kind treated as investment-like and matches brokerage.
+	cryptoCands := importCandidates(accounts, "Revolut", "GBP", "crypto_wallet")
+	if len(cryptoCands) != 1 || cryptoCands[0].ID != brokerageAcct.ID {
+		t.Fatalf("crypto group: expected brokerage account as compatible target, got %+v", cryptoCands)
+	}
+}

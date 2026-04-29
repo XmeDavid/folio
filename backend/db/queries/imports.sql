@@ -4,8 +4,11 @@ SELECT currency FROM accounts WHERE workspace_id = @workspace_id AND id = @id;
 -- name: ListImportAccountMatches :many
 -- Archived accounts are kept in the candidate set so re-importing the
 -- same file matches the account the user already imported into instead
--- of silently creating a duplicate.
-SELECT id, name, currency, institution, archived_at
+-- of silently creating a duplicate. Kind is exposed so the import wizard
+-- can avoid auto-suggesting a brokerage import target for a cash group
+-- (e.g. Flexible Cash Funds USD interest rows landing in the Conta
+-- Pessoal USD checking account because no other USD account exists).
+SELECT id, name, currency, kind, institution, archived_at
 FROM accounts
 WHERE workspace_id = @workspace_id
 ORDER BY name;
@@ -71,6 +74,20 @@ WHERE t.workspace_id = @workspace_id
   AND t.booked_at BETWEEN @date_from AND @date_to
   AND t.status <> 'voided'
   AND t.currency = @currency;
+
+-- name: LoadMMFSummaryCandidates :many
+-- Find consolidated-MMF "net interest" rows in this account that fall
+-- within a date range, so a higher-fidelity savings-statement import can
+-- void them. The granular savings-statement export breaks the same daily
+-- interest into separate Interest PAID + Service Fee rows; without this
+-- voiding step a user importing both files double-counts the interest.
+SELECT t.id, t.booked_at, t.currency
+FROM transactions t
+WHERE t.workspace_id = @workspace_id
+  AND t.account_id = @account_id
+  AND t.status = 'posted'
+  AND t.raw->>'mmf_summary' = 'true'
+  AND t.booked_at BETWEEN @date_from::timestamptz AND @date_to::timestamptz;
 
 -- name: LoadSyntheticCandidates :many
 -- Scan synthetic balance-reconcile rows for potential retirement.

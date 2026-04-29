@@ -179,23 +179,27 @@ func (q *Queries) InsertSourceRef(ctx context.Context, arg InsertSourceRefParams
 }
 
 const listImportAccountMatches = `-- name: ListImportAccountMatches :many
-SELECT id, name, currency, institution, archived_at
+SELECT id, name, currency, kind, institution, archived_at
 FROM accounts
 WHERE workspace_id = $1
 ORDER BY name
 `
 
 type ListImportAccountMatchesRow struct {
-	ID          uuid.UUID  `json:"id"`
-	Name        string     `json:"name"`
-	Currency    string     `json:"currency"`
-	Institution *string    `json:"institution"`
-	ArchivedAt  *time.Time `json:"archived_at"`
+	ID          uuid.UUID   `json:"id"`
+	Name        string      `json:"name"`
+	Currency    string      `json:"currency"`
+	Kind        AccountKind `json:"kind"`
+	Institution *string     `json:"institution"`
+	ArchivedAt  *time.Time  `json:"archived_at"`
 }
 
 // Archived accounts are kept in the candidate set so re-importing the
 // same file matches the account the user already imported into instead
-// of silently creating a duplicate.
+// of silently creating a duplicate. Kind is exposed so the import wizard
+// can avoid auto-suggesting a brokerage import target for a cash group
+// (e.g. Flexible Cash Funds USD interest rows landing in the Conta
+// Pessoal USD checking account because no other USD account exists).
 func (q *Queries) ListImportAccountMatches(ctx context.Context, workspaceID uuid.UUID) ([]ListImportAccountMatchesRow, error) {
 	rows, err := q.db.Query(ctx, listImportAccountMatches, workspaceID)
 	if err != nil {
@@ -209,6 +213,7 @@ func (q *Queries) ListImportAccountMatches(ctx context.Context, workspaceID uuid
 			&i.ID,
 			&i.Name,
 			&i.Currency,
+			&i.Kind,
 			&i.Institution,
 			&i.ArchivedAt,
 		); err != nil {
@@ -287,6 +292,59 @@ func (q *Queries) LoadExistingTransactions(ctx context.Context, arg LoadExisting
 			&i.SourceID,
 			&i.Synthetic,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const loadMMFSummaryCandidates = `-- name: LoadMMFSummaryCandidates :many
+SELECT t.id, t.booked_at, t.currency
+FROM transactions t
+WHERE t.workspace_id = $1
+  AND t.account_id = $2
+  AND t.status = 'posted'
+  AND t.raw->>'mmf_summary' = 'true'
+  AND t.booked_at BETWEEN $3::timestamptz AND $4::timestamptz
+`
+
+type LoadMMFSummaryCandidatesParams struct {
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	AccountID   uuid.UUID `json:"account_id"`
+	DateFrom    time.Time `json:"date_from"`
+	DateTo      time.Time `json:"date_to"`
+}
+
+type LoadMMFSummaryCandidatesRow struct {
+	ID       uuid.UUID `json:"id"`
+	BookedAt time.Time `json:"booked_at"`
+	Currency string    `json:"currency"`
+}
+
+// Find consolidated-MMF "net interest" rows in this account that fall
+// within a date range, so a higher-fidelity savings-statement import can
+// void them. The granular savings-statement export breaks the same daily
+// interest into separate Interest PAID + Service Fee rows; without this
+// voiding step a user importing both files double-counts the interest.
+func (q *Queries) LoadMMFSummaryCandidates(ctx context.Context, arg LoadMMFSummaryCandidatesParams) ([]LoadMMFSummaryCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, loadMMFSummaryCandidates,
+		arg.WorkspaceID,
+		arg.AccountID,
+		arg.DateFrom,
+		arg.DateTo,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LoadMMFSummaryCandidatesRow{}
+	for rows.Next() {
+		var i LoadMMFSummaryCandidatesRow
+		if err := rows.Scan(&i.ID, &i.BookedAt, &i.Currency); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

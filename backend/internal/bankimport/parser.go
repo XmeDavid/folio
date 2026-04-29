@@ -85,6 +85,8 @@ func Parse(content string) (ParsedFile, error) {
 		return parseRevolutBanking(normalized)
 	case isRevolutConsolidatedV2(firstLine, normalized):
 		return parseRevolutConsolidatedV2(normalized)
+	case isRevolutSavingsStatement(firstLine):
+		return parseRevolutSavingsStatement(normalized)
 	case strings.Contains(normalized, "Date;Type of transaction;Notification text;"):
 		return parsePostFinance(normalized)
 	case isVIACPDFText(normalized):
@@ -355,9 +357,16 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 		// adjustment row whenever balance_after - balance_before differs
 		// from the stated amount, so an imported account closes at the
 		// same balance Revolut shows.
+		// The implicit prior balance for the first row is 0 — every Revolut
+		// section in the consolidated export starts the user from scratch
+		// (the export covers all of "Dias de posse" for that sub-account).
+		// If the first row's stated amount disagrees with its balance, we
+		// emit a synthetic just like for any subsequent gap; otherwise an
+		// inflow that landed before the first reported row is silently
+		// dropped, leaving the section's total off by that amount.
 		var prevBal decimal.Decimal
 		var prevDate time.Time
-		havePrev := false
+		havePrev := true
 		for _, row := range sec.dataRows {
 			tx, ok, rowErr := parseConsolidatedTxRow(row, sec.accountHint, sec.currency, sec.columns, lang)
 			if rowErr != nil {
@@ -379,7 +388,11 @@ func parseRevolutConsolidatedV2(content string) (ParsedFile, error) {
 				expected := bal.Sub(prevBal)
 				diff := expected.Sub(tx.Amount)
 				if diff.Abs().GreaterThan(reconcileTolerance) {
-					synth := buildReconcileTx(tx, diff, balRaw, prevDate)
+					gapStart := prevDate
+					if gapStart.IsZero() {
+						gapStart = tx.BookedAt
+					}
+					synth := buildReconcileTx(tx, diff, balRaw, gapStart)
 					out.Transactions = append(out.Transactions, synth)
 					reconcileRows++
 				}
@@ -845,6 +858,13 @@ func parseMMFRow(row, columns []string, currency string, lang consolidatedLang) 
 		"section":  "Flexible Cash Funds",
 		"op":       "interest",
 		"currency": currency,
+		// Tag this row as a low-fidelity summary that the higher-fidelity
+		// savings-statement import should supersede. The apply path voids
+		// rows carrying this flag from the destination account whenever
+		// granular savings-statement events land in the same date range,
+		// so re-importing the consolidated alongside the savings statement
+		// doesn't double-count daily net interest.
+		"mmf_summary": "true",
 	}
 	for i, c := range columns {
 		if c == "" || i >= len(row) {

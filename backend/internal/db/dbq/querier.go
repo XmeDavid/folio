@@ -165,7 +165,10 @@ type Querier interface {
 	ListCorporateActions(ctx context.Context, arg ListCorporateActionsParams) ([]ListCorporateActionsRow, error)
 	// Archived accounts are kept in the candidate set so re-importing the
 	// same file matches the account the user already imported into instead
-	// of silently creating a duplicate.
+	// of silently creating a duplicate. Kind is exposed so the import wizard
+	// can avoid auto-suggesting a brokerage import target for a cash group
+	// (e.g. Flexible Cash Funds USD interest rows landing in the Conta
+	// Pessoal USD checking account because no other USD account exists).
 	ListImportAccountMatches(ctx context.Context, workspaceID uuid.UUID) ([]ListImportAccountMatchesRow, error)
 	ListInvestmentDividends(ctx context.Context, arg ListInvestmentDividendsParams) ([]ListInvestmentDividendsRow, error)
 	ListInvestmentPositions(ctx context.Context, arg ListInvestmentPositionsParams) ([]ListInvestmentPositionsRow, error)
@@ -184,6 +187,12 @@ type Querier interface {
 	LoadEnabledRules(ctx context.Context, workspaceID uuid.UUID) ([]CategorizationRule, error)
 	// Load existing transactions in the date range for duplicate/conflict detection.
 	LoadExistingTransactions(ctx context.Context, arg LoadExistingTransactionsParams) ([]LoadExistingTransactionsRow, error)
+	// Find consolidated-MMF "net interest" rows in this account that fall
+	// within a date range, so a higher-fidelity savings-statement import can
+	// void them. The granular savings-statement export breaks the same daily
+	// interest into separate Interest PAID + Service Fee rows; without this
+	// voiding step a user importing both files double-counts the interest.
+	LoadMMFSummaryCandidates(ctx context.Context, arg LoadMMFSummaryCandidatesParams) ([]LoadMMFSummaryCandidatesRow, error)
 	// Load real (non-synthetic) rows near a synthetic for residual-explained check.
 	// Only considers rows from a different import batch than the synthetic itself.
 	LoadRealRowsForSynthetic(ctx context.Context, arg LoadRealRowsForSyntheticParams) ([]LoadRealRowsForSyntheticRow, error)

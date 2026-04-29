@@ -9,28 +9,45 @@ import (
 // residualExplainedByExisting returns true when a synthetic balance-reconcile
 // row's residual is already covered by real (non-synthetic) transactions in
 // the destination account inside the synthetic's gap interval (extended by
-// reviewDedupDays on either side). Used in two places:
+// reviewDedupDays on either side).
+func residualExplainedByExisting(syntheticDate time.Time, gapStart time.Time, currency string, residual decimal.Decimal, existing []existingTx) bool {
+	matched, _ := matchResidualSubset(syntheticDate, gapStart, currency, residual, existing)
+	return matched
+}
+
+// matchResidualSubset returns whether the residual is explained by the
+// existing rows AND which row positions (indices into the input slice) made
+// up the matching subset. Callers that need to "consume" matched rows so
+// they don't double-cover a later synthetic should pass the indices to
+// downstream logic. Used in two places:
 //
 //   - At classify time on banking-first → consolidated-second imports, to
 //     skip inserting a synthetic whose residual is already present.
 //   - At post-apply time on consolidated-first → banking-second imports, to
-//     void synthetics now redundant after the banking rows arrive.
+//     void synthetics now redundant after the banking rows arrive — there,
+//     the consume-once policy prevents two synthetics with the same
+//     residual from both retiring against the same single banking row.
 //
 // gapStart is the booked date of the consolidated row preceding the gap. A
 // zero gapStart degrades to "syntheticDate alone", preserving the original
-// ±7d behaviour for callers that don't have gap context. The matcher accepts
-// two shapes: a single existing row whose amount equals the residual, or a
-// subset whose sum equals it. We keep this conservative — same currency,
-// same sign, inside the gap window — to avoid voiding a real synthetic that
-// just happens to coincide with normal transaction noise.
-func residualExplainedByExisting(syntheticDate time.Time, gapStart time.Time, currency string, residual decimal.Decimal, existing []existingTx) bool {
+// ±7d behaviour for callers that don't have gap context. The matcher
+// accepts two shapes: a single existing row whose amount equals the
+// residual, or a subset whose sum equals it. We keep this conservative —
+// same currency, same sign, inside the gap window — to avoid voiding a
+// real synthetic that just happens to coincide with normal transaction
+// noise.
+func matchResidualSubset(syntheticDate time.Time, gapStart time.Time, currency string, residual decimal.Decimal, existing []existingTx) (bool, []int) {
 	if gapStart.IsZero() || gapStart.After(syntheticDate) {
 		gapStart = syntheticDate
 	}
 	from := gapStart.AddDate(0, 0, -reviewDedupDays)
 	to := syntheticDate.AddDate(0, 0, reviewDedupDays)
-	candidates := make([]decimal.Decimal, 0, len(existing))
-	for _, e := range existing {
+	type cand struct {
+		idx    int
+		amount decimal.Decimal
+	}
+	cands := make([]cand, 0, len(existing))
+	for i, e := range existing {
 		if e.Currency != currency {
 			continue
 		}
@@ -40,35 +57,42 @@ func residualExplainedByExisting(syntheticDate time.Time, gapStart time.Time, cu
 		if residual.Sign() != 0 && e.Amount.Sign() != 0 && residual.Sign() != e.Amount.Sign() {
 			continue
 		}
-		candidates = append(candidates, e.Amount)
+		cands = append(cands, cand{idx: i, amount: e.Amount})
 	}
-	if len(candidates) == 0 {
-		return false
+	if len(cands) == 0 {
+		return false, nil
 	}
-	for _, c := range candidates {
-		if c.Equal(residual) {
-			return true
+	// Prefer a single-row exact match — keeps the consume-once policy
+	// minimal-impact and avoids consuming several real rows when only one
+	// is the "real" missing transaction.
+	for _, c := range cands {
+		if c.amount.Equal(residual) {
+			return true, []int{c.idx}
 		}
 	}
-	if len(candidates) > 16 {
-		// Hard cap to avoid pathological 2^N blow-up. If a section has >16
-		// same-sign-same-currency rows in a 14-day window, the heuristic
-		// becomes unreliable anyway.
-		return false
+	if len(cands) > 16 {
+		// Hard cap to avoid pathological 2^N blow-up.
+		return false, nil
 	}
 	tolerance := decimal.RequireFromString("0.02")
-	for mask := 1; mask < 1<<len(candidates); mask++ {
+	for mask := 1; mask < 1<<len(cands); mask++ {
 		sum := decimal.Zero
-		for i, c := range candidates {
+		for i, c := range cands {
 			if mask&(1<<i) != 0 {
-				sum = sum.Add(c)
+				sum = sum.Add(c.amount)
 			}
 		}
 		if sum.Sub(residual).Abs().LessThanOrEqual(tolerance) {
-			return true
+			used := make([]int, 0)
+			for i, c := range cands {
+				if mask&(1<<i) != 0 {
+					used = append(used, c.idx)
+				}
+			}
+			return true, used
 		}
 	}
-	return false
+	return false, nil
 }
 
 const syntheticBalanceReconcile = "balance_reconcile"

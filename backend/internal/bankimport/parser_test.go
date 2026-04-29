@@ -100,14 +100,18 @@ func TestRevolutBankingAndConsolidatedShareFingerprint(t *testing.T) {
 	// Same logical transaction (-1.65 CHF Migros on 2025-05-07) parsed from
 	// both export formats must produce the same external_id so cross-file
 	// uploads dedupe via duplicateBySource.
+	// Fresh-account fixture: opening balance 0, so first-row balance equals
+	// the first-row amount in the consolidated export. Without that match
+	// the parser emits a synthetic balance-adjustment row to cover the
+	// implied opening gap, which would offset the count assertions below.
 	banking := "Tipo,Produto,Data de início,Data de Conclusão,Descrição,Montante,Comissão,Moeda,Estado,Saldo\n" +
-		"Pagamento com cartão,Atual,2025-05-07 12:07:38,2025-05-07 12:07:38,Migros,-1.65,0.00,CHF,CONCLUÍDA,98.35\n"
+		"Pagamento com cartão,Atual,2025-05-07 12:07:38,2025-05-07 12:07:38,Migros,-1.65,0.00,CHF,CONCLUÍDA,-1.65\n"
 	consolidated := strings.Join([]string{
 		`"Contas-correntes Extratos de operações",,,,,,,,`,
 		`"Conta Pessoal (CHF)",,,,,,,,`,
 		`"Extrato de operações",,,,,,,,`,
 		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo,Imposto retido,Outros impostos,Comissões`,
-		`07/05/2025,Migros,Outros,"-1,65 CHF (-1,77€)","98,35 CHF (105,02€)","0,00 CHF (0,00€)","0,00 CHF (0,00€)","0,00 CHF (0,00€)"`,
+		`07/05/2025,Migros,Outros,"-1,65 CHF (-1,77€)","-1,65 CHF (-1,77€)","0,00 CHF (0,00€)","0,00 CHF (0,00€)","0,00 CHF (0,00€)"`,
 		`Total,,,"-1,65 CHF",,"0,00 CHF","0,00 CHF","0,00 CHF"`,
 		`---------,,,,,,,,`,
 		``,
@@ -135,7 +139,7 @@ func TestParseRevolutConsolidatedEmitsPockets(t *testing.T) {
 		`"Conta Pessoal (CHF)",,,,,,,,`,
 		`"Extrato de operações",,,,,,,,`,
 		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo,Imposto retido,Outros impostos,Comissões`,
-		`07/05/2025,Migros,Outros,"-1,65 CHF","98,35 CHF","0,00 CHF","0,00 CHF","0,00 CHF"`,
+		`07/05/2025,Migros,Outros,"-1,65 CHF","-1,65 CHF","0,00 CHF","0,00 CHF","0,00 CHF"`,
 		`Total,,,"-1,65 CHF",,"0,00 CHF","0,00 CHF","0,00 CHF"`,
 		`---------,,,,,,,,`,
 		`"Travel - 200 (CHF)",,,,,,,,`,
@@ -179,7 +183,7 @@ func TestParseRevolutConsolidatedCryptoSection(t *testing.T) {
 		`"Conta Pessoal (EUR)",,,,,,,,`,
 		`"Extrato de operações",,,,,,,,`,
 		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo`,
-		`15/05/2019,Conversão cambial para BTC,Câmbio,"-2,00€","8,00€"`,
+		`15/05/2019,Conversão cambial para BTC,Câmbio,"-2,00€","-2,00€"`,
 		`Total,,,"-2,00€"`,
 		`---------,,,,,,,,`,
 		`"Cripto Extratos de operações",,,,,,,,`,
@@ -333,8 +337,8 @@ func TestParseRevolutConsolidatedHandlesThousandSeparators(t *testing.T) {
 		`"Conta Pessoal (CHF)",,,,,,,,`,
 		`"Extrato de operações",,,,,,,,`,
 		`Data,Descrição,Categoria,Dinheiro a entrar/sair,Saldo,Imposto retido,Outros impostos,Comissões`,
-		`17/06/2025,ecofort,Comerciante,"-1 063,95 CHF (-1 066,18€)","38,11 CHF (39,11€)","0,00 CHF","0,00 CHF","0,00 CHF"`,
-		`18/06/2025,Salary,Carregar,"5 000,00 CHF","5 038,11 CHF","0,00 CHF","0,00 CHF","0,00 CHF"`,
+		`17/06/2025,ecofort,Comerciante,"-1 063,95 CHF (-1 066,18€)","-1 063,95 CHF (-1 066,18€)","0,00 CHF","0,00 CHF","0,00 CHF"`,
+		`18/06/2025,Salary,Carregar,"5 000,00 CHF","3 936,05 CHF","0,00 CHF","0,00 CHF","0,00 CHF"`,
 		`Total,,,"3 936,05 CHF",,"0,00 CHF","0,00 CHF","0,00 CHF"`,
 		`---------,,,,,,,,`,
 		``,
