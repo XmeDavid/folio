@@ -12,6 +12,136 @@ import (
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
+// MergePreview is the read-only sibling of MergeMerchantsResult. It reports
+// the counts that a real merge would produce without performing any writes,
+// so the UI can display a confirmation summary before the user commits.
+type MergePreview struct {
+	SourceCanonicalName    string   `json:"sourceCanonicalName"`
+	TargetCanonicalName    string   `json:"targetCanonicalName"`
+	MovedCount             int      `json:"movedCount"`
+	CapturedAliasCount     int      `json:"capturedAliasCount"`
+	CascadedCountIfApplied int      `json:"cascadedCountIfApplied"`
+	BlankFillFields        []string `json:"blankFillFields"`
+}
+
+// PreviewMerge computes the counts a MergeMerchants call would produce
+// without writing anything. Validation order matches MergeMerchants:
+// source==target rejected first (no DB), then both merchants must belong to
+// workspace, then target must not be archived. All DB calls are SELECTs.
+func (s *Service) PreviewMerge(ctx context.Context, workspaceID, sourceID, targetID uuid.UUID) (*MergePreview, error) {
+	if sourceID == targetID {
+		return nil, httpx.NewValidationError("source and target merchants must differ")
+	}
+
+	var src Merchant
+	if err := scanMerchant(s.pool.QueryRow(ctx,
+		`select `+merchantCols+` from merchants where workspace_id = $1 and id = $2`,
+		workspaceID, sourceID,
+	), &src); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, httpx.NewNotFoundError("merchant")
+		}
+		return nil, fmt.Errorf("read source merchant: %w", err)
+	}
+
+	var tgt Merchant
+	if err := scanMerchant(s.pool.QueryRow(ctx,
+		`select `+merchantCols+` from merchants where workspace_id = $1 and id = $2`,
+		workspaceID, targetID,
+	), &tgt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, httpx.NewNotFoundError("merchant")
+		}
+		return nil, fmt.Errorf("read target merchant: %w", err)
+	}
+	if tgt.ArchivedAt != nil {
+		return nil, httpx.NewValidationError("merge target is archived")
+	}
+
+	// movedCount: every transaction currently pointing at source would move
+	// to target.
+	var movedCount int
+	if err := s.pool.QueryRow(ctx,
+		`select count(*) from transactions where workspace_id = $1 and merchant_id = $2`,
+		workspaceID, sourceID,
+	).Scan(&movedCount); err != nil {
+		return nil, fmt.Errorf("count movable transactions: %w", err)
+	}
+
+	// capturedAliasCount: source aliases whose raw_pattern is not yet on
+	// target (these would be reparented), plus 1 if source.canonical_name
+	// isn't already an alias on target (it would be inserted as one).
+	var aliasReparentCount int
+	if err := s.pool.QueryRow(ctx, `
+		select count(*) from merchant_aliases sa
+		where sa.workspace_id = $1
+		  and sa.merchant_id = $2
+		  and not exists (
+		      select 1 from merchant_aliases ta
+		      where ta.workspace_id = $1
+		        and ta.merchant_id = $3
+		        and ta.raw_pattern = sa.raw_pattern
+		  )
+	`, workspaceID, sourceID, targetID).Scan(&aliasReparentCount); err != nil {
+		return nil, fmt.Errorf("count reparentable aliases: %w", err)
+	}
+	var canonicalAliasExists bool
+	if err := s.pool.QueryRow(ctx, `
+		select exists(
+		    select 1 from merchant_aliases
+		    where workspace_id = $1 and merchant_id = $2 and raw_pattern = $3
+		)
+	`, workspaceID, targetID, src.CanonicalName).Scan(&canonicalAliasExists); err != nil {
+		return nil, fmt.Errorf("check canonical-as-alias capture: %w", err)
+	}
+	canonicalAliasCount := 0
+	if !canonicalAliasExists {
+		canonicalAliasCount = 1
+	}
+	capturedAliasCount := aliasReparentCount + canonicalAliasCount
+
+	// cascadedCountIfApplied: 0 unless target has a default category. When
+	// it does, count the source's transactions whose category equals the
+	// source's old default (IS NOT DISTINCT FROM handles a null source
+	// default — i.e. cascading onto null-category rows).
+	cascadedCountIfApplied := 0
+	if tgt.DefaultCategoryID != nil {
+		if err := s.pool.QueryRow(ctx, `
+			select count(*) from transactions
+			where workspace_id = $1
+			  and merchant_id = $2
+			  and category_id is not distinct from $3
+		`, workspaceID, sourceID, src.DefaultCategoryID).Scan(&cascadedCountIfApplied); err != nil {
+			return nil, fmt.Errorf("count cascaded transactions: %w", err)
+		}
+	}
+
+	// blankFillFields: target columns currently null where source has a
+	// value. These would be filled by the COALESCE step in MergeMerchants.
+	blankFillFields := []string{}
+	if tgt.LogoURL == nil && src.LogoURL != nil {
+		blankFillFields = append(blankFillFields, "logoUrl")
+	}
+	if tgt.Industry == nil && src.Industry != nil {
+		blankFillFields = append(blankFillFields, "industry")
+	}
+	if tgt.Website == nil && src.Website != nil {
+		blankFillFields = append(blankFillFields, "website")
+	}
+	if tgt.Notes == nil && src.Notes != nil {
+		blankFillFields = append(blankFillFields, "notes")
+	}
+
+	return &MergePreview{
+		SourceCanonicalName:    src.CanonicalName,
+		TargetCanonicalName:    tgt.CanonicalName,
+		MovedCount:             movedCount,
+		CapturedAliasCount:     capturedAliasCount,
+		CascadedCountIfApplied: cascadedCountIfApplied,
+		BlankFillFields:        blankFillFields,
+	}, nil
+}
+
 // MergeMerchantsInput is the validated input to MergeMerchants. Source is
 // passed positionally on the method (matches the URL shape that Task 5.3 will
 // add: POST /merchants/:sourceId/merge). ApplyTargetDefault, when true, also

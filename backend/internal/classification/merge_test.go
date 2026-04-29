@@ -452,6 +452,164 @@ func TestMergeMerchants_SourceMissingReturnsNotFound(t *testing.T) {
 	}
 }
 
+// TestPreviewMerge_MatchesActualMerge: preview returns the same counts as
+// the real merge produces. Setup mirrors the cascade test: source with 2
+// transactions (1 matching old default, 1 manual override), 1 alias, default
+// = snacks; target with default = groceries, no logo (source has one). The
+// preview is computed first, then the merge is executed, and every count
+// must match field-for-field.
+func TestPreviewMerge_MatchesActualMerge(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.Open(t)
+	svc := classification.NewService(pool)
+	wsID, _ := testdb.CreateTestWorkspace(t, pool, "ws-preview-matches")
+	accountID := seedAccountForCascade(t, ctx, pool, wsID, "CHF")
+
+	snacks, err := svc.CreateCategory(ctx, wsID, classification.CategoryCreateInput{Name: "Snacks"})
+	if err != nil {
+		t.Fatalf("CreateCategory snacks: %v", err)
+	}
+	groceries, err := svc.CreateCategory(ctx, wsID, classification.CategoryCreateInput{Name: "Groceries"})
+	if err != nil {
+		t.Fatalf("CreateCategory groceries: %v", err)
+	}
+	manual, err := svc.CreateCategory(ctx, wsID, classification.CategoryCreateInput{Name: "Manual"})
+	if err != nil {
+		t.Fatalf("CreateCategory manual: %v", err)
+	}
+
+	srcLogo := "https://example.com/source.png"
+	source, err := svc.CreateMerchant(ctx, wsID, classification.MerchantCreateInput{
+		CanonicalName:     "S-canonical",
+		DefaultCategoryID: &snacks.ID,
+		LogoURL:           &srcLogo,
+	})
+	if err != nil {
+		t.Fatalf("CreateMerchant source: %v", err)
+	}
+	target, err := svc.CreateMerchant(ctx, wsID, classification.MerchantCreateInput{
+		CanonicalName:     "T-canonical",
+		DefaultCategoryID: &groceries.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateMerchant target: %v", err)
+	}
+
+	if _, err := svc.AddAlias(ctx, wsID, source.ID, "S-alias-1"); err != nil {
+		t.Fatalf("AddAlias source: %v", err)
+	}
+
+	insertTxForCascade(t, ctx, pool, wsID, accountID, &source.ID, &snacks.ID) // matches source default → cascades.
+	insertTxForCascade(t, ctx, pool, wsID, accountID, &source.ID, &manual.ID) // manual override.
+
+	preview, err := svc.PreviewMerge(ctx, wsID, source.ID, target.ID)
+	if err != nil {
+		t.Fatalf("PreviewMerge: %v", err)
+	}
+	if preview.SourceCanonicalName != "S-canonical" {
+		t.Errorf("SourceCanonicalName = %q, want %q", preview.SourceCanonicalName, "S-canonical")
+	}
+	if preview.TargetCanonicalName != "T-canonical" {
+		t.Errorf("TargetCanonicalName = %q, want %q", preview.TargetCanonicalName, "T-canonical")
+	}
+	if len(preview.BlankFillFields) != 1 || preview.BlankFillFields[0] != "logoUrl" {
+		t.Errorf("BlankFillFields = %v, want [logoUrl]", preview.BlankFillFields)
+	}
+
+	res, err := svc.MergeMerchants(ctx, wsID, source.ID, classification.MergeMerchantsInput{
+		TargetID:           target.ID,
+		ApplyTargetDefault: true,
+	})
+	if err != nil {
+		t.Fatalf("MergeMerchants: %v", err)
+	}
+
+	if preview.MovedCount != res.MovedCount {
+		t.Errorf("preview.MovedCount = %d, merge.MovedCount = %d (must match)", preview.MovedCount, res.MovedCount)
+	}
+	if preview.CapturedAliasCount != res.CapturedAliasCount {
+		t.Errorf("preview.CapturedAliasCount = %d, merge.CapturedAliasCount = %d (must match)", preview.CapturedAliasCount, res.CapturedAliasCount)
+	}
+	if preview.CascadedCountIfApplied != res.CascadedCount {
+		t.Errorf("preview.CascadedCountIfApplied = %d, merge.CascadedCount = %d (must match)", preview.CascadedCountIfApplied, res.CascadedCount)
+	}
+}
+
+// TestPreviewMerge_SourceEqualsTargetReturnsValidationError: same id for
+// source and target is rejected before any DB read.
+func TestPreviewMerge_SourceEqualsTargetReturnsValidationError(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.Open(t)
+	svc := classification.NewService(pool)
+	wsID, _ := testdb.CreateTestWorkspace(t, pool, "ws-preview-self")
+
+	m, err := svc.CreateMerchant(ctx, wsID, classification.MerchantCreateInput{CanonicalName: "M"})
+	if err != nil {
+		t.Fatalf("CreateMerchant: %v", err)
+	}
+	_, err = svc.PreviewMerge(ctx, wsID, m.ID, m.ID)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var verr *httpx.ValidationError
+	if !errors.As(err, &verr) {
+		t.Errorf("want *httpx.ValidationError, got %T: %v", err, err)
+	}
+}
+
+// TestPreviewMerge_TargetArchivedRejected: archived target produces a
+// ValidationError, mirroring MergeMerchants.
+func TestPreviewMerge_TargetArchivedRejected(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.Open(t)
+	svc := classification.NewService(pool)
+	wsID, _ := testdb.CreateTestWorkspace(t, pool, "ws-preview-target-archived")
+
+	source, err := svc.CreateMerchant(ctx, wsID, classification.MerchantCreateInput{CanonicalName: "S"})
+	if err != nil {
+		t.Fatalf("CreateMerchant source: %v", err)
+	}
+	target, err := svc.CreateMerchant(ctx, wsID, classification.MerchantCreateInput{CanonicalName: "T"})
+	if err != nil {
+		t.Fatalf("CreateMerchant target: %v", err)
+	}
+	if err := svc.ArchiveMerchant(ctx, wsID, target.ID); err != nil {
+		t.Fatalf("ArchiveMerchant: %v", err)
+	}
+
+	_, err = svc.PreviewMerge(ctx, wsID, source.ID, target.ID)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var verr *httpx.ValidationError
+	if !errors.As(err, &verr) {
+		t.Errorf("want *httpx.ValidationError, got %T: %v", err, err)
+	}
+}
+
+// TestPreviewMerge_SourceMissingReturnsNotFound: random source UUID returns
+// NotFound, no panic.
+func TestPreviewMerge_SourceMissingReturnsNotFound(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.Open(t)
+	svc := classification.NewService(pool)
+	wsID, _ := testdb.CreateTestWorkspace(t, pool, "ws-preview-source-missing")
+
+	target, err := svc.CreateMerchant(ctx, wsID, classification.MerchantCreateInput{CanonicalName: "T"})
+	if err != nil {
+		t.Fatalf("CreateMerchant target: %v", err)
+	}
+	missing := uuid.New()
+	_, err = svc.PreviewMerge(ctx, wsID, missing, target.ID)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var nfe *httpx.NotFoundError
+	if !errors.As(err, &nfe) {
+		t.Errorf("want *httpx.NotFoundError, got %T: %v", err, err)
+	}
+}
+
 // TestMergeMerchants_PreservesPreviouslyMergedAliases: build chain:
 // M1 (alias "A") merge into M2 (alias "B"); then M2 merge into M3.
 // After: M3 has aliases A, B, M1's name, and M2's name. AttachByRaw "A"
