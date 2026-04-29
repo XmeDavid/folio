@@ -98,10 +98,10 @@ func (h *InviteHandler) createInvite(w http.ResponseWriter, r *http.Request) {
 			Subject:  "You're invited to Folio",
 			Template: "invite",
 			Data: map[string]any{
-				"InviterName": inviter.DisplayName,
-				"WorkspaceName":  workspace.Name,
-				"Role":        string(inv.Role),
-				"AcceptURL":   inviteURL(plaintext),
+				"InviterName":   inviter.DisplayName,
+				"WorkspaceName": workspace.Name,
+				"Role":          string(inv.Role),
+				"AcceptURL":     inviteURL(plaintext),
 			},
 			WorkspaceID: workspace.ID.String(),
 		}); err != nil {

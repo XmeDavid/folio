@@ -81,7 +81,7 @@ type signupReq struct {
 	Email          string `json:"email"`
 	Password       string `json:"password"`
 	DisplayName    string `json:"displayName"`
-	WorkspaceName     string `json:"workspaceName,omitempty"`
+	WorkspaceName  string `json:"workspaceName,omitempty"`
 	BaseCurrency   string `json:"baseCurrency,omitempty"`
 	CycleAnchorDay int    `json:"cycleAnchorDay,omitempty"`
 	Locale         string `json:"locale,omitempty"`
@@ -110,7 +110,7 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 	SetSessionCookie(w, out.SessionToken, h.svc.cfg.SecureCookies)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"user":        out.User,
-		"workspace":      out.Workspace,
+		"workspace":   out.Workspace,
 		"membership":  out.Membership,
 		"mfaRequired": false,
 	})
@@ -222,7 +222,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"user":    user,
+		"user":       user,
 		"workspaces": workspaces,
 	})
 }
@@ -285,7 +285,7 @@ func (h *Handler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
-		"workspace":     t,
+		"workspace":  t,
 		"membership": m,
 	})
 }

@@ -91,6 +91,35 @@ export async function logout(): Promise<void> {
   return request<void>("/api/v1/auth/logout", { method: "POST" });
 }
 
+export type CreateWorkspaceInput = {
+  name: string;
+  baseCurrency: string;
+  cycleAnchorDay: number;
+  locale: string;
+  timezone: string;
+};
+
+export type CreateWorkspaceResult = {
+  workspace: {
+    id: string;
+    name: string;
+    slug: string;
+    baseCurrency: string;
+    cycleAnchorDay: number;
+    locale: string;
+    timezone: string;
+    createdAt: string;
+  };
+  membership: { workspaceId: string; userId: string; role: string; joinedAt: string };
+};
+
+export async function createWorkspace(input: CreateWorkspaceInput): Promise<CreateWorkspaceResult> {
+  return request<CreateWorkspaceResult>("/api/v1/workspaces", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export type MFAStatus = {
   totpEnrolled: boolean;
   passkeyCount: number;

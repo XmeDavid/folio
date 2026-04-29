@@ -21,16 +21,17 @@ import (
 // real sessions (A = "other", B = "current") backed by a hashed password we
 // know the plaintext for, plus a stale-reauth cookie for the gate test.
 type passwordFixture struct {
-	router       http.Handler
-	svc          *Service
-	pool         interface { /* matches *pgxpool.Pool minimal surface */ }
-	userID       uuid.UUID
-	currentPass  string
-	currentSID   string
-	otherSID     string
-	freshCookie  *http.Cookie
-	staleCookie  *http.Cookie
-	otherCookie  *http.Cookie
+	router http.Handler
+	svc    *Service
+	pool   interface { /* matches *pgxpool.Pool minimal surface */
+	}
+	userID      uuid.UUID
+	currentPass string
+	currentSID  string
+	otherSID    string
+	freshCookie *http.Cookie
+	staleCookie *http.Cookie
+	otherCookie *http.Cookie
 }
 
 func setupPasswordFixture(t *testing.T) *passwordFixture {

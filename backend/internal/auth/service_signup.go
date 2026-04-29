@@ -27,7 +27,7 @@ type SignupInput struct {
 	Email          string
 	Password       string
 	DisplayName    string
-	WorkspaceName     string
+	WorkspaceName  string
 	BaseCurrency   string
 	CycleAnchorDay int
 	Locale         string
@@ -86,7 +86,7 @@ func (in SignupInput) normalize() (SignupInput, error) {
 // SignupResult is returned by Signup.
 type SignupResult struct {
 	User         identity.User
-	Workspace       identity.Workspace
+	Workspace    identity.Workspace
 	Membership   identity.Membership
 	SessionToken string
 }

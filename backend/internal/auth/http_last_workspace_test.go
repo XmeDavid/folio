@@ -20,13 +20,13 @@ import (
 // (RequireSession) for /me/last-workspace and seeds a user with a session
 // cookie plus two workspaces — one the user is a member of, one they're not.
 type lastWorkspaceFixture struct {
-	router        http.Handler
-	svc           *Service
-	userID        uuid.UUID
-	cookie        *http.Cookie
-	memberWS      uuid.UUID
-	nonMemberWS   uuid.UUID
-	deletedWS     uuid.UUID
+	router      http.Handler
+	svc         *Service
+	userID      uuid.UUID
+	cookie      *http.Cookie
+	memberWS    uuid.UUID
+	nonMemberWS uuid.UUID
+	deletedWS   uuid.UUID
 }
 
 func setupLastWorkspaceFixture(t *testing.T) *lastWorkspaceFixture {

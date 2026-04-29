@@ -9,6 +9,8 @@ import {
   LANGUAGE_OPTIONS,
   REGION_OPTIONS,
 } from "@/lib/localization";
+import { ApiError, createWorkspace } from "@/lib/api/client";
+import { friendlyError } from "@/lib/api/errors";
 
 export default function NewWorkspacePage() {
   return (
@@ -40,35 +42,22 @@ function NewWorkspaceForm() {
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch("/api/v1/workspaces", {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Folio-Request": "1",
-        },
-        body: JSON.stringify({
-          name,
-          baseCurrency,
-          locale: `${language}-${region}`,
-          cycleAnchorDay,
-          timezone: tz,
-        }),
+      const result = await createWorkspace({
+        name,
+        baseCurrency,
+        locale: `${language}-${region}`,
+        cycleAnchorDay,
+        timezone: tz,
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setErr(
-          (body as { error?: string }).error ??
-            `Create workspace failed (${res.status})`,
-        );
-        return;
-      }
       await qc.invalidateQueries({ queryKey: ["me"] });
-      // Backend returns { workspace: { slug, ... }, membership: { ... } }
-      const slug = (body as { workspace?: { slug?: string } }).workspace?.slug;
+      const slug = result.workspace.slug;
       router.push((slug ? `/w/${slug}` : "/workspaces") as Route);
     } catch (caught) {
-      setErr((caught as Error).message ?? "Create workspace failed");
+      if (caught instanceof ApiError) {
+        setErr(friendlyError(caught.body?.code, caught.body?.error ?? caught.message));
+      } else {
+        setErr((caught as Error).message ?? "Create workspace failed");
+      }
     } finally {
       setBusy(false);
     }

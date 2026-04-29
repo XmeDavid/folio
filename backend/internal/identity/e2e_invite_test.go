@@ -134,7 +134,7 @@ func TestE2E_InviteRoundTrip(t *testing.T) {
 	previewBody := doRaw(t, srv, &sessionJar{}, http.MethodGet,
 		"/api/v1/auth/invites/"+plaintext, "", http.StatusOK)
 	var preview struct {
-		WorkspaceName         string `json:"workspaceName"`
+		WorkspaceName      string `json:"workspaceName"`
 		InviterDisplayName string `json:"inviterDisplayName"`
 		Email              string `json:"email"`
 		Role               string `json:"role"`

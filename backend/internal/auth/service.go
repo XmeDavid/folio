@@ -25,18 +25,18 @@ const (
 
 // Config is the Service's knobs.
 type Config struct {
-	SessionIdle        time.Duration // default 14*24h
-	SessionAbsolute    time.Duration // default 90*24h
-	Registration       RegistrationMode
-	BootstrapEmail     string // ADMIN_BOOTSTRAP_EMAIL; plan 5 consumes this
-	AppURL             string
-	SecretKey          []byte
-	MFAChallengeTTL    time.Duration
-	ReauthWindow       time.Duration
-	WebAuthnRPID       string
-	WebAuthnRPName     string
-	WebAuthnOrigins    []string
-	Jobs               *jobs.Client
+	SessionIdle     time.Duration // default 14*24h
+	SessionAbsolute time.Duration // default 90*24h
+	Registration    RegistrationMode
+	BootstrapEmail  string // ADMIN_BOOTSTRAP_EMAIL; plan 5 consumes this
+	AppURL          string
+	SecretKey       []byte
+	MFAChallengeTTL time.Duration
+	ReauthWindow    time.Duration
+	WebAuthnRPID    string
+	WebAuthnRPName  string
+	WebAuthnOrigins []string
+	Jobs            *jobs.Client
 	// AdminBootstrapHook, when set, runs inside the Signup transaction so a
 	// grant failure rolls the whole signup back. Use a pgx.Tx-scoped writer
 	// (see admin.EnsureBootstrapAdminTx).
