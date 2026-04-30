@@ -144,6 +144,13 @@ func (s *Service) Apply(ctx context.Context, workspaceID, accountID, userID uuid
 	}
 
 	if parsed.DateFrom != nil && parsed.DateTo != nil {
+		// Retire synthetic balance-reconcile rows whose residual is now
+		// covered by the rows we just imported. Without this, a prior
+		// consolidated-revolut import's synthetics double-count against
+		// account-revolut's explicit pocket-transfer rows imported here.
+		if err := s.retireExplainedSynthetics(ctx, q, workspaceID, accountID, *parsed.DateFrom, *parsed.DateTo); err != nil {
+			return nil, err
+		}
 		if err := s.retireMMFSummaries(ctx, q, workspaceID, accountID, *parsed.DateFrom, *parsed.DateTo); err != nil {
 			return nil, err
 		}
