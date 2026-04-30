@@ -38,6 +38,3 @@ func (s *Service) DetectAndPair(ctx context.Context, workspaceID uuid.UUID, scop
 	}
 	return &DetectResult{Tier1Paired: t1, Tier2Paired: t2, Tier3Suggested: t3}, nil
 }
-
-// Stub filled in by Task 1.4. Tier 1 lives in tier1.go, Tier 2 in tier2.go.
-func (s *Service) runTier3(context.Context, uuid.UUID, DetectScope) (int, error) { return 0, nil }
