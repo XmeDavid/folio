@@ -10,74 +10,15 @@
 
 import type { components, paths } from "./schema";
 import type { Me } from "@/lib/hooks/use-identity";
+import {
+  ApiError,
+  parseError,
+  request,
+  uploadRequest,
+} from "./_request";
 
-const CSRF_HEADER_NAME = "X-Folio-Request";
-const CSRF_HEADER_VALUE = "1";
-
-const baseUrl =
-  typeof window === "undefined"
-    ? (process.env.API_URL ?? "http://localhost:8080")
-    : ""; // browser uses Next rewrite
-
-function defaultHeaders(extra?: HeadersInit): HeadersInit {
-  const base: Record<string, string> = {
-    [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE,
-  };
-  if (!extra) return base;
-  return { ...base, ...(extra as Record<string, string>) };
-}
-
-async function parseError(res: Response): Promise<ApiError> {
-  let body: unknown;
-  try {
-    body = await res.json();
-  } catch {
-    body = undefined;
-  }
-  return new ApiError(res.status, body);
-}
-
-async function request<T>(
-  path: string,
-  init: RequestInit & { json?: unknown } = {}
-): Promise<T> {
-  const { json, headers, ...rest } = init;
-  const mergedHeaders: Record<string, string> = {
-    ...(defaultHeaders(headers) as Record<string, string>),
-  };
-  let body = rest.body;
-  if (json !== undefined) {
-    mergedHeaders["Content-Type"] = "application/json";
-    body = JSON.stringify(json);
-  }
-  const res = await fetch(`${baseUrl}${path}`, {
-    ...rest,
-    credentials: "include",
-    headers: mergedHeaders,
-    body,
-  });
-  if (!res.ok) {
-    throw await parseError(res);
-  }
-  // 204 No Content
-  if (res.status === 204) {
-    return undefined as T;
-  }
-  return (await res.json()) as T;
-}
-
-async function uploadRequest<T>(path: string, form: FormData): Promise<T> {
-  const res = await fetch(`${baseUrl}${path}`, {
-    method: "POST",
-    credentials: "include",
-    headers: defaultHeaders(),
-    body: form,
-  });
-  if (!res.ok) {
-    throw await parseError(res);
-  }
-  return (await res.json()) as T;
-}
+export { ApiError };
+export type { ErrorBody } from "./_request";
 
 // ---------------------------------------------------------------------------
 // Identity
@@ -116,7 +57,7 @@ export type CreateWorkspaceResult = {
 export async function createWorkspace(input: CreateWorkspaceInput): Promise<CreateWorkspaceResult> {
   return request<CreateWorkspaceResult>("/api/v1/workspaces", {
     method: "POST",
-    body: JSON.stringify(input),
+    json: input,
   });
 }
 
@@ -1230,19 +1171,6 @@ export type Transaction = components["schemas"]["Transaction"];
 export type TransactionStatus = components["schemas"]["TransactionStatus"];
 export type TransactionCreateInput =
   components["schemas"]["TransactionCreateInput"];
-export type ErrorBody = { error?: string; code?: string; details?: unknown };
-
-export class ApiError extends Error {
-  status: number;
-  body: ErrorBody | undefined;
-  constructor(status: number, body: unknown) {
-    const b = (body as ErrorBody) ?? undefined;
-    super(b?.error || `Request failed (${status})`);
-    this.status = status;
-    this.body = b;
-  }
-}
-
 // `paths` is re-exported so callers can still reference path-derived generics.
 // Kept as a type-only re-export to avoid importing unused runtime code.
 export type { paths };

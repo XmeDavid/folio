@@ -4,7 +4,7 @@
 
 ```
 ┌──────────────────────────────┐           ┌──────────────────────┐
-│ Browser / PWA (Next.js 15)   │ ───HTTPS─▶│  Caddy (TLS)         │
+│ Browser / PWA (Next.js 16)   │ ───HTTPS─▶│  Caddy (TLS)         │
 │  - React 19 + TanStack Query │           │  - HSTS, compression │
 │  - Serwist service worker    │           └──────┬───────┬───────┘
 └──────────────────────────────┘                  │       │
@@ -36,7 +36,7 @@
 | Backend | Go + chi + pgx + sqlc | Typed queries, no ORM surprises, fast, one binary |
 | DB | Postgres 17 | Decimal math, strong indexing, River needs it anyway |
 | Queue | River (Postgres-backed) | No Redis, transactional enqueue with business writes |
-| Frontend | Next.js 15 App Router + PWA | One codebase, installable, shareable URLs |
+| Frontend | Next.js 16 App Router + PWA | One codebase, installable, shareable URLs |
 | Auth | Session cookies + Argon2id + Passkeys | Trusted-circle app; passkeys are ideal for friends/family |
 | Money | `numeric(19,4)` in DB, `decimal.Decimal` in Go, `string` on the wire | Never trust floats |
 | Integrations | Adapter-per-source into unified domain model | Swap providers without app-wide changes |

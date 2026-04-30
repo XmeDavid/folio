@@ -340,12 +340,12 @@ func (s *Service) applyPlanInternal(ctx context.Context, workspaceID, userID uui
 				// Reload existing rows for the now-known account and
 				// re-classify so the importable list is properly deduped
 				// against the file-1 transactions just inserted.
-				existing, err := s.loadExisting(ctx, workspaceID, accountID, group.parsed)
+				existing, err := loadExisting(ctx, q, workspaceID, accountID, group.parsed)
 				if err != nil {
 					return nil, err
 				}
 				reclassified := classify(group.parsed, existing)
-				taken, err := s.workspaceExternalIDs(ctx, workspaceID, group.parsed.Profile)
+				taken, err := workspaceExternalIDs(ctx, q, workspaceID, group.parsed.Profile)
 				if err != nil {
 					return nil, err
 				}
@@ -507,8 +507,12 @@ func (s *Service) lookupExistingAccount(ctx context.Context, q *dbq.Queries, wor
 // deleted-and-recreated account). Without this, the unique index on
 // source_refs throws 23505 mid-apply and rolls the whole file back.
 func (s *Service) workspaceExternalIDs(ctx context.Context, workspaceID uuid.UUID, profile string) (map[string]struct{}, error) {
+	return workspaceExternalIDs(ctx, dbq.New(s.pool), workspaceID, profile)
+}
+
+func workspaceExternalIDs(ctx context.Context, q *dbq.Queries, workspaceID uuid.UUID, profile string) (map[string]struct{}, error) {
 	provider := incomingProvider(profile)
-	rows, err := dbq.New(s.pool).ListWorkspaceExternalIDs(ctx, dbq.ListWorkspaceExternalIDsParams{
+	rows, err := q.ListWorkspaceExternalIDs(ctx, dbq.ListWorkspaceExternalIDsParams{
 		WorkspaceID: workspaceID,
 		Provider:    &provider,
 	})
@@ -1054,11 +1058,15 @@ type existingTx struct {
 }
 
 func (s *Service) loadExisting(ctx context.Context, workspaceID, accountID uuid.UUID, parsed ParsedFile) ([]existingTx, error) {
+	return loadExisting(ctx, dbq.New(s.pool), workspaceID, accountID, parsed)
+}
+
+func loadExisting(ctx context.Context, q *dbq.Queries, workspaceID, accountID uuid.UUID, parsed ParsedFile) ([]existingTx, error) {
 	if parsed.DateFrom == nil || parsed.DateTo == nil {
 		return nil, nil
 	}
 	provider := incomingProvider(parsed.Profile)
-	rows, err := dbq.New(s.pool).LoadExistingTransactions(ctx, dbq.LoadExistingTransactionsParams{
+	rows, err := q.LoadExistingTransactions(ctx, dbq.LoadExistingTransactionsParams{
 		Provider:    &provider,
 		WorkspaceID: workspaceID,
 		AccountID:   accountID,

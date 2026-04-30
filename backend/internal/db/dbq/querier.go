@@ -137,7 +137,6 @@ type Querier interface {
 	GetTOTPVerifiedAt(ctx context.Context, userID uuid.UUID) (*time.Time, error)
 	GetTag(ctx context.Context, arg GetTagParams) (Tag, error)
 	GetTradeAccountInstrument(ctx context.Context, arg GetTradeAccountInstrumentParams) (GetTradeAccountInstrumentRow, error)
-	GetTransaction(ctx context.Context, arg GetTransactionParams) (GetTransactionRow, error)
 	GetUserByEmailWithPassword(ctx context.Context, email string) (GetUserByEmailWithPasswordRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
 	GetUserEmailAndDisplayName(ctx context.Context, id uuid.UUID) (GetUserEmailAndDisplayNameRow, error)
@@ -193,7 +192,6 @@ type Querier interface {
 	InsertTag(ctx context.Context, arg InsertTagParams) (Tag, error)
 	InsertTestUser(ctx context.Context, arg InsertTestUserParams) error
 	InsertTestWorkspace(ctx context.Context, arg InsertTestWorkspaceParams) error
-	InsertTransaction(ctx context.Context, arg InsertTransactionParams) (InsertTransactionRow, error)
 	InsertTransactionTag(ctx context.Context, arg InsertTransactionTagParams) error
 	InsertUserReturning(ctx context.Context, arg InsertUserReturningParams) (InsertUserReturningRow, error)
 	InsertWebAuthnCredential(ctx context.Context, arg InsertWebAuthnCredentialParams) error

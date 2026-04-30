@@ -19,6 +19,9 @@ func (s *Service) GrantAdmin(ctx context.Context, userID, actorUserID uuid.UUID)
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockAdminGrantSet(ctx, tx); err != nil {
+		return err
+	}
 
 	q := dbq.New(tx)
 	already, err := q.AdminGetUserIsAdminForUpdate(ctx, userID)
@@ -46,6 +49,9 @@ func (s *Service) RevokeAdmin(ctx context.Context, userID, actorUserID uuid.UUID
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockAdminGrantSet(ctx, tx); err != nil {
+		return err
+	}
 
 	q := dbq.New(tx)
 	isAdmin, err := q.AdminGetUserIsAdminForUpdate(ctx, userID)
@@ -72,4 +78,9 @@ func (s *Service) RevokeAdmin(ctx context.Context, userID, actorUserID uuid.UUID
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func lockAdminGrantSet(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx, `select pg_advisory_xact_lock(172033, 1)`)
+	return err
 }

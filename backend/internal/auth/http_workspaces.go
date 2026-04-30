@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -16,11 +17,6 @@ import (
 // `/t/{workspaceId}`: PATCH / and DELETE /. Caller wires RequireSession +
 // RequireMembership upstream. Restore is mounted separately because it must
 // be able to load soft-deleted workspaces.
-//
-// RequireFreshReauth is deliberately NOT mounted here — Plan 4 adds the
-// /auth/reauth endpoint and re-mounts the step-up middleware across these
-// routes at that point (spec §5.6). RequireRole(RoleOwner) is the only
-// authorisation gate in Plan 2.
 func (h *Handler) MountWorkspaceAdmin(r chi.Router) {
 	owner := RequireRole(identity.RoleOwner)
 	fresh := RequireFreshReauth(h.svc.cfg.ReauthWindow)
@@ -176,6 +172,10 @@ func (h *Handler) removeOrLeaveMember(w http.ResponseWriter, r *http.Request) {
 				"only owners can remove other members")
 			return
 		}
+		if !hasFreshReauth(r, h.svc.cfg.ReauthWindow) {
+			httpx.WriteError(w, http.StatusForbidden, "reauth_required", "re-authentication required")
+			return
+		}
 		err = h.svc.identity.RemoveMember(r.Context(), workspace.ID, userID)
 		action = "member.removed"
 	}
@@ -198,4 +198,9 @@ func (h *Handler) removeOrLeaveMember(w http.ResponseWriter, r *http.Request) {
 	h.svc.WriteAudit(r.Context(), workspace.ID, actor.ID, action,
 		"membership", userID, nil, nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func hasFreshReauth(r *http.Request, window time.Duration) bool {
+	sess, ok := SessionFromCtx(r.Context())
+	return ok && sess.ReauthAt != nil && time.Since(*sess.ReauthAt) < window
 }

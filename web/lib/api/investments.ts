@@ -1,60 +1,7 @@
 // Folio investments API surface. Mirrors backend/internal/investments shapes.
 // Workspace-scoped routes live under /api/v1/t/{workspaceId}/investments/*.
 
-const CSRF_HEADER_NAME = "X-Folio-Request";
-const CSRF_HEADER_VALUE = "1";
-
-const baseUrl =
-  typeof window === "undefined"
-    ? (process.env.API_URL ?? "http://localhost:8080")
-    : ""; // browser uses Next rewrite
-
-class ApiError extends Error {
-  status: number;
-  body: unknown;
-  constructor(status: number, body: unknown) {
-    const msg =
-      typeof body === "object" && body !== null && "error" in body
-        ? String((body as { error: string }).error)
-        : `Request failed (${status})`;
-    super(msg);
-    this.status = status;
-    this.body = body;
-  }
-}
-
-async function request<T>(
-  path: string,
-  init: RequestInit & { json?: unknown } = {}
-): Promise<T> {
-  const { json, headers, ...rest } = init;
-  const merged: Record<string, string> = {
-    [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE,
-    ...((headers as Record<string, string> | undefined) ?? {}),
-  };
-  let body = rest.body;
-  if (json !== undefined) {
-    merged["Content-Type"] = "application/json";
-    body = JSON.stringify(json);
-  }
-  const res = await fetch(`${baseUrl}${path}`, {
-    ...rest,
-    credentials: "include",
-    headers: merged,
-    body,
-  });
-  if (!res.ok) {
-    let parsed: unknown;
-    try {
-      parsed = await res.json();
-    } catch {
-      parsed = undefined;
-    }
-    throw new ApiError(res.status, parsed);
-  }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
-}
+import { ApiError, request, uploadRequest } from "./_request";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -480,28 +427,10 @@ export async function uploadInvestmentImport(
 ): Promise<ImportSummary> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(
-    `${baseUrl}/api/v1/t/${workspaceId}/accounts/import-preview`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE },
-      body: form,
-    }
-  );
-  if (!res.ok) {
-    let parsed: unknown;
-    try {
-      parsed = await res.json();
-    } catch {
-      parsed = undefined;
-    }
-    throw new ApiError(res.status, parsed);
-  }
-  const body = (await res.json()) as {
+  const body = await uploadRequest<{
     kind?: string;
     investment?: { summary?: ImportSummary };
-  };
+  }>(`/api/v1/t/${workspaceId}/accounts/import-preview`, form);
   if (body.kind !== "investment" || !body.investment?.summary) {
     throw new ApiError(400, {
       error: "file was not recognised as an investment import",

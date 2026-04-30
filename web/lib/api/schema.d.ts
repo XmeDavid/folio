@@ -271,11 +271,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/accounts": {
+    "/api/v1/workspaces": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a workspace for the current user */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WorkspaceCreateInput"];
+                };
+            };
+            responses: {
+                /** @description Created workspace and owner membership */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspaceCreateResult"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/t/{workspaceId}/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         /** List accounts for current workspace */
@@ -285,7 +328,10 @@ export interface paths {
                     includeArchived?: boolean;
                 };
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody?: never;
@@ -307,7 +353,10 @@ export interface paths {
             parameters: {
                 query?: never;
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody: {
@@ -333,11 +382,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/accounts/order": {
+    "/api/v1/t/{workspaceId}/accounts/order": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         get?: never;
@@ -346,7 +398,10 @@ export interface paths {
             parameters: {
                 query?: never;
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody: {
@@ -371,11 +426,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/accounts/groups": {
+    "/api/v1/t/{workspaceId}/accounts/groups": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         /** List account groups for current workspace */
@@ -385,7 +443,10 @@ export interface paths {
                     includeArchived?: boolean;
                 };
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody?: never;
@@ -407,7 +468,10 @@ export interface paths {
             parameters: {
                 query?: never;
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody: {
@@ -433,11 +497,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/accounts/groups/{groupId}": {
+    "/api/v1/t/{workspaceId}/accounts/groups/{groupId}": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         get?: never;
@@ -449,6 +516,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     groupId: string;
                 };
                 cookie?: never;
@@ -472,6 +541,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     groupId: string;
                 };
                 cookie?: never;
@@ -495,11 +566,14 @@ export interface paths {
         };
         trace?: never;
     };
-    "/api/v1/accounts/{accountId}": {
+    "/api/v1/t/{workspaceId}/accounts/{accountId}": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         /** Get an account */
@@ -508,6 +582,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     accountId: string;
                 };
                 cookie?: never;
@@ -536,6 +612,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     accountId: string;
                 };
                 cookie?: never;
@@ -559,16 +637,19 @@ export interface paths {
         };
         trace?: never;
     };
-    "/api/v1/transactions": {
+    "/api/v1/t/{workspaceId}/transactions": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         /**
          * List transactions for current workspace
-         * @description Workspace is taken from the `X-Workspace-ID` context — never from the body.
+         * @description Workspace is taken from the `{workspaceId}` path parameter — never from the body.
          *     Results are ordered by `bookedAt DESC, id DESC`.
          */
         get: {
@@ -603,7 +684,10 @@ export interface paths {
                     offset?: number;
                 };
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody?: never;
@@ -622,7 +706,7 @@ export interface paths {
         put?: never;
         /**
          * Create a manual transaction
-         * @description Manual ledger entry. `workspaceId` is resolved from `X-Workspace-ID`.
+         * @description Manual ledger entry. `workspaceId` is resolved from the path.
          *     `currency` must match the account currency (also enforced by a
          *     database trigger). Status defaults to `posted`.
          */
@@ -630,7 +714,10 @@ export interface paths {
             parameters: {
                 query?: never;
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody: {
@@ -656,11 +743,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/transactions/{transactionId}": {
+    "/api/v1/t/{workspaceId}/transactions/{transactionId}": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         /** Get a transaction */
@@ -669,6 +759,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     transactionId: string;
                 };
                 cookie?: never;
@@ -694,6 +786,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     transactionId: string;
                 };
                 cookie?: never;
@@ -723,6 +817,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     transactionId: string;
                 };
                 cookie?: never;
@@ -746,11 +842,14 @@ export interface paths {
         };
         trace?: never;
     };
-    "/api/v1/transactions/{transactionId}/tags/{tagId}": {
+    "/api/v1/t/{workspaceId}/transactions/{transactionId}/tags/{tagId}": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         get?: never;
@@ -764,6 +863,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     transactionId: string;
                     tagId: string;
                 };
@@ -790,6 +891,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     transactionId: string;
                     tagId: string;
                 };
@@ -811,11 +914,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/categories": {
+    "/api/v1/t/{workspaceId}/categories": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         /** List categories for current workspace */
@@ -825,7 +931,10 @@ export interface paths {
                     includeArchived?: boolean;
                 };
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody?: never;
@@ -847,7 +956,10 @@ export interface paths {
             parameters: {
                 query?: never;
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody: {
@@ -873,11 +985,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/categories/{categoryId}": {
+    "/api/v1/t/{workspaceId}/categories/{categoryId}": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         /** Get a category */
@@ -886,6 +1001,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     categoryId: string;
                 };
                 cookie?: never;
@@ -916,6 +1033,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     categoryId: string;
                 };
                 cookie?: never;
@@ -939,6 +1058,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     categoryId: string;
                 };
                 cookie?: never;
@@ -962,11 +1083,14 @@ export interface paths {
         };
         trace?: never;
     };
-    "/api/v1/merchants": {
+    "/api/v1/t/{workspaceId}/merchants": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         /** List merchants for current workspace */
@@ -976,7 +1100,10 @@ export interface paths {
                     includeArchived?: boolean;
                 };
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody?: never;
@@ -998,7 +1125,10 @@ export interface paths {
             parameters: {
                 query?: never;
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody: {
@@ -1024,11 +1154,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/merchants/{merchantId}": {
+    "/api/v1/t/{workspaceId}/merchants/{merchantId}": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         /** Get a merchant */
@@ -1037,6 +1170,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     merchantId: string;
                 };
                 cookie?: never;
@@ -1062,6 +1197,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     merchantId: string;
                 };
                 cookie?: never;
@@ -1085,6 +1222,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     merchantId: string;
                 };
                 cookie?: never;
@@ -1108,11 +1247,14 @@ export interface paths {
         };
         trace?: never;
     };
-    "/api/v1/tags": {
+    "/api/v1/t/{workspaceId}/tags": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         /** List tags for current workspace */
@@ -1122,7 +1264,10 @@ export interface paths {
                     includeArchived?: boolean;
                 };
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody?: never;
@@ -1144,7 +1289,10 @@ export interface paths {
             parameters: {
                 query?: never;
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody: {
@@ -1170,11 +1318,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/tags/{tagId}": {
+    "/api/v1/t/{workspaceId}/tags/{tagId}": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         /** Get a tag */
@@ -1183,6 +1334,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     tagId: string;
                 };
                 cookie?: never;
@@ -1208,6 +1361,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     tagId: string;
                 };
                 cookie?: never;
@@ -1231,6 +1386,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     tagId: string;
                 };
                 cookie?: never;
@@ -1254,11 +1411,14 @@ export interface paths {
         };
         trace?: never;
     };
-    "/api/v1/categorization-rules": {
+    "/api/v1/t/{workspaceId}/categorization-rules": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         /**
@@ -1276,7 +1436,10 @@ export interface paths {
                     enabled?: boolean;
                 };
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody?: never;
@@ -1298,7 +1461,10 @@ export interface paths {
             parameters: {
                 query?: never;
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
+                };
                 cookie?: never;
             };
             requestBody: {
@@ -1324,11 +1490,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/categorization-rules/{ruleId}": {
+    "/api/v1/t/{workspaceId}/categorization-rules/{ruleId}": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         /** Get a categorization rule */
@@ -1337,6 +1506,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     ruleId: string;
                 };
                 cookie?: never;
@@ -1366,6 +1537,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     ruleId: string;
                 };
                 cookie?: never;
@@ -1393,6 +1566,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     ruleId: string;
                 };
                 cookie?: never;
@@ -1416,11 +1591,14 @@ export interface paths {
         };
         trace?: never;
     };
-    "/api/v1/transactions/{transactionId}/apply-categorization-rules": {
+    "/api/v1/t/{workspaceId}/transactions/{transactionId}/apply-categorization-rules": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Workspace id resolved from the authenticated user's memberships. */
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
             cookie?: never;
         };
         get?: never;
@@ -1440,6 +1618,8 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Workspace id resolved from the authenticated user's memberships. */
+                    workspaceId: components["parameters"]["WorkspaceId"];
                     transactionId: string;
                 };
                 cookie?: never;
@@ -1533,6 +1713,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+            slug: string;
             /** @example CHF */
             baseCurrency: string;
             cycleAnchorDay: number;
@@ -1541,7 +1722,37 @@ export interface components {
             /** @example Europe/Zurich */
             timezone: string;
             /** Format: date-time */
+            deletedAt?: string;
+            /** Format: date-time */
             createdAt: string;
+        };
+        WorkspaceCreateInput: {
+            name: string;
+            /** @example CHF */
+            baseCurrency: string;
+            /** @default 1 */
+            cycleAnchorDay: number;
+            /** @example en-CH */
+            locale: string;
+            /**
+             * @default UTC
+             * @example Europe/Zurich
+             */
+            timezone: string;
+        };
+        Membership: {
+            /** Format: uuid */
+            workspaceId: string;
+            /** Format: uuid */
+            userId: string;
+            /** @enum {string} */
+            role: "owner" | "member";
+            /** Format: date-time */
+            createdAt: string;
+        };
+        WorkspaceCreateResult: {
+            workspace: components["schemas"]["Workspace"];
+            membership: components["schemas"]["Membership"];
         };
         BootstrapInput: {
             workspaceName: string;
@@ -1974,7 +2185,10 @@ export interface components {
         };
     };
     responses: never;
-    parameters: never;
+    parameters: {
+        /** @description Workspace id resolved from the authenticated user's memberships. */
+        WorkspaceId: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;

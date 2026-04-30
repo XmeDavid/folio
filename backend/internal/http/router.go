@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -47,11 +46,7 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(chimw.Timeout(60 * time.Second))
 	r.Use(requestLogger(d.Logger))
 
-	appURL := os.Getenv("APP_URL")
-	if appURL == "" {
-		appURL = "http://localhost:3000"
-	}
-	r.Use(auth.CSRF([]string{appURL}))
+	r.Use(auth.CSRF([]string{d.Cfg.AppURL}))
 
 	r.Get("/healthz", health(d))
 	r.Get("/readyz", ready(d))
@@ -61,7 +56,7 @@ func NewRouter(d Deps) http.Handler {
 	platformInviteSvc := identity.NewPlatformInviteService(d.DB)
 	adminSvc := admin.NewService(d.DB).WithJobs(d.Jobs).WithMailer(d.Mailer)
 	authSvc := auth.NewService(d.DB, identitySvc, platformInviteSvc, auth.Config{
-		Registration:       auth.RegistrationMode(os.Getenv("REGISTRATION_MODE")),
+		Registration:       auth.RegistrationMode(d.Cfg.RegistrationMode),
 		AppURL:             d.Cfg.AppURL,
 		SecretKey:          d.Cfg.EncryptionKey,
 		MFAChallengeTTL:    d.Cfg.MFAChallengeTTL,
@@ -71,7 +66,7 @@ func NewRouter(d Deps) http.Handler {
 		WebAuthnOrigins:    d.Cfg.WebAuthnRPOrigins,
 		Jobs:               d.Jobs,
 		AdminBootstrapHook: adminSvc.EnsureBootstrapAdminTx,
-		SecureCookies:      os.Getenv("APP_ENV") != "development",
+		SecureCookies:      d.Cfg.AppEnv != "development",
 	})
 	authH := auth.NewHandler(authSvc)
 	inviteH := auth.NewInviteHandler(authSvc, inviteSvc, d.Mailer)
@@ -96,7 +91,7 @@ func NewRouter(d Deps) http.Handler {
 	// for offline development, set MARKETDATA_OFFLINE=1.
 	var priceProvider marketdata.PriceProvider
 	var fxProvider marketdata.FXProvider
-	if os.Getenv("MARKETDATA_OFFLINE") == "" {
+	if !d.Cfg.MarketdataOffline {
 		priceProvider = marketdata.NewYahooProvider()
 		fxProvider = marketdata.NewFrankfurterProvider()
 	}

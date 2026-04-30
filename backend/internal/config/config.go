@@ -12,6 +12,7 @@ import (
 type Config struct {
 	AppEnv              string
 	AppURL              string
+	RegistrationMode    string
 	HTTPAddr            string
 	LogLevel            string
 	DatabaseURL         string
@@ -27,12 +28,14 @@ type Config struct {
 	SentryDSN           string
 	ResendAPIKey        string
 	EmailFrom           string
+	MarketdataOffline   bool
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
 		AppEnv:              env("APP_ENV", "development"),
 		AppURL:              env("APP_URL", "http://localhost:3000"),
+		RegistrationMode:    os.Getenv("REGISTRATION_MODE"),
 		HTTPAddr:            env("HTTP_ADDR", ":8080"),
 		LogLevel:            env("LOG_LEVEL", "info"),
 		DatabaseURL:         os.Getenv("DATABASE_URL"),
@@ -46,6 +49,7 @@ func Load() (*Config, error) {
 		SentryDSN:           os.Getenv("SENTRY_DSN"),
 		ResendAPIKey:        os.Getenv("RESEND_API_KEY"),
 		EmailFrom:           env("EMAIL_FROM", "Folio <onboarding@localhost>"),
+		MarketdataOffline:   os.Getenv("MARKETDATA_OFFLINE") != "",
 	}
 
 	if cfg.DatabaseURL == "" {

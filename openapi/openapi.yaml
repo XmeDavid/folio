@@ -122,7 +122,7 @@ paths:
       tags: [auth]
       summary: Current workspace user
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       responses:
         "200":
           description: Current user and workspace
@@ -130,12 +130,30 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MeResult" }
 
-  /api/v1/accounts:
+  /api/v1/workspaces:
+    post:
+      tags: [auth]
+      summary: Create a workspace for the current user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkspaceCreateInput" }
+      responses:
+        "201":
+          description: Created workspace and owner membership
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceCreateResult" }
+
+  /api/v1/t/{workspaceId}/accounts:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       tags: [accounts]
       summary: List accounts for current workspace
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: includeArchived
           in: query
@@ -152,7 +170,7 @@ paths:
       tags: [accounts]
       summary: Create an account and opening balance snapshot
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       requestBody:
         required: true
         content:
@@ -165,12 +183,14 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Account" }
 
-  /api/v1/accounts/order:
+  /api/v1/t/{workspaceId}/accounts/order:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     put:
       tags: [accounts]
       summary: Reorder account groups and accounts
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       requestBody:
         required: true
         content:
@@ -180,12 +200,14 @@ paths:
         "204":
           description: Reordered
 
-  /api/v1/accounts/groups:
+  /api/v1/t/{workspaceId}/accounts/groups:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       tags: [accounts]
       summary: List account groups for current workspace
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: includeArchived
           in: query
@@ -202,7 +224,7 @@ paths:
       tags: [accounts]
       summary: Create an account group
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       requestBody:
         required: true
         content:
@@ -215,12 +237,14 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AccountGroup" }
 
-  /api/v1/accounts/groups/{groupId}:
+  /api/v1/t/{workspaceId}/accounts/groups/{groupId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     patch:
       tags: [accounts]
       summary: Update an account group
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: groupId
           in: path
@@ -241,7 +265,7 @@ paths:
       tags: [accounts]
       summary: Delete an account group
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: groupId
           in: path
@@ -251,12 +275,14 @@ paths:
         "204":
           description: Deleted
 
-  /api/v1/accounts/{accountId}:
+  /api/v1/t/{workspaceId}/accounts/{accountId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       tags: [accounts]
       summary: Get an account
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: accountId
           in: path
@@ -272,7 +298,7 @@ paths:
       tags: [accounts]
       summary: Update mutable account fields
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: accountId
           in: path
@@ -290,15 +316,17 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Account" }
 
-  /api/v1/transactions:
+  /api/v1/t/{workspaceId}/transactions:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       tags: [transactions]
       summary: List transactions for current workspace
       description: |
-        Workspace is taken from the `X-Workspace-ID` context — never from the body.
+        Workspace is taken from the `{workspaceId}` path parameter — never from the body.
         Results are ordered by `bookedAt DESC, id DESC`.
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: accountId
           in: query
@@ -363,11 +391,11 @@ paths:
       tags: [transactions]
       summary: Create a manual transaction
       description: |
-        Manual ledger entry. `workspaceId` is resolved from `X-Workspace-ID`.
+        Manual ledger entry. `workspaceId` is resolved from the path.
         `currency` must match the account currency (also enforced by a
         database trigger). Status defaults to `posted`.
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       requestBody:
         required: true
         content:
@@ -380,12 +408,14 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Transaction" }
 
-  /api/v1/transactions/{transactionId}:
+  /api/v1/t/{workspaceId}/transactions/{transactionId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       tags: [transactions]
       summary: Get a transaction
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: transactionId
           in: path
@@ -406,7 +436,7 @@ paths:
         accept an empty string to clear. `countAsExpense` accepts `true`,
         `false`, or `null` to clear.
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: transactionId
           in: path
@@ -427,7 +457,7 @@ paths:
       tags: [transactions]
       summary: Hard-delete a transaction (v1 — replace with soft-delete later)
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: transactionId
           in: path
@@ -436,7 +466,9 @@ paths:
       responses:
         "204": { description: No content }
 
-  /api/v1/transactions/{transactionId}/tags/{tagId}:
+  /api/v1/t/{workspaceId}/transactions/{transactionId}/tags/{tagId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     put:
       tags: [transactions, tags]
       summary: Apply a tag to a transaction
@@ -444,7 +476,7 @@ paths:
         Idempotent: applying an already-applied tag returns 204 without
         creating a duplicate row.
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: transactionId
           in: path
@@ -462,7 +494,7 @@ paths:
       description: |
         Idempotent: removing an unapplied tag returns 204.
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: transactionId
           in: path
@@ -475,12 +507,14 @@ paths:
       responses:
         "204": { description: Removed }
 
-  /api/v1/categories:
+  /api/v1/t/{workspaceId}/categories:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       tags: [categories]
       summary: List categories for current workspace
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: includeArchived
           in: query
@@ -497,7 +531,7 @@ paths:
       tags: [categories]
       summary: Create a category
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       requestBody:
         required: true
         content:
@@ -510,12 +544,14 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Category" }
 
-  /api/v1/categories/{categoryId}:
+  /api/v1/t/{workspaceId}/categories/{categoryId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       tags: [categories]
       summary: Get a category
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: categoryId
           in: path
@@ -531,7 +567,7 @@ paths:
       tags: [categories]
       summary: Update a category
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: categoryId
           in: path
@@ -556,7 +592,7 @@ paths:
         already-archived category returns 204 without overwriting the
         timestamp.
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: categoryId
           in: path
@@ -565,12 +601,14 @@ paths:
       responses:
         "204": { description: Archived }
 
-  /api/v1/merchants:
+  /api/v1/t/{workspaceId}/merchants:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       tags: [merchants]
       summary: List merchants for current workspace
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: includeArchived
           in: query
@@ -587,7 +625,7 @@ paths:
       tags: [merchants]
       summary: Create a merchant
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       requestBody:
         required: true
         content:
@@ -600,12 +638,14 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Merchant" }
 
-  /api/v1/merchants/{merchantId}:
+  /api/v1/t/{workspaceId}/merchants/{merchantId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       tags: [merchants]
       summary: Get a merchant
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: merchantId
           in: path
@@ -621,7 +661,7 @@ paths:
       tags: [merchants]
       summary: Update a merchant
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: merchantId
           in: path
@@ -642,7 +682,7 @@ paths:
       tags: [merchants]
       summary: Archive a merchant (soft delete)
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: merchantId
           in: path
@@ -651,12 +691,14 @@ paths:
       responses:
         "204": { description: Archived }
 
-  /api/v1/tags:
+  /api/v1/t/{workspaceId}/tags:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       tags: [tags]
       summary: List tags for current workspace
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: includeArchived
           in: query
@@ -673,7 +715,7 @@ paths:
       tags: [tags]
       summary: Create a tag
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       requestBody:
         required: true
         content:
@@ -686,12 +728,14 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Tag" }
 
-  /api/v1/tags/{tagId}:
+  /api/v1/t/{workspaceId}/tags/{tagId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       tags: [tags]
       summary: Get a tag
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: tagId
           in: path
@@ -707,7 +751,7 @@ paths:
       tags: [tags]
       summary: Update a tag
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: tagId
           in: path
@@ -728,7 +772,7 @@ paths:
       tags: [tags]
       summary: Archive a tag (soft delete)
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: tagId
           in: path
@@ -737,7 +781,9 @@ paths:
       responses:
         "204": { description: Archived }
 
-  /api/v1/categorization-rules:
+  /api/v1/t/{workspaceId}/categorization-rules:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       tags: [categorization-rules]
       summary: List categorization rules for current workspace
@@ -745,7 +791,7 @@ paths:
         Rules are returned ordered by `priority` ascending, then `createdAt`
         ascending. All rules (enabled and disabled) are listed by default.
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: enabled
           in: query
@@ -765,7 +811,7 @@ paths:
       tags: [categorization-rules]
       summary: Create a categorization rule
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       requestBody:
         required: true
         content:
@@ -778,12 +824,14 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CategorizationRule" }
 
-  /api/v1/categorization-rules/{ruleId}:
+  /api/v1/t/{workspaceId}/categorization-rules/{ruleId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       tags: [categorization-rules]
       summary: Get a categorization rule
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: ruleId
           in: path
@@ -802,7 +850,7 @@ paths:
         `when` and `then` are replaced wholesale when present; partial DSL
         merge is intentionally out of scope.
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: ruleId
           in: path
@@ -826,7 +874,7 @@ paths:
         Hard-deletes the rule row. Rules are configuration; the audit table
         records the deletion.
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: ruleId
           in: path
@@ -835,7 +883,9 @@ paths:
       responses:
         "204": { description: Deleted }
 
-  /api/v1/transactions/{transactionId}/apply-categorization-rules:
+  /api/v1/t/{workspaceId}/transactions/{transactionId}/apply-categorization-rules:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
     post:
       tags: [transactions, categorization-rules]
       summary: Apply the first matching categorization rule to a transaction
@@ -848,7 +898,7 @@ paths:
         with the current time. When no rule matches, the transaction is
         returned unchanged with `matched: false`.
       security:
-        - workspaceHeader: []
+        - sessionCookie: []
       parameters:
         - name: transactionId
           in: path
@@ -887,16 +937,19 @@ paths:
                   consentUrl:    { type: string, format: uri }
 
 components:
+  parameters:
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Workspace id resolved from the authenticated user's memberships.
+
   securitySchemes:
     sessionCookie:
       type: apiKey
       in: cookie
       name: folio_session
-    workspaceHeader:
-      type: apiKey
-      in: header
-      name: X-Workspace-ID
-      description: Temporary development workspace resolver until session auth lands.
 
   schemas:
     Version:
@@ -918,15 +971,43 @@ components:
 
     Workspace:
       type: object
-      required: [id, name, baseCurrency, cycleAnchorDay, locale, timezone, createdAt]
+      required: [id, name, slug, baseCurrency, cycleAnchorDay, locale, timezone, createdAt]
       properties:
         id:             { type: string, format: uuid }
         name:           { type: string }
+        slug:           { type: string }
         baseCurrency:   { type: string, example: CHF }
         cycleAnchorDay: { type: integer, minimum: 1, maximum: 31 }
         locale:         { type: string, example: en-CH }
         timezone:       { type: string, example: Europe/Zurich }
+        deletedAt:      { type: string, format: date-time }
         createdAt:      { type: string, format: date-time }
+
+    WorkspaceCreateInput:
+      type: object
+      required: [name, baseCurrency, locale]
+      properties:
+        name:           { type: string, minLength: 1 }
+        baseCurrency:   { type: string, example: CHF }
+        cycleAnchorDay: { type: integer, minimum: 1, maximum: 31, default: 1 }
+        locale:         { type: string, example: en-CH }
+        timezone:       { type: string, example: Europe/Zurich, default: UTC }
+
+    Membership:
+      type: object
+      required: [workspaceId, userId, role, createdAt]
+      properties:
+        workspaceId: { type: string, format: uuid }
+        userId:      { type: string, format: uuid }
+        role:        { type: string, enum: [owner, member] }
+        createdAt:   { type: string, format: date-time }
+
+    WorkspaceCreateResult:
+      type: object
+      required: [workspace, membership]
+      properties:
+        workspace:  { $ref: "#/components/schemas/Workspace" }
+        membership: { $ref: "#/components/schemas/Membership" }
 
     BootstrapInput:
       type: object

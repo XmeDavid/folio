@@ -3760,6 +3760,17 @@ type TransferMatch struct {
 	CreatedAt                time.Time       `json:"created_at"`
 }
 
+type TransferMatchCandidate struct {
+	ID                      uuid.UUID   `json:"id"`
+	WorkspaceID             uuid.UUID   `json:"workspace_id"`
+	SourceTransactionID     uuid.UUID   `json:"source_transaction_id"`
+	CandidateDestinationIds []uuid.UUID `json:"candidate_destination_ids"`
+	Status                  string      `json:"status"`
+	SuggestedAt             time.Time   `json:"suggested_at"`
+	ResolvedAt              *time.Time  `json:"resolved_at"`
+	ResolvedByUserID        *uuid.UUID  `json:"resolved_by_user_id"`
+}
+
 type Trip struct {
 	ID            uuid.UUID      `json:"id"`
 	WorkspaceID   uuid.UUID      `json:"workspace_id"`

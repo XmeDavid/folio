@@ -24,8 +24,7 @@ import (
 )
 
 const (
-	SessionCookieScopes   = "sessionCookie.Scopes"
-	WorkspaceHeaderScopes = "workspaceHeader.Scopes"
+	SessionCookieScopes = "sessionCookie.Scopes"
 )
 
 // Defines values for AccountKind.
@@ -88,6 +87,24 @@ func (e CategorizationRuleWhenAmountSign) Valid() bool {
 	case Credit:
 		return true
 	case Debit:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MembershipRole.
+const (
+	Member MembershipRole = "member"
+	Owner  MembershipRole = "owner"
+)
+
+// Valid indicates whether the value is a known member of the MembershipRole enum.
+func (e MembershipRole) Valid() bool {
+	switch e {
+	case Member:
+		return true
+	case Owner:
 		return true
 	default:
 		return false
@@ -387,6 +404,17 @@ type MeResult struct {
 	Workspace Workspace `json:"workspace"`
 }
 
+// Membership defines model for Membership.
+type Membership struct {
+	CreatedAt   time.Time          `json:"createdAt"`
+	Role        MembershipRole     `json:"role"`
+	UserId      openapi_types.UUID `json:"userId"`
+	WorkspaceId openapi_types.UUID `json:"workspaceId"`
+}
+
+// MembershipRole defines model for Membership.Role.
+type MembershipRole string
+
 // Merchant defines model for Merchant.
 type Merchant struct {
 	ArchivedAt        *time.Time          `json:"archivedAt,omitempty"`
@@ -558,38 +586,31 @@ type Workspace struct {
 	BaseCurrency   string             `json:"baseCurrency"`
 	CreatedAt      time.Time          `json:"createdAt"`
 	CycleAnchorDay int                `json:"cycleAnchorDay"`
+	DeletedAt      *time.Time         `json:"deletedAt,omitempty"`
 	Id             openapi_types.UUID `json:"id"`
 	Locale         string             `json:"locale"`
 	Name           string             `json:"name"`
+	Slug           string             `json:"slug"`
 	Timezone       string             `json:"timezone"`
 }
 
-// GetApiV1AccountsParams defines parameters for GetApiV1Accounts.
-type GetApiV1AccountsParams struct {
-	IncludeArchived *bool `form:"includeArchived,omitempty" json:"includeArchived,omitempty"`
+// WorkspaceCreateInput defines model for WorkspaceCreateInput.
+type WorkspaceCreateInput struct {
+	BaseCurrency   string  `json:"baseCurrency"`
+	CycleAnchorDay *int    `json:"cycleAnchorDay,omitempty"`
+	Locale         string  `json:"locale"`
+	Name           string  `json:"name"`
+	Timezone       *string `json:"timezone,omitempty"`
 }
 
-// GetApiV1AccountsGroupsParams defines parameters for GetApiV1AccountsGroups.
-type GetApiV1AccountsGroupsParams struct {
-	IncludeArchived *bool `form:"includeArchived,omitempty" json:"includeArchived,omitempty"`
+// WorkspaceCreateResult defines model for WorkspaceCreateResult.
+type WorkspaceCreateResult struct {
+	Membership Membership `json:"membership"`
+	Workspace  Workspace  `json:"workspace"`
 }
 
-// GetApiV1CategoriesParams defines parameters for GetApiV1Categories.
-type GetApiV1CategoriesParams struct {
-	IncludeArchived *bool `form:"includeArchived,omitempty" json:"includeArchived,omitempty"`
-}
-
-// GetApiV1CategorizationRulesParams defines parameters for GetApiV1CategorizationRules.
-type GetApiV1CategorizationRulesParams struct {
-	// Enabled Optional filter. When `true`, only enabled rules are returned;
-	// when `false`, only disabled rules. Any other value is ignored.
-	Enabled *bool `form:"enabled,omitempty" json:"enabled,omitempty"`
-}
-
-// GetApiV1MerchantsParams defines parameters for GetApiV1Merchants.
-type GetApiV1MerchantsParams struct {
-	IncludeArchived *bool `form:"includeArchived,omitempty" json:"includeArchived,omitempty"`
-}
+// WorkspaceId defines model for WorkspaceId.
+type WorkspaceId = openapi_types.UUID
 
 // PostApiV1ProvidersGocardlessRequisitionsJSONBody defines parameters for PostApiV1ProvidersGocardlessRequisitions.
 type PostApiV1ProvidersGocardlessRequisitionsJSONBody struct {
@@ -597,13 +618,40 @@ type PostApiV1ProvidersGocardlessRequisitionsJSONBody struct {
 	Label         *string `json:"label,omitempty"`
 }
 
-// GetApiV1TagsParams defines parameters for GetApiV1Tags.
-type GetApiV1TagsParams struct {
+// GetApiV1TWorkspaceIdAccountsParams defines parameters for GetApiV1TWorkspaceIdAccounts.
+type GetApiV1TWorkspaceIdAccountsParams struct {
 	IncludeArchived *bool `form:"includeArchived,omitempty" json:"includeArchived,omitempty"`
 }
 
-// GetApiV1TransactionsParams defines parameters for GetApiV1Transactions.
-type GetApiV1TransactionsParams struct {
+// GetApiV1TWorkspaceIdAccountsGroupsParams defines parameters for GetApiV1TWorkspaceIdAccountsGroups.
+type GetApiV1TWorkspaceIdAccountsGroupsParams struct {
+	IncludeArchived *bool `form:"includeArchived,omitempty" json:"includeArchived,omitempty"`
+}
+
+// GetApiV1TWorkspaceIdCategoriesParams defines parameters for GetApiV1TWorkspaceIdCategories.
+type GetApiV1TWorkspaceIdCategoriesParams struct {
+	IncludeArchived *bool `form:"includeArchived,omitempty" json:"includeArchived,omitempty"`
+}
+
+// GetApiV1TWorkspaceIdCategorizationRulesParams defines parameters for GetApiV1TWorkspaceIdCategorizationRules.
+type GetApiV1TWorkspaceIdCategorizationRulesParams struct {
+	// Enabled Optional filter. When `true`, only enabled rules are returned;
+	// when `false`, only disabled rules. Any other value is ignored.
+	Enabled *bool `form:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// GetApiV1TWorkspaceIdMerchantsParams defines parameters for GetApiV1TWorkspaceIdMerchants.
+type GetApiV1TWorkspaceIdMerchantsParams struct {
+	IncludeArchived *bool `form:"includeArchived,omitempty" json:"includeArchived,omitempty"`
+}
+
+// GetApiV1TWorkspaceIdTagsParams defines parameters for GetApiV1TWorkspaceIdTags.
+type GetApiV1TWorkspaceIdTagsParams struct {
+	IncludeArchived *bool `form:"includeArchived,omitempty" json:"includeArchived,omitempty"`
+}
+
+// GetApiV1TWorkspaceIdTransactionsParams defines parameters for GetApiV1TWorkspaceIdTransactions.
+type GetApiV1TWorkspaceIdTransactionsParams struct {
 	AccountId  *openapi_types.UUID `form:"accountId,omitempty" json:"accountId,omitempty"`
 	CategoryId *openapi_types.UUID `form:"categoryId,omitempty" json:"categoryId,omitempty"`
 	MerchantId *openapi_types.UUID `form:"merchantId,omitempty" json:"merchantId,omitempty"`
@@ -634,44 +682,11 @@ type GetApiV1TransactionsParams struct {
 	Offset             *int  `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
-// PostApiV1AccountsJSONRequestBody defines body for PostApiV1Accounts for application/json ContentType.
-type PostApiV1AccountsJSONRequestBody = AccountCreateInput
-
-// PostApiV1AccountsGroupsJSONRequestBody defines body for PostApiV1AccountsGroups for application/json ContentType.
-type PostApiV1AccountsGroupsJSONRequestBody = AccountGroupCreateInput
-
-// PatchApiV1AccountsGroupsGroupIdJSONRequestBody defines body for PatchApiV1AccountsGroupsGroupId for application/json ContentType.
-type PatchApiV1AccountsGroupsGroupIdJSONRequestBody = AccountGroupUpdateInput
-
-// PutApiV1AccountsOrderJSONRequestBody defines body for PutApiV1AccountsOrder for application/json ContentType.
-type PutApiV1AccountsOrderJSONRequestBody = AccountReorderInput
-
-// PatchApiV1AccountsAccountIdJSONRequestBody defines body for PatchApiV1AccountsAccountId for application/json ContentType.
-type PatchApiV1AccountsAccountIdJSONRequestBody = AccountUpdateInput
-
 // PostApiV1AuthLoginJSONRequestBody defines body for PostApiV1AuthLogin for application/json ContentType.
 type PostApiV1AuthLoginJSONRequestBody = LoginInput
 
 // PostApiV1AuthRegisterJSONRequestBody defines body for PostApiV1AuthRegister for application/json ContentType.
 type PostApiV1AuthRegisterJSONRequestBody = RegisterInput
-
-// PostApiV1CategoriesJSONRequestBody defines body for PostApiV1Categories for application/json ContentType.
-type PostApiV1CategoriesJSONRequestBody = CategoryCreateInput
-
-// PatchApiV1CategoriesCategoryIdJSONRequestBody defines body for PatchApiV1CategoriesCategoryId for application/json ContentType.
-type PatchApiV1CategoriesCategoryIdJSONRequestBody = CategoryUpdateInput
-
-// PostApiV1CategorizationRulesJSONRequestBody defines body for PostApiV1CategorizationRules for application/json ContentType.
-type PostApiV1CategorizationRulesJSONRequestBody = CategorizationRuleCreateInput
-
-// PatchApiV1CategorizationRulesRuleIdJSONRequestBody defines body for PatchApiV1CategorizationRulesRuleId for application/json ContentType.
-type PatchApiV1CategorizationRulesRuleIdJSONRequestBody = CategorizationRuleUpdateInput
-
-// PostApiV1MerchantsJSONRequestBody defines body for PostApiV1Merchants for application/json ContentType.
-type PostApiV1MerchantsJSONRequestBody = MerchantCreateInput
-
-// PatchApiV1MerchantsMerchantIdJSONRequestBody defines body for PatchApiV1MerchantsMerchantId for application/json ContentType.
-type PatchApiV1MerchantsMerchantIdJSONRequestBody = MerchantUpdateInput
 
 // PostApiV1OnboardingBootstrapJSONRequestBody defines body for PostApiV1OnboardingBootstrap for application/json ContentType.
 type PostApiV1OnboardingBootstrapJSONRequestBody = BootstrapInput
@@ -679,47 +694,56 @@ type PostApiV1OnboardingBootstrapJSONRequestBody = BootstrapInput
 // PostApiV1ProvidersGocardlessRequisitionsJSONRequestBody defines body for PostApiV1ProvidersGocardlessRequisitions for application/json ContentType.
 type PostApiV1ProvidersGocardlessRequisitionsJSONRequestBody PostApiV1ProvidersGocardlessRequisitionsJSONBody
 
-// PostApiV1TagsJSONRequestBody defines body for PostApiV1Tags for application/json ContentType.
-type PostApiV1TagsJSONRequestBody = TagCreateInput
+// PostApiV1TWorkspaceIdAccountsJSONRequestBody defines body for PostApiV1TWorkspaceIdAccounts for application/json ContentType.
+type PostApiV1TWorkspaceIdAccountsJSONRequestBody = AccountCreateInput
 
-// PatchApiV1TagsTagIdJSONRequestBody defines body for PatchApiV1TagsTagId for application/json ContentType.
-type PatchApiV1TagsTagIdJSONRequestBody = TagUpdateInput
+// PostApiV1TWorkspaceIdAccountsGroupsJSONRequestBody defines body for PostApiV1TWorkspaceIdAccountsGroups for application/json ContentType.
+type PostApiV1TWorkspaceIdAccountsGroupsJSONRequestBody = AccountGroupCreateInput
 
-// PostApiV1TransactionsJSONRequestBody defines body for PostApiV1Transactions for application/json ContentType.
-type PostApiV1TransactionsJSONRequestBody = TransactionCreateInput
+// PatchApiV1TWorkspaceIdAccountsGroupsGroupIdJSONRequestBody defines body for PatchApiV1TWorkspaceIdAccountsGroupsGroupId for application/json ContentType.
+type PatchApiV1TWorkspaceIdAccountsGroupsGroupIdJSONRequestBody = AccountGroupUpdateInput
 
-// PatchApiV1TransactionsTransactionIdJSONRequestBody defines body for PatchApiV1TransactionsTransactionId for application/json ContentType.
-type PatchApiV1TransactionsTransactionIdJSONRequestBody = TransactionUpdateInput
+// PutApiV1TWorkspaceIdAccountsOrderJSONRequestBody defines body for PutApiV1TWorkspaceIdAccountsOrder for application/json ContentType.
+type PutApiV1TWorkspaceIdAccountsOrderJSONRequestBody = AccountReorderInput
+
+// PatchApiV1TWorkspaceIdAccountsAccountIdJSONRequestBody defines body for PatchApiV1TWorkspaceIdAccountsAccountId for application/json ContentType.
+type PatchApiV1TWorkspaceIdAccountsAccountIdJSONRequestBody = AccountUpdateInput
+
+// PostApiV1TWorkspaceIdCategoriesJSONRequestBody defines body for PostApiV1TWorkspaceIdCategories for application/json ContentType.
+type PostApiV1TWorkspaceIdCategoriesJSONRequestBody = CategoryCreateInput
+
+// PatchApiV1TWorkspaceIdCategoriesCategoryIdJSONRequestBody defines body for PatchApiV1TWorkspaceIdCategoriesCategoryId for application/json ContentType.
+type PatchApiV1TWorkspaceIdCategoriesCategoryIdJSONRequestBody = CategoryUpdateInput
+
+// PostApiV1TWorkspaceIdCategorizationRulesJSONRequestBody defines body for PostApiV1TWorkspaceIdCategorizationRules for application/json ContentType.
+type PostApiV1TWorkspaceIdCategorizationRulesJSONRequestBody = CategorizationRuleCreateInput
+
+// PatchApiV1TWorkspaceIdCategorizationRulesRuleIdJSONRequestBody defines body for PatchApiV1TWorkspaceIdCategorizationRulesRuleId for application/json ContentType.
+type PatchApiV1TWorkspaceIdCategorizationRulesRuleIdJSONRequestBody = CategorizationRuleUpdateInput
+
+// PostApiV1TWorkspaceIdMerchantsJSONRequestBody defines body for PostApiV1TWorkspaceIdMerchants for application/json ContentType.
+type PostApiV1TWorkspaceIdMerchantsJSONRequestBody = MerchantCreateInput
+
+// PatchApiV1TWorkspaceIdMerchantsMerchantIdJSONRequestBody defines body for PatchApiV1TWorkspaceIdMerchantsMerchantId for application/json ContentType.
+type PatchApiV1TWorkspaceIdMerchantsMerchantIdJSONRequestBody = MerchantUpdateInput
+
+// PostApiV1TWorkspaceIdTagsJSONRequestBody defines body for PostApiV1TWorkspaceIdTags for application/json ContentType.
+type PostApiV1TWorkspaceIdTagsJSONRequestBody = TagCreateInput
+
+// PatchApiV1TWorkspaceIdTagsTagIdJSONRequestBody defines body for PatchApiV1TWorkspaceIdTagsTagId for application/json ContentType.
+type PatchApiV1TWorkspaceIdTagsTagIdJSONRequestBody = TagUpdateInput
+
+// PostApiV1TWorkspaceIdTransactionsJSONRequestBody defines body for PostApiV1TWorkspaceIdTransactions for application/json ContentType.
+type PostApiV1TWorkspaceIdTransactionsJSONRequestBody = TransactionCreateInput
+
+// PatchApiV1TWorkspaceIdTransactionsTransactionIdJSONRequestBody defines body for PatchApiV1TWorkspaceIdTransactionsTransactionId for application/json ContentType.
+type PatchApiV1TWorkspaceIdTransactionsTransactionIdJSONRequestBody = TransactionUpdateInput
+
+// PostApiV1WorkspacesJSONRequestBody defines body for PostApiV1Workspaces for application/json ContentType.
+type PostApiV1WorkspacesJSONRequestBody = WorkspaceCreateInput
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// List accounts for current workspace
-	// (GET /api/v1/accounts)
-	GetApiV1Accounts(w http.ResponseWriter, r *http.Request, params GetApiV1AccountsParams)
-	// Create an account and opening balance snapshot
-	// (POST /api/v1/accounts)
-	PostApiV1Accounts(w http.ResponseWriter, r *http.Request)
-	// List account groups for current workspace
-	// (GET /api/v1/accounts/groups)
-	GetApiV1AccountsGroups(w http.ResponseWriter, r *http.Request, params GetApiV1AccountsGroupsParams)
-	// Create an account group
-	// (POST /api/v1/accounts/groups)
-	PostApiV1AccountsGroups(w http.ResponseWriter, r *http.Request)
-	// Delete an account group
-	// (DELETE /api/v1/accounts/groups/{groupId})
-	DeleteApiV1AccountsGroupsGroupId(w http.ResponseWriter, r *http.Request, groupId openapi_types.UUID)
-	// Update an account group
-	// (PATCH /api/v1/accounts/groups/{groupId})
-	PatchApiV1AccountsGroupsGroupId(w http.ResponseWriter, r *http.Request, groupId openapi_types.UUID)
-	// Reorder account groups and accounts
-	// (PUT /api/v1/accounts/order)
-	PutApiV1AccountsOrder(w http.ResponseWriter, r *http.Request)
-	// Get an account
-	// (GET /api/v1/accounts/{accountId})
-	GetApiV1AccountsAccountId(w http.ResponseWriter, r *http.Request, accountId openapi_types.UUID)
-	// Update mutable account fields
-	// (PATCH /api/v1/accounts/{accountId})
-	PatchApiV1AccountsAccountId(w http.ResponseWriter, r *http.Request, accountId openapi_types.UUID)
 	// Password login → sets session cookie
 	// (POST /api/v1/auth/login)
 	PostApiV1AuthLogin(w http.ResponseWriter, r *http.Request)
@@ -729,102 +753,132 @@ type ServerInterface interface {
 	// Create a new user account
 	// (POST /api/v1/auth/register)
 	PostApiV1AuthRegister(w http.ResponseWriter, r *http.Request)
-	// List categories for current workspace
-	// (GET /api/v1/categories)
-	GetApiV1Categories(w http.ResponseWriter, r *http.Request, params GetApiV1CategoriesParams)
-	// Create a category
-	// (POST /api/v1/categories)
-	PostApiV1Categories(w http.ResponseWriter, r *http.Request)
-	// Archive a category (soft delete)
-	// (DELETE /api/v1/categories/{categoryId})
-	DeleteApiV1CategoriesCategoryId(w http.ResponseWriter, r *http.Request, categoryId openapi_types.UUID)
-	// Get a category
-	// (GET /api/v1/categories/{categoryId})
-	GetApiV1CategoriesCategoryId(w http.ResponseWriter, r *http.Request, categoryId openapi_types.UUID)
-	// Update a category
-	// (PATCH /api/v1/categories/{categoryId})
-	PatchApiV1CategoriesCategoryId(w http.ResponseWriter, r *http.Request, categoryId openapi_types.UUID)
-	// List categorization rules for current workspace
-	// (GET /api/v1/categorization-rules)
-	GetApiV1CategorizationRules(w http.ResponseWriter, r *http.Request, params GetApiV1CategorizationRulesParams)
-	// Create a categorization rule
-	// (POST /api/v1/categorization-rules)
-	PostApiV1CategorizationRules(w http.ResponseWriter, r *http.Request)
-	// Delete a categorization rule
-	// (DELETE /api/v1/categorization-rules/{ruleId})
-	DeleteApiV1CategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, ruleId openapi_types.UUID)
-	// Get a categorization rule
-	// (GET /api/v1/categorization-rules/{ruleId})
-	GetApiV1CategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, ruleId openapi_types.UUID)
-	// Update a categorization rule
-	// (PATCH /api/v1/categorization-rules/{ruleId})
-	PatchApiV1CategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, ruleId openapi_types.UUID)
 	// Current workspace user
 	// (GET /api/v1/me)
 	GetApiV1Me(w http.ResponseWriter, r *http.Request)
-	// List merchants for current workspace
-	// (GET /api/v1/merchants)
-	GetApiV1Merchants(w http.ResponseWriter, r *http.Request, params GetApiV1MerchantsParams)
-	// Create a merchant
-	// (POST /api/v1/merchants)
-	PostApiV1Merchants(w http.ResponseWriter, r *http.Request)
-	// Archive a merchant (soft delete)
-	// (DELETE /api/v1/merchants/{merchantId})
-	DeleteApiV1MerchantsMerchantId(w http.ResponseWriter, r *http.Request, merchantId openapi_types.UUID)
-	// Get a merchant
-	// (GET /api/v1/merchants/{merchantId})
-	GetApiV1MerchantsMerchantId(w http.ResponseWriter, r *http.Request, merchantId openapi_types.UUID)
-	// Update a merchant
-	// (PATCH /api/v1/merchants/{merchantId})
-	PatchApiV1MerchantsMerchantId(w http.ResponseWriter, r *http.Request, merchantId openapi_types.UUID)
 	// Bootstrap a workspace and its first user
 	// (POST /api/v1/onboarding/bootstrap)
 	PostApiV1OnboardingBootstrap(w http.ResponseWriter, r *http.Request)
 	// Start a GoCardless bank connection (returns a consent URL)
 	// (POST /api/v1/providers/gocardless/requisitions)
 	PostApiV1ProvidersGocardlessRequisitions(w http.ResponseWriter, r *http.Request)
+	// List accounts for current workspace
+	// (GET /api/v1/t/{workspaceId}/accounts)
+	GetApiV1TWorkspaceIdAccounts(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdAccountsParams)
+	// Create an account and opening balance snapshot
+	// (POST /api/v1/t/{workspaceId}/accounts)
+	PostApiV1TWorkspaceIdAccounts(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId)
+	// List account groups for current workspace
+	// (GET /api/v1/t/{workspaceId}/accounts/groups)
+	GetApiV1TWorkspaceIdAccountsGroups(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdAccountsGroupsParams)
+	// Create an account group
+	// (POST /api/v1/t/{workspaceId}/accounts/groups)
+	PostApiV1TWorkspaceIdAccountsGroups(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId)
+	// Delete an account group
+	// (DELETE /api/v1/t/{workspaceId}/accounts/groups/{groupId})
+	DeleteApiV1TWorkspaceIdAccountsGroupsGroupId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, groupId openapi_types.UUID)
+	// Update an account group
+	// (PATCH /api/v1/t/{workspaceId}/accounts/groups/{groupId})
+	PatchApiV1TWorkspaceIdAccountsGroupsGroupId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, groupId openapi_types.UUID)
+	// Reorder account groups and accounts
+	// (PUT /api/v1/t/{workspaceId}/accounts/order)
+	PutApiV1TWorkspaceIdAccountsOrder(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId)
+	// Get an account
+	// (GET /api/v1/t/{workspaceId}/accounts/{accountId})
+	GetApiV1TWorkspaceIdAccountsAccountId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, accountId openapi_types.UUID)
+	// Update mutable account fields
+	// (PATCH /api/v1/t/{workspaceId}/accounts/{accountId})
+	PatchApiV1TWorkspaceIdAccountsAccountId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, accountId openapi_types.UUID)
+	// List categories for current workspace
+	// (GET /api/v1/t/{workspaceId}/categories)
+	GetApiV1TWorkspaceIdCategories(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdCategoriesParams)
+	// Create a category
+	// (POST /api/v1/t/{workspaceId}/categories)
+	PostApiV1TWorkspaceIdCategories(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId)
+	// Archive a category (soft delete)
+	// (DELETE /api/v1/t/{workspaceId}/categories/{categoryId})
+	DeleteApiV1TWorkspaceIdCategoriesCategoryId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, categoryId openapi_types.UUID)
+	// Get a category
+	// (GET /api/v1/t/{workspaceId}/categories/{categoryId})
+	GetApiV1TWorkspaceIdCategoriesCategoryId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, categoryId openapi_types.UUID)
+	// Update a category
+	// (PATCH /api/v1/t/{workspaceId}/categories/{categoryId})
+	PatchApiV1TWorkspaceIdCategoriesCategoryId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, categoryId openapi_types.UUID)
+	// List categorization rules for current workspace
+	// (GET /api/v1/t/{workspaceId}/categorization-rules)
+	GetApiV1TWorkspaceIdCategorizationRules(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdCategorizationRulesParams)
+	// Create a categorization rule
+	// (POST /api/v1/t/{workspaceId}/categorization-rules)
+	PostApiV1TWorkspaceIdCategorizationRules(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId)
+	// Delete a categorization rule
+	// (DELETE /api/v1/t/{workspaceId}/categorization-rules/{ruleId})
+	DeleteApiV1TWorkspaceIdCategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, ruleId openapi_types.UUID)
+	// Get a categorization rule
+	// (GET /api/v1/t/{workspaceId}/categorization-rules/{ruleId})
+	GetApiV1TWorkspaceIdCategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, ruleId openapi_types.UUID)
+	// Update a categorization rule
+	// (PATCH /api/v1/t/{workspaceId}/categorization-rules/{ruleId})
+	PatchApiV1TWorkspaceIdCategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, ruleId openapi_types.UUID)
+	// List merchants for current workspace
+	// (GET /api/v1/t/{workspaceId}/merchants)
+	GetApiV1TWorkspaceIdMerchants(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdMerchantsParams)
+	// Create a merchant
+	// (POST /api/v1/t/{workspaceId}/merchants)
+	PostApiV1TWorkspaceIdMerchants(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId)
+	// Archive a merchant (soft delete)
+	// (DELETE /api/v1/t/{workspaceId}/merchants/{merchantId})
+	DeleteApiV1TWorkspaceIdMerchantsMerchantId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, merchantId openapi_types.UUID)
+	// Get a merchant
+	// (GET /api/v1/t/{workspaceId}/merchants/{merchantId})
+	GetApiV1TWorkspaceIdMerchantsMerchantId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, merchantId openapi_types.UUID)
+	// Update a merchant
+	// (PATCH /api/v1/t/{workspaceId}/merchants/{merchantId})
+	PatchApiV1TWorkspaceIdMerchantsMerchantId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, merchantId openapi_types.UUID)
 	// List tags for current workspace
-	// (GET /api/v1/tags)
-	GetApiV1Tags(w http.ResponseWriter, r *http.Request, params GetApiV1TagsParams)
+	// (GET /api/v1/t/{workspaceId}/tags)
+	GetApiV1TWorkspaceIdTags(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdTagsParams)
 	// Create a tag
-	// (POST /api/v1/tags)
-	PostApiV1Tags(w http.ResponseWriter, r *http.Request)
+	// (POST /api/v1/t/{workspaceId}/tags)
+	PostApiV1TWorkspaceIdTags(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId)
 	// Archive a tag (soft delete)
-	// (DELETE /api/v1/tags/{tagId})
-	DeleteApiV1TagsTagId(w http.ResponseWriter, r *http.Request, tagId openapi_types.UUID)
+	// (DELETE /api/v1/t/{workspaceId}/tags/{tagId})
+	DeleteApiV1TWorkspaceIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, tagId openapi_types.UUID)
 	// Get a tag
-	// (GET /api/v1/tags/{tagId})
-	GetApiV1TagsTagId(w http.ResponseWriter, r *http.Request, tagId openapi_types.UUID)
+	// (GET /api/v1/t/{workspaceId}/tags/{tagId})
+	GetApiV1TWorkspaceIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, tagId openapi_types.UUID)
 	// Update a tag
-	// (PATCH /api/v1/tags/{tagId})
-	PatchApiV1TagsTagId(w http.ResponseWriter, r *http.Request, tagId openapi_types.UUID)
+	// (PATCH /api/v1/t/{workspaceId}/tags/{tagId})
+	PatchApiV1TWorkspaceIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, tagId openapi_types.UUID)
 	// List transactions for current workspace
-	// (GET /api/v1/transactions)
-	GetApiV1Transactions(w http.ResponseWriter, r *http.Request, params GetApiV1TransactionsParams)
+	// (GET /api/v1/t/{workspaceId}/transactions)
+	GetApiV1TWorkspaceIdTransactions(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdTransactionsParams)
 	// Create a manual transaction
-	// (POST /api/v1/transactions)
-	PostApiV1Transactions(w http.ResponseWriter, r *http.Request)
+	// (POST /api/v1/t/{workspaceId}/transactions)
+	PostApiV1TWorkspaceIdTransactions(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId)
 	// Hard-delete a transaction (v1 — replace with soft-delete later)
-	// (DELETE /api/v1/transactions/{transactionId})
-	DeleteApiV1TransactionsTransactionId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID)
+	// (DELETE /api/v1/t/{workspaceId}/transactions/{transactionId})
+	DeleteApiV1TWorkspaceIdTransactionsTransactionId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID)
 	// Get a transaction
-	// (GET /api/v1/transactions/{transactionId})
-	GetApiV1TransactionsTransactionId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID)
+	// (GET /api/v1/t/{workspaceId}/transactions/{transactionId})
+	GetApiV1TWorkspaceIdTransactionsTransactionId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID)
 	// Update mutable transaction fields
-	// (PATCH /api/v1/transactions/{transactionId})
-	PatchApiV1TransactionsTransactionId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID)
+	// (PATCH /api/v1/t/{workspaceId}/transactions/{transactionId})
+	PatchApiV1TWorkspaceIdTransactionsTransactionId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID)
 	// Apply the first matching categorization rule to a transaction
-	// (POST /api/v1/transactions/{transactionId}/apply-categorization-rules)
-	PostApiV1TransactionsTransactionIdApplyCategorizationRules(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID)
+	// (POST /api/v1/t/{workspaceId}/transactions/{transactionId}/apply-categorization-rules)
+	PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRules(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID)
 	// Remove a tag from a transaction
-	// (DELETE /api/v1/transactions/{transactionId}/tags/{tagId})
-	DeleteApiV1TransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID, tagId openapi_types.UUID)
+	// (DELETE /api/v1/t/{workspaceId}/transactions/{transactionId}/tags/{tagId})
+	DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID, tagId openapi_types.UUID)
 	// Apply a tag to a transaction
-	// (PUT /api/v1/transactions/{transactionId}/tags/{tagId})
-	PutApiV1TransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID, tagId openapi_types.UUID)
+	// (PUT /api/v1/t/{workspaceId}/transactions/{transactionId}/tags/{tagId})
+	PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID, tagId openapi_types.UUID)
 	// Build info
 	// (GET /api/v1/version)
 	GetApiV1Version(w http.ResponseWriter, r *http.Request)
+	// Create a workspace for the current user
+	// (POST /api/v1/workspaces)
+	PostApiV1Workspaces(w http.ResponseWriter, r *http.Request)
 	// Liveness probe
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
@@ -833,60 +887,6 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
-
-// List accounts for current workspace
-// (GET /api/v1/accounts)
-func (_ Unimplemented) GetApiV1Accounts(w http.ResponseWriter, r *http.Request, params GetApiV1AccountsParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Create an account and opening balance snapshot
-// (POST /api/v1/accounts)
-func (_ Unimplemented) PostApiV1Accounts(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// List account groups for current workspace
-// (GET /api/v1/accounts/groups)
-func (_ Unimplemented) GetApiV1AccountsGroups(w http.ResponseWriter, r *http.Request, params GetApiV1AccountsGroupsParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Create an account group
-// (POST /api/v1/accounts/groups)
-func (_ Unimplemented) PostApiV1AccountsGroups(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Delete an account group
-// (DELETE /api/v1/accounts/groups/{groupId})
-func (_ Unimplemented) DeleteApiV1AccountsGroupsGroupId(w http.ResponseWriter, r *http.Request, groupId openapi_types.UUID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Update an account group
-// (PATCH /api/v1/accounts/groups/{groupId})
-func (_ Unimplemented) PatchApiV1AccountsGroupsGroupId(w http.ResponseWriter, r *http.Request, groupId openapi_types.UUID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Reorder account groups and accounts
-// (PUT /api/v1/accounts/order)
-func (_ Unimplemented) PutApiV1AccountsOrder(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Get an account
-// (GET /api/v1/accounts/{accountId})
-func (_ Unimplemented) GetApiV1AccountsAccountId(w http.ResponseWriter, r *http.Request, accountId openapi_types.UUID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Update mutable account fields
-// (PATCH /api/v1/accounts/{accountId})
-func (_ Unimplemented) PatchApiV1AccountsAccountId(w http.ResponseWriter, r *http.Request, accountId openapi_types.UUID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
 
 // Password login → sets session cookie
 // (POST /api/v1/auth/login)
@@ -906,99 +906,9 @@ func (_ Unimplemented) PostApiV1AuthRegister(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// List categories for current workspace
-// (GET /api/v1/categories)
-func (_ Unimplemented) GetApiV1Categories(w http.ResponseWriter, r *http.Request, params GetApiV1CategoriesParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Create a category
-// (POST /api/v1/categories)
-func (_ Unimplemented) PostApiV1Categories(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Archive a category (soft delete)
-// (DELETE /api/v1/categories/{categoryId})
-func (_ Unimplemented) DeleteApiV1CategoriesCategoryId(w http.ResponseWriter, r *http.Request, categoryId openapi_types.UUID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Get a category
-// (GET /api/v1/categories/{categoryId})
-func (_ Unimplemented) GetApiV1CategoriesCategoryId(w http.ResponseWriter, r *http.Request, categoryId openapi_types.UUID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Update a category
-// (PATCH /api/v1/categories/{categoryId})
-func (_ Unimplemented) PatchApiV1CategoriesCategoryId(w http.ResponseWriter, r *http.Request, categoryId openapi_types.UUID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// List categorization rules for current workspace
-// (GET /api/v1/categorization-rules)
-func (_ Unimplemented) GetApiV1CategorizationRules(w http.ResponseWriter, r *http.Request, params GetApiV1CategorizationRulesParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Create a categorization rule
-// (POST /api/v1/categorization-rules)
-func (_ Unimplemented) PostApiV1CategorizationRules(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Delete a categorization rule
-// (DELETE /api/v1/categorization-rules/{ruleId})
-func (_ Unimplemented) DeleteApiV1CategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, ruleId openapi_types.UUID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Get a categorization rule
-// (GET /api/v1/categorization-rules/{ruleId})
-func (_ Unimplemented) GetApiV1CategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, ruleId openapi_types.UUID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Update a categorization rule
-// (PATCH /api/v1/categorization-rules/{ruleId})
-func (_ Unimplemented) PatchApiV1CategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, ruleId openapi_types.UUID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
 // Current workspace user
 // (GET /api/v1/me)
 func (_ Unimplemented) GetApiV1Me(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// List merchants for current workspace
-// (GET /api/v1/merchants)
-func (_ Unimplemented) GetApiV1Merchants(w http.ResponseWriter, r *http.Request, params GetApiV1MerchantsParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Create a merchant
-// (POST /api/v1/merchants)
-func (_ Unimplemented) PostApiV1Merchants(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Archive a merchant (soft delete)
-// (DELETE /api/v1/merchants/{merchantId})
-func (_ Unimplemented) DeleteApiV1MerchantsMerchantId(w http.ResponseWriter, r *http.Request, merchantId openapi_types.UUID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Get a merchant
-// (GET /api/v1/merchants/{merchantId})
-func (_ Unimplemented) GetApiV1MerchantsMerchantId(w http.ResponseWriter, r *http.Request, merchantId openapi_types.UUID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Update a merchant
-// (PATCH /api/v1/merchants/{merchantId})
-func (_ Unimplemented) PatchApiV1MerchantsMerchantId(w http.ResponseWriter, r *http.Request, merchantId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1014,87 +924,237 @@ func (_ Unimplemented) PostApiV1ProvidersGocardlessRequisitions(w http.ResponseW
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// List accounts for current workspace
+// (GET /api/v1/t/{workspaceId}/accounts)
+func (_ Unimplemented) GetApiV1TWorkspaceIdAccounts(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdAccountsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Create an account and opening balance snapshot
+// (POST /api/v1/t/{workspaceId}/accounts)
+func (_ Unimplemented) PostApiV1TWorkspaceIdAccounts(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List account groups for current workspace
+// (GET /api/v1/t/{workspaceId}/accounts/groups)
+func (_ Unimplemented) GetApiV1TWorkspaceIdAccountsGroups(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdAccountsGroupsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Create an account group
+// (POST /api/v1/t/{workspaceId}/accounts/groups)
+func (_ Unimplemented) PostApiV1TWorkspaceIdAccountsGroups(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Delete an account group
+// (DELETE /api/v1/t/{workspaceId}/accounts/groups/{groupId})
+func (_ Unimplemented) DeleteApiV1TWorkspaceIdAccountsGroupsGroupId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, groupId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Update an account group
+// (PATCH /api/v1/t/{workspaceId}/accounts/groups/{groupId})
+func (_ Unimplemented) PatchApiV1TWorkspaceIdAccountsGroupsGroupId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, groupId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Reorder account groups and accounts
+// (PUT /api/v1/t/{workspaceId}/accounts/order)
+func (_ Unimplemented) PutApiV1TWorkspaceIdAccountsOrder(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get an account
+// (GET /api/v1/t/{workspaceId}/accounts/{accountId})
+func (_ Unimplemented) GetApiV1TWorkspaceIdAccountsAccountId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, accountId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Update mutable account fields
+// (PATCH /api/v1/t/{workspaceId}/accounts/{accountId})
+func (_ Unimplemented) PatchApiV1TWorkspaceIdAccountsAccountId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, accountId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List categories for current workspace
+// (GET /api/v1/t/{workspaceId}/categories)
+func (_ Unimplemented) GetApiV1TWorkspaceIdCategories(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdCategoriesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Create a category
+// (POST /api/v1/t/{workspaceId}/categories)
+func (_ Unimplemented) PostApiV1TWorkspaceIdCategories(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Archive a category (soft delete)
+// (DELETE /api/v1/t/{workspaceId}/categories/{categoryId})
+func (_ Unimplemented) DeleteApiV1TWorkspaceIdCategoriesCategoryId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, categoryId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get a category
+// (GET /api/v1/t/{workspaceId}/categories/{categoryId})
+func (_ Unimplemented) GetApiV1TWorkspaceIdCategoriesCategoryId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, categoryId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Update a category
+// (PATCH /api/v1/t/{workspaceId}/categories/{categoryId})
+func (_ Unimplemented) PatchApiV1TWorkspaceIdCategoriesCategoryId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, categoryId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List categorization rules for current workspace
+// (GET /api/v1/t/{workspaceId}/categorization-rules)
+func (_ Unimplemented) GetApiV1TWorkspaceIdCategorizationRules(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdCategorizationRulesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Create a categorization rule
+// (POST /api/v1/t/{workspaceId}/categorization-rules)
+func (_ Unimplemented) PostApiV1TWorkspaceIdCategorizationRules(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Delete a categorization rule
+// (DELETE /api/v1/t/{workspaceId}/categorization-rules/{ruleId})
+func (_ Unimplemented) DeleteApiV1TWorkspaceIdCategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, ruleId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get a categorization rule
+// (GET /api/v1/t/{workspaceId}/categorization-rules/{ruleId})
+func (_ Unimplemented) GetApiV1TWorkspaceIdCategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, ruleId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Update a categorization rule
+// (PATCH /api/v1/t/{workspaceId}/categorization-rules/{ruleId})
+func (_ Unimplemented) PatchApiV1TWorkspaceIdCategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, ruleId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List merchants for current workspace
+// (GET /api/v1/t/{workspaceId}/merchants)
+func (_ Unimplemented) GetApiV1TWorkspaceIdMerchants(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdMerchantsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Create a merchant
+// (POST /api/v1/t/{workspaceId}/merchants)
+func (_ Unimplemented) PostApiV1TWorkspaceIdMerchants(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Archive a merchant (soft delete)
+// (DELETE /api/v1/t/{workspaceId}/merchants/{merchantId})
+func (_ Unimplemented) DeleteApiV1TWorkspaceIdMerchantsMerchantId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, merchantId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get a merchant
+// (GET /api/v1/t/{workspaceId}/merchants/{merchantId})
+func (_ Unimplemented) GetApiV1TWorkspaceIdMerchantsMerchantId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, merchantId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Update a merchant
+// (PATCH /api/v1/t/{workspaceId}/merchants/{merchantId})
+func (_ Unimplemented) PatchApiV1TWorkspaceIdMerchantsMerchantId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, merchantId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // List tags for current workspace
-// (GET /api/v1/tags)
-func (_ Unimplemented) GetApiV1Tags(w http.ResponseWriter, r *http.Request, params GetApiV1TagsParams) {
+// (GET /api/v1/t/{workspaceId}/tags)
+func (_ Unimplemented) GetApiV1TWorkspaceIdTags(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdTagsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Create a tag
-// (POST /api/v1/tags)
-func (_ Unimplemented) PostApiV1Tags(w http.ResponseWriter, r *http.Request) {
+// (POST /api/v1/t/{workspaceId}/tags)
+func (_ Unimplemented) PostApiV1TWorkspaceIdTags(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Archive a tag (soft delete)
-// (DELETE /api/v1/tags/{tagId})
-func (_ Unimplemented) DeleteApiV1TagsTagId(w http.ResponseWriter, r *http.Request, tagId openapi_types.UUID) {
+// (DELETE /api/v1/t/{workspaceId}/tags/{tagId})
+func (_ Unimplemented) DeleteApiV1TWorkspaceIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, tagId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Get a tag
-// (GET /api/v1/tags/{tagId})
-func (_ Unimplemented) GetApiV1TagsTagId(w http.ResponseWriter, r *http.Request, tagId openapi_types.UUID) {
+// (GET /api/v1/t/{workspaceId}/tags/{tagId})
+func (_ Unimplemented) GetApiV1TWorkspaceIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, tagId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Update a tag
-// (PATCH /api/v1/tags/{tagId})
-func (_ Unimplemented) PatchApiV1TagsTagId(w http.ResponseWriter, r *http.Request, tagId openapi_types.UUID) {
+// (PATCH /api/v1/t/{workspaceId}/tags/{tagId})
+func (_ Unimplemented) PatchApiV1TWorkspaceIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, tagId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // List transactions for current workspace
-// (GET /api/v1/transactions)
-func (_ Unimplemented) GetApiV1Transactions(w http.ResponseWriter, r *http.Request, params GetApiV1TransactionsParams) {
+// (GET /api/v1/t/{workspaceId}/transactions)
+func (_ Unimplemented) GetApiV1TWorkspaceIdTransactions(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdTransactionsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Create a manual transaction
-// (POST /api/v1/transactions)
-func (_ Unimplemented) PostApiV1Transactions(w http.ResponseWriter, r *http.Request) {
+// (POST /api/v1/t/{workspaceId}/transactions)
+func (_ Unimplemented) PostApiV1TWorkspaceIdTransactions(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Hard-delete a transaction (v1 — replace with soft-delete later)
-// (DELETE /api/v1/transactions/{transactionId})
-func (_ Unimplemented) DeleteApiV1TransactionsTransactionId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID) {
+// (DELETE /api/v1/t/{workspaceId}/transactions/{transactionId})
+func (_ Unimplemented) DeleteApiV1TWorkspaceIdTransactionsTransactionId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Get a transaction
-// (GET /api/v1/transactions/{transactionId})
-func (_ Unimplemented) GetApiV1TransactionsTransactionId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID) {
+// (GET /api/v1/t/{workspaceId}/transactions/{transactionId})
+func (_ Unimplemented) GetApiV1TWorkspaceIdTransactionsTransactionId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Update mutable transaction fields
-// (PATCH /api/v1/transactions/{transactionId})
-func (_ Unimplemented) PatchApiV1TransactionsTransactionId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID) {
+// (PATCH /api/v1/t/{workspaceId}/transactions/{transactionId})
+func (_ Unimplemented) PatchApiV1TWorkspaceIdTransactionsTransactionId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Apply the first matching categorization rule to a transaction
-// (POST /api/v1/transactions/{transactionId}/apply-categorization-rules)
-func (_ Unimplemented) PostApiV1TransactionsTransactionIdApplyCategorizationRules(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID) {
+// (POST /api/v1/t/{workspaceId}/transactions/{transactionId}/apply-categorization-rules)
+func (_ Unimplemented) PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRules(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Remove a tag from a transaction
-// (DELETE /api/v1/transactions/{transactionId}/tags/{tagId})
-func (_ Unimplemented) DeleteApiV1TransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID, tagId openapi_types.UUID) {
+// (DELETE /api/v1/t/{workspaceId}/transactions/{transactionId}/tags/{tagId})
+func (_ Unimplemented) DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID, tagId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Apply a tag to a transaction
-// (PUT /api/v1/transactions/{transactionId}/tags/{tagId})
-func (_ Unimplemented) PutApiV1TransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID, tagId openapi_types.UUID) {
+// (PUT /api/v1/t/{workspaceId}/transactions/{transactionId}/tags/{tagId})
+func (_ Unimplemented) PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID, tagId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Build info
 // (GET /api/v1/version)
 func (_ Unimplemented) GetApiV1Version(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Create a workspace for the current user
+// (POST /api/v1/workspaces)
+func (_ Unimplemented) PostApiV1Workspaces(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1112,256 +1172,6 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
-
-// GetApiV1Accounts operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1Accounts(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetApiV1AccountsParams
-
-	// ------------- Optional query parameter "includeArchived" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "includeArchived", r.URL.Query(), &params.IncludeArchived, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "includeArchived", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1Accounts(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostApiV1Accounts operation middleware
-func (siw *ServerInterfaceWrapper) PostApiV1Accounts(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostApiV1Accounts(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetApiV1AccountsGroups operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1AccountsGroups(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetApiV1AccountsGroupsParams
-
-	// ------------- Optional query parameter "includeArchived" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "includeArchived", r.URL.Query(), &params.IncludeArchived, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "includeArchived", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1AccountsGroups(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostApiV1AccountsGroups operation middleware
-func (siw *ServerInterfaceWrapper) PostApiV1AccountsGroups(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostApiV1AccountsGroups(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeleteApiV1AccountsGroupsGroupId operation middleware
-func (siw *ServerInterfaceWrapper) DeleteApiV1AccountsGroupsGroupId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "groupId" -------------
-	var groupId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "groupId", chi.URLParam(r, "groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteApiV1AccountsGroupsGroupId(w, r, groupId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PatchApiV1AccountsGroupsGroupId operation middleware
-func (siw *ServerInterfaceWrapper) PatchApiV1AccountsGroupsGroupId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "groupId" -------------
-	var groupId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "groupId", chi.URLParam(r, "groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PatchApiV1AccountsGroupsGroupId(w, r, groupId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PutApiV1AccountsOrder operation middleware
-func (siw *ServerInterfaceWrapper) PutApiV1AccountsOrder(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutApiV1AccountsOrder(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetApiV1AccountsAccountId operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1AccountsAccountId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "accountId" -------------
-	var accountId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "accountId", chi.URLParam(r, "accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1AccountsAccountId(w, r, accountId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PatchApiV1AccountsAccountId operation middleware
-func (siw *ServerInterfaceWrapper) PatchApiV1AccountsAccountId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "accountId" -------------
-	var accountId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "accountId", chi.URLParam(r, "accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PatchApiV1AccountsAccountId(w, r, accountId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
 
 // PostApiV1AuthLogin operation middleware
 func (siw *ServerInterfaceWrapper) PostApiV1AuthLogin(w http.ResponseWriter, r *http.Request) {
@@ -1411,455 +1221,17 @@ func (siw *ServerInterfaceWrapper) PostApiV1AuthRegister(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
-// GetApiV1Categories operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1Categories(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetApiV1CategoriesParams
-
-	// ------------- Optional query parameter "includeArchived" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "includeArchived", r.URL.Query(), &params.IncludeArchived, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "includeArchived", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1Categories(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostApiV1Categories operation middleware
-func (siw *ServerInterfaceWrapper) PostApiV1Categories(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostApiV1Categories(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeleteApiV1CategoriesCategoryId operation middleware
-func (siw *ServerInterfaceWrapper) DeleteApiV1CategoriesCategoryId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "categoryId" -------------
-	var categoryId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "categoryId", chi.URLParam(r, "categoryId"), &categoryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "categoryId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteApiV1CategoriesCategoryId(w, r, categoryId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetApiV1CategoriesCategoryId operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1CategoriesCategoryId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "categoryId" -------------
-	var categoryId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "categoryId", chi.URLParam(r, "categoryId"), &categoryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "categoryId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1CategoriesCategoryId(w, r, categoryId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PatchApiV1CategoriesCategoryId operation middleware
-func (siw *ServerInterfaceWrapper) PatchApiV1CategoriesCategoryId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "categoryId" -------------
-	var categoryId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "categoryId", chi.URLParam(r, "categoryId"), &categoryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "categoryId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PatchApiV1CategoriesCategoryId(w, r, categoryId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetApiV1CategorizationRules operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1CategorizationRules(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetApiV1CategorizationRulesParams
-
-	// ------------- Optional query parameter "enabled" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "enabled", r.URL.Query(), &params.Enabled, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "enabled", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1CategorizationRules(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostApiV1CategorizationRules operation middleware
-func (siw *ServerInterfaceWrapper) PostApiV1CategorizationRules(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostApiV1CategorizationRules(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeleteApiV1CategorizationRulesRuleId operation middleware
-func (siw *ServerInterfaceWrapper) DeleteApiV1CategorizationRulesRuleId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "ruleId" -------------
-	var ruleId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ruleId", chi.URLParam(r, "ruleId"), &ruleId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ruleId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteApiV1CategorizationRulesRuleId(w, r, ruleId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetApiV1CategorizationRulesRuleId operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1CategorizationRulesRuleId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "ruleId" -------------
-	var ruleId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ruleId", chi.URLParam(r, "ruleId"), &ruleId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ruleId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1CategorizationRulesRuleId(w, r, ruleId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PatchApiV1CategorizationRulesRuleId operation middleware
-func (siw *ServerInterfaceWrapper) PatchApiV1CategorizationRulesRuleId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "ruleId" -------------
-	var ruleId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ruleId", chi.URLParam(r, "ruleId"), &ruleId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ruleId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PatchApiV1CategorizationRulesRuleId(w, r, ruleId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // GetApiV1Me operation middleware
 func (siw *ServerInterfaceWrapper) GetApiV1Me(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetApiV1Me(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetApiV1Merchants operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1Merchants(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetApiV1MerchantsParams
-
-	// ------------- Optional query parameter "includeArchived" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "includeArchived", r.URL.Query(), &params.IncludeArchived, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "includeArchived", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1Merchants(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostApiV1Merchants operation middleware
-func (siw *ServerInterfaceWrapper) PostApiV1Merchants(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostApiV1Merchants(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeleteApiV1MerchantsMerchantId operation middleware
-func (siw *ServerInterfaceWrapper) DeleteApiV1MerchantsMerchantId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "merchantId" -------------
-	var merchantId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "merchantId", chi.URLParam(r, "merchantId"), &merchantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "merchantId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteApiV1MerchantsMerchantId(w, r, merchantId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetApiV1MerchantsMerchantId operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1MerchantsMerchantId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "merchantId" -------------
-	var merchantId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "merchantId", chi.URLParam(r, "merchantId"), &merchantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "merchantId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1MerchantsMerchantId(w, r, merchantId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PatchApiV1MerchantsMerchantId operation middleware
-func (siw *ServerInterfaceWrapper) PatchApiV1MerchantsMerchantId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "merchantId" -------------
-	var merchantId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "merchantId", chi.URLParam(r, "merchantId"), &merchantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "merchantId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PatchApiV1MerchantsMerchantId(w, r, merchantId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1903,19 +1275,28 @@ func (siw *ServerInterfaceWrapper) PostApiV1ProvidersGocardlessRequisitions(w ht
 	handler.ServeHTTP(w, r)
 }
 
-// GetApiV1Tags operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1Tags(w http.ResponseWriter, r *http.Request) {
+// GetApiV1TWorkspaceIdAccounts operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TWorkspaceIdAccounts(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
 
 	r = r.WithContext(ctx)
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params GetApiV1TagsParams
+	var params GetApiV1TWorkspaceIdAccountsParams
 
 	// ------------- Optional query parameter "includeArchived" -------------
 
@@ -1926,7 +1307,7 @@ func (siw *ServerInterfaceWrapper) GetApiV1Tags(w http.ResponseWriter, r *http.R
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1Tags(w, r, params)
+		siw.Handler.GetApiV1TWorkspaceIdAccounts(w, r, workspaceId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1936,48 +1317,28 @@ func (siw *ServerInterfaceWrapper) GetApiV1Tags(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
-// PostApiV1Tags operation middleware
-func (siw *ServerInterfaceWrapper) PostApiV1Tags(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostApiV1Tags(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeleteApiV1TagsTagId operation middleware
-func (siw *ServerInterfaceWrapper) DeleteApiV1TagsTagId(w http.ResponseWriter, r *http.Request) {
+// PostApiV1TWorkspaceIdAccounts operation middleware
+func (siw *ServerInterfaceWrapper) PostApiV1TWorkspaceIdAccounts(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
-	// ------------- Path parameter "tagId" -------------
-	var tagId openapi_types.UUID
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tagId", chi.URLParam(r, "tagId"), &tagId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tagId", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
 		return
 	}
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteApiV1TagsTagId(w, r, tagId)
+		siw.Handler.PostApiV1TWorkspaceIdAccounts(w, r, workspaceId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1987,81 +1348,1064 @@ func (siw *ServerInterfaceWrapper) DeleteApiV1TagsTagId(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
-// GetApiV1TagsTagId operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1TagsTagId(w http.ResponseWriter, r *http.Request) {
+// GetApiV1TWorkspaceIdAccountsGroups operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TWorkspaceIdAccountsGroups(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
-	// ------------- Path parameter "tagId" -------------
-	var tagId openapi_types.UUID
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tagId", chi.URLParam(r, "tagId"), &tagId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tagId", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
 		return
 	}
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1TagsTagId(w, r, tagId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PatchApiV1TagsTagId operation middleware
-func (siw *ServerInterfaceWrapper) PatchApiV1TagsTagId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "tagId" -------------
-	var tagId openapi_types.UUID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "tagId", chi.URLParam(r, "tagId"), &tagId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tagId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PatchApiV1TagsTagId(w, r, tagId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetApiV1Transactions operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1Transactions(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
 
 	r = r.WithContext(ctx)
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params GetApiV1TransactionsParams
+	var params GetApiV1TWorkspaceIdAccountsGroupsParams
+
+	// ------------- Optional query parameter "includeArchived" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "includeArchived", r.URL.Query(), &params.IncludeArchived, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "includeArchived", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TWorkspaceIdAccountsGroups(w, r, workspaceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostApiV1TWorkspaceIdAccountsGroups operation middleware
+func (siw *ServerInterfaceWrapper) PostApiV1TWorkspaceIdAccountsGroups(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostApiV1TWorkspaceIdAccountsGroups(w, r, workspaceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteApiV1TWorkspaceIdAccountsGroupsGroupId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteApiV1TWorkspaceIdAccountsGroupsGroupId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", chi.URLParam(r, "groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteApiV1TWorkspaceIdAccountsGroupsGroupId(w, r, workspaceId, groupId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchApiV1TWorkspaceIdAccountsGroupsGroupId operation middleware
+func (siw *ServerInterfaceWrapper) PatchApiV1TWorkspaceIdAccountsGroupsGroupId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", chi.URLParam(r, "groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchApiV1TWorkspaceIdAccountsGroupsGroupId(w, r, workspaceId, groupId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutApiV1TWorkspaceIdAccountsOrder operation middleware
+func (siw *ServerInterfaceWrapper) PutApiV1TWorkspaceIdAccountsOrder(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutApiV1TWorkspaceIdAccountsOrder(w, r, workspaceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TWorkspaceIdAccountsAccountId operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TWorkspaceIdAccountsAccountId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", chi.URLParam(r, "accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TWorkspaceIdAccountsAccountId(w, r, workspaceId, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchApiV1TWorkspaceIdAccountsAccountId operation middleware
+func (siw *ServerInterfaceWrapper) PatchApiV1TWorkspaceIdAccountsAccountId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "accountId" -------------
+	var accountId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "accountId", chi.URLParam(r, "accountId"), &accountId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accountId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchApiV1TWorkspaceIdAccountsAccountId(w, r, workspaceId, accountId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TWorkspaceIdCategories operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TWorkspaceIdCategories(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetApiV1TWorkspaceIdCategoriesParams
+
+	// ------------- Optional query parameter "includeArchived" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "includeArchived", r.URL.Query(), &params.IncludeArchived, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "includeArchived", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TWorkspaceIdCategories(w, r, workspaceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostApiV1TWorkspaceIdCategories operation middleware
+func (siw *ServerInterfaceWrapper) PostApiV1TWorkspaceIdCategories(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostApiV1TWorkspaceIdCategories(w, r, workspaceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteApiV1TWorkspaceIdCategoriesCategoryId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteApiV1TWorkspaceIdCategoriesCategoryId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "categoryId" -------------
+	var categoryId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "categoryId", chi.URLParam(r, "categoryId"), &categoryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "categoryId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteApiV1TWorkspaceIdCategoriesCategoryId(w, r, workspaceId, categoryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TWorkspaceIdCategoriesCategoryId operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TWorkspaceIdCategoriesCategoryId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "categoryId" -------------
+	var categoryId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "categoryId", chi.URLParam(r, "categoryId"), &categoryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "categoryId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TWorkspaceIdCategoriesCategoryId(w, r, workspaceId, categoryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchApiV1TWorkspaceIdCategoriesCategoryId operation middleware
+func (siw *ServerInterfaceWrapper) PatchApiV1TWorkspaceIdCategoriesCategoryId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "categoryId" -------------
+	var categoryId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "categoryId", chi.URLParam(r, "categoryId"), &categoryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "categoryId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchApiV1TWorkspaceIdCategoriesCategoryId(w, r, workspaceId, categoryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TWorkspaceIdCategorizationRules operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TWorkspaceIdCategorizationRules(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetApiV1TWorkspaceIdCategorizationRulesParams
+
+	// ------------- Optional query parameter "enabled" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "enabled", r.URL.Query(), &params.Enabled, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "enabled", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TWorkspaceIdCategorizationRules(w, r, workspaceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostApiV1TWorkspaceIdCategorizationRules operation middleware
+func (siw *ServerInterfaceWrapper) PostApiV1TWorkspaceIdCategorizationRules(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostApiV1TWorkspaceIdCategorizationRules(w, r, workspaceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteApiV1TWorkspaceIdCategorizationRulesRuleId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteApiV1TWorkspaceIdCategorizationRulesRuleId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "ruleId" -------------
+	var ruleId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ruleId", chi.URLParam(r, "ruleId"), &ruleId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ruleId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteApiV1TWorkspaceIdCategorizationRulesRuleId(w, r, workspaceId, ruleId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TWorkspaceIdCategorizationRulesRuleId operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TWorkspaceIdCategorizationRulesRuleId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "ruleId" -------------
+	var ruleId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ruleId", chi.URLParam(r, "ruleId"), &ruleId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ruleId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TWorkspaceIdCategorizationRulesRuleId(w, r, workspaceId, ruleId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchApiV1TWorkspaceIdCategorizationRulesRuleId operation middleware
+func (siw *ServerInterfaceWrapper) PatchApiV1TWorkspaceIdCategorizationRulesRuleId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "ruleId" -------------
+	var ruleId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ruleId", chi.URLParam(r, "ruleId"), &ruleId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ruleId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchApiV1TWorkspaceIdCategorizationRulesRuleId(w, r, workspaceId, ruleId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TWorkspaceIdMerchants operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TWorkspaceIdMerchants(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetApiV1TWorkspaceIdMerchantsParams
+
+	// ------------- Optional query parameter "includeArchived" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "includeArchived", r.URL.Query(), &params.IncludeArchived, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "includeArchived", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TWorkspaceIdMerchants(w, r, workspaceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostApiV1TWorkspaceIdMerchants operation middleware
+func (siw *ServerInterfaceWrapper) PostApiV1TWorkspaceIdMerchants(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostApiV1TWorkspaceIdMerchants(w, r, workspaceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteApiV1TWorkspaceIdMerchantsMerchantId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteApiV1TWorkspaceIdMerchantsMerchantId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "merchantId" -------------
+	var merchantId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "merchantId", chi.URLParam(r, "merchantId"), &merchantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "merchantId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteApiV1TWorkspaceIdMerchantsMerchantId(w, r, workspaceId, merchantId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TWorkspaceIdMerchantsMerchantId operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TWorkspaceIdMerchantsMerchantId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "merchantId" -------------
+	var merchantId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "merchantId", chi.URLParam(r, "merchantId"), &merchantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "merchantId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TWorkspaceIdMerchantsMerchantId(w, r, workspaceId, merchantId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchApiV1TWorkspaceIdMerchantsMerchantId operation middleware
+func (siw *ServerInterfaceWrapper) PatchApiV1TWorkspaceIdMerchantsMerchantId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "merchantId" -------------
+	var merchantId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "merchantId", chi.URLParam(r, "merchantId"), &merchantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "merchantId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchApiV1TWorkspaceIdMerchantsMerchantId(w, r, workspaceId, merchantId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TWorkspaceIdTags operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TWorkspaceIdTags(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetApiV1TWorkspaceIdTagsParams
+
+	// ------------- Optional query parameter "includeArchived" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "includeArchived", r.URL.Query(), &params.IncludeArchived, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "includeArchived", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TWorkspaceIdTags(w, r, workspaceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostApiV1TWorkspaceIdTags operation middleware
+func (siw *ServerInterfaceWrapper) PostApiV1TWorkspaceIdTags(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostApiV1TWorkspaceIdTags(w, r, workspaceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteApiV1TWorkspaceIdTagsTagId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteApiV1TWorkspaceIdTagsTagId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "tagId" -------------
+	var tagId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "tagId", chi.URLParam(r, "tagId"), &tagId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tagId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteApiV1TWorkspaceIdTagsTagId(w, r, workspaceId, tagId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TWorkspaceIdTagsTagId operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TWorkspaceIdTagsTagId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "tagId" -------------
+	var tagId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "tagId", chi.URLParam(r, "tagId"), &tagId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tagId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TWorkspaceIdTagsTagId(w, r, workspaceId, tagId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchApiV1TWorkspaceIdTagsTagId operation middleware
+func (siw *ServerInterfaceWrapper) PatchApiV1TWorkspaceIdTagsTagId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "tagId" -------------
+	var tagId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "tagId", chi.URLParam(r, "tagId"), &tagId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tagId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchApiV1TWorkspaceIdTagsTagId(w, r, workspaceId, tagId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TWorkspaceIdTransactions operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TWorkspaceIdTransactions(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetApiV1TWorkspaceIdTransactionsParams
 
 	// ------------- Optional query parameter "accountId" -------------
 
@@ -2168,7 +2512,7 @@ func (siw *ServerInterfaceWrapper) GetApiV1Transactions(w http.ResponseWriter, r
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1Transactions(w, r, params)
+		siw.Handler.GetApiV1TWorkspaceIdTransactions(w, r, workspaceId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2178,17 +2522,28 @@ func (siw *ServerInterfaceWrapper) GetApiV1Transactions(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
-// PostApiV1Transactions operation middleware
-func (siw *ServerInterfaceWrapper) PostApiV1Transactions(w http.ResponseWriter, r *http.Request) {
+// PostApiV1TWorkspaceIdTransactions operation middleware
+func (siw *ServerInterfaceWrapper) PostApiV1TWorkspaceIdTransactions(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostApiV1Transactions(w, r)
+		siw.Handler.PostApiV1TWorkspaceIdTransactions(w, r, workspaceId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2198,10 +2553,19 @@ func (siw *ServerInterfaceWrapper) PostApiV1Transactions(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
-// DeleteApiV1TransactionsTransactionId operation middleware
-func (siw *ServerInterfaceWrapper) DeleteApiV1TransactionsTransactionId(w http.ResponseWriter, r *http.Request) {
+// DeleteApiV1TWorkspaceIdTransactionsTransactionId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteApiV1TWorkspaceIdTransactionsTransactionId(w http.ResponseWriter, r *http.Request) {
 
 	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
 
 	// ------------- Path parameter "transactionId" -------------
 	var transactionId openapi_types.UUID
@@ -2214,12 +2578,12 @@ func (siw *ServerInterfaceWrapper) DeleteApiV1TransactionsTransactionId(w http.R
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteApiV1TransactionsTransactionId(w, r, transactionId)
+		siw.Handler.DeleteApiV1TWorkspaceIdTransactionsTransactionId(w, r, workspaceId, transactionId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2229,10 +2593,19 @@ func (siw *ServerInterfaceWrapper) DeleteApiV1TransactionsTransactionId(w http.R
 	handler.ServeHTTP(w, r)
 }
 
-// GetApiV1TransactionsTransactionId operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1TransactionsTransactionId(w http.ResponseWriter, r *http.Request) {
+// GetApiV1TWorkspaceIdTransactionsTransactionId operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TWorkspaceIdTransactionsTransactionId(w http.ResponseWriter, r *http.Request) {
 
 	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
 
 	// ------------- Path parameter "transactionId" -------------
 	var transactionId openapi_types.UUID
@@ -2245,12 +2618,12 @@ func (siw *ServerInterfaceWrapper) GetApiV1TransactionsTransactionId(w http.Resp
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1TransactionsTransactionId(w, r, transactionId)
+		siw.Handler.GetApiV1TWorkspaceIdTransactionsTransactionId(w, r, workspaceId, transactionId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2260,10 +2633,19 @@ func (siw *ServerInterfaceWrapper) GetApiV1TransactionsTransactionId(w http.Resp
 	handler.ServeHTTP(w, r)
 }
 
-// PatchApiV1TransactionsTransactionId operation middleware
-func (siw *ServerInterfaceWrapper) PatchApiV1TransactionsTransactionId(w http.ResponseWriter, r *http.Request) {
+// PatchApiV1TWorkspaceIdTransactionsTransactionId operation middleware
+func (siw *ServerInterfaceWrapper) PatchApiV1TWorkspaceIdTransactionsTransactionId(w http.ResponseWriter, r *http.Request) {
 
 	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
 
 	// ------------- Path parameter "transactionId" -------------
 	var transactionId openapi_types.UUID
@@ -2276,12 +2658,12 @@ func (siw *ServerInterfaceWrapper) PatchApiV1TransactionsTransactionId(w http.Re
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PatchApiV1TransactionsTransactionId(w, r, transactionId)
+		siw.Handler.PatchApiV1TWorkspaceIdTransactionsTransactionId(w, r, workspaceId, transactionId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2291,10 +2673,19 @@ func (siw *ServerInterfaceWrapper) PatchApiV1TransactionsTransactionId(w http.Re
 	handler.ServeHTTP(w, r)
 }
 
-// PostApiV1TransactionsTransactionIdApplyCategorizationRules operation middleware
-func (siw *ServerInterfaceWrapper) PostApiV1TransactionsTransactionIdApplyCategorizationRules(w http.ResponseWriter, r *http.Request) {
+// PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRules operation middleware
+func (siw *ServerInterfaceWrapper) PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRules(w http.ResponseWriter, r *http.Request) {
 
 	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
 
 	// ------------- Path parameter "transactionId" -------------
 	var transactionId openapi_types.UUID
@@ -2307,12 +2698,12 @@ func (siw *ServerInterfaceWrapper) PostApiV1TransactionsTransactionIdApplyCatego
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostApiV1TransactionsTransactionIdApplyCategorizationRules(w, r, transactionId)
+		siw.Handler.PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRules(w, r, workspaceId, transactionId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2322,10 +2713,19 @@ func (siw *ServerInterfaceWrapper) PostApiV1TransactionsTransactionIdApplyCatego
 	handler.ServeHTTP(w, r)
 }
 
-// DeleteApiV1TransactionsTransactionIdTagsTagId operation middleware
-func (siw *ServerInterfaceWrapper) DeleteApiV1TransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request) {
+// DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request) {
 
 	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
 
 	// ------------- Path parameter "transactionId" -------------
 	var transactionId openapi_types.UUID
@@ -2347,12 +2747,12 @@ func (siw *ServerInterfaceWrapper) DeleteApiV1TransactionsTransactionIdTagsTagId
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteApiV1TransactionsTransactionIdTagsTagId(w, r, transactionId, tagId)
+		siw.Handler.DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(w, r, workspaceId, transactionId, tagId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2362,10 +2762,19 @@ func (siw *ServerInterfaceWrapper) DeleteApiV1TransactionsTransactionIdTagsTagId
 	handler.ServeHTTP(w, r)
 }
 
-// PutApiV1TransactionsTransactionIdTagsTagId operation middleware
-func (siw *ServerInterfaceWrapper) PutApiV1TransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request) {
+// PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId operation middleware
+func (siw *ServerInterfaceWrapper) PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request) {
 
 	var err error
+
+	// ------------- Path parameter "workspaceId" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspaceId", chi.URLParam(r, "workspaceId"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspaceId", Err: err})
+		return
+	}
 
 	// ------------- Path parameter "transactionId" -------------
 	var transactionId openapi_types.UUID
@@ -2387,12 +2796,12 @@ func (siw *ServerInterfaceWrapper) PutApiV1TransactionsTransactionIdTagsTagId(w 
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, WorkspaceHeaderScopes, []string{})
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutApiV1TransactionsTransactionIdTagsTagId(w, r, transactionId, tagId)
+		siw.Handler.PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(w, r, workspaceId, transactionId, tagId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2407,6 +2816,26 @@ func (siw *ServerInterfaceWrapper) GetApiV1Version(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetApiV1Version(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostApiV1Workspaces operation middleware
+func (siw *ServerInterfaceWrapper) PostApiV1Workspaces(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostApiV1Workspaces(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2544,33 +2973,6 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	}
 
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/accounts", wrapper.GetApiV1Accounts)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/accounts", wrapper.PostApiV1Accounts)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/accounts/groups", wrapper.GetApiV1AccountsGroups)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/accounts/groups", wrapper.PostApiV1AccountsGroups)
-	})
-	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/api/v1/accounts/groups/{groupId}", wrapper.DeleteApiV1AccountsGroupsGroupId)
-	})
-	r.Group(func(r chi.Router) {
-		r.Patch(options.BaseURL+"/api/v1/accounts/groups/{groupId}", wrapper.PatchApiV1AccountsGroupsGroupId)
-	})
-	r.Group(func(r chi.Router) {
-		r.Put(options.BaseURL+"/api/v1/accounts/order", wrapper.PutApiV1AccountsOrder)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/accounts/{accountId}", wrapper.GetApiV1AccountsAccountId)
-	})
-	r.Group(func(r chi.Router) {
-		r.Patch(options.BaseURL+"/api/v1/accounts/{accountId}", wrapper.PatchApiV1AccountsAccountId)
-	})
-	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/auth/login", wrapper.PostApiV1AuthLogin)
 	})
 	r.Group(func(r chi.Router) {
@@ -2580,52 +2982,7 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/api/v1/auth/register", wrapper.PostApiV1AuthRegister)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/categories", wrapper.GetApiV1Categories)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/categories", wrapper.PostApiV1Categories)
-	})
-	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/api/v1/categories/{categoryId}", wrapper.DeleteApiV1CategoriesCategoryId)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/categories/{categoryId}", wrapper.GetApiV1CategoriesCategoryId)
-	})
-	r.Group(func(r chi.Router) {
-		r.Patch(options.BaseURL+"/api/v1/categories/{categoryId}", wrapper.PatchApiV1CategoriesCategoryId)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/categorization-rules", wrapper.GetApiV1CategorizationRules)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/categorization-rules", wrapper.PostApiV1CategorizationRules)
-	})
-	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/api/v1/categorization-rules/{ruleId}", wrapper.DeleteApiV1CategorizationRulesRuleId)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/categorization-rules/{ruleId}", wrapper.GetApiV1CategorizationRulesRuleId)
-	})
-	r.Group(func(r chi.Router) {
-		r.Patch(options.BaseURL+"/api/v1/categorization-rules/{ruleId}", wrapper.PatchApiV1CategorizationRulesRuleId)
-	})
-	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/me", wrapper.GetApiV1Me)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/merchants", wrapper.GetApiV1Merchants)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/merchants", wrapper.PostApiV1Merchants)
-	})
-	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/api/v1/merchants/{merchantId}", wrapper.DeleteApiV1MerchantsMerchantId)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/merchants/{merchantId}", wrapper.GetApiV1MerchantsMerchantId)
-	})
-	r.Group(func(r chi.Router) {
-		r.Patch(options.BaseURL+"/api/v1/merchants/{merchantId}", wrapper.PatchApiV1MerchantsMerchantId)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/onboarding/bootstrap", wrapper.PostApiV1OnboardingBootstrap)
@@ -2634,205 +2991,127 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/api/v1/providers/gocardless/requisitions", wrapper.PostApiV1ProvidersGocardlessRequisitions)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/tags", wrapper.GetApiV1Tags)
+		r.Get(options.BaseURL+"/api/v1/t/{workspaceId}/accounts", wrapper.GetApiV1TWorkspaceIdAccounts)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/tags", wrapper.PostApiV1Tags)
+		r.Post(options.BaseURL+"/api/v1/t/{workspaceId}/accounts", wrapper.PostApiV1TWorkspaceIdAccounts)
 	})
 	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/api/v1/tags/{tagId}", wrapper.DeleteApiV1TagsTagId)
+		r.Get(options.BaseURL+"/api/v1/t/{workspaceId}/accounts/groups", wrapper.GetApiV1TWorkspaceIdAccountsGroups)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/tags/{tagId}", wrapper.GetApiV1TagsTagId)
+		r.Post(options.BaseURL+"/api/v1/t/{workspaceId}/accounts/groups", wrapper.PostApiV1TWorkspaceIdAccountsGroups)
 	})
 	r.Group(func(r chi.Router) {
-		r.Patch(options.BaseURL+"/api/v1/tags/{tagId}", wrapper.PatchApiV1TagsTagId)
+		r.Delete(options.BaseURL+"/api/v1/t/{workspaceId}/accounts/groups/{groupId}", wrapper.DeleteApiV1TWorkspaceIdAccountsGroupsGroupId)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/transactions", wrapper.GetApiV1Transactions)
+		r.Patch(options.BaseURL+"/api/v1/t/{workspaceId}/accounts/groups/{groupId}", wrapper.PatchApiV1TWorkspaceIdAccountsGroupsGroupId)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/transactions", wrapper.PostApiV1Transactions)
+		r.Put(options.BaseURL+"/api/v1/t/{workspaceId}/accounts/order", wrapper.PutApiV1TWorkspaceIdAccountsOrder)
 	})
 	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/api/v1/transactions/{transactionId}", wrapper.DeleteApiV1TransactionsTransactionId)
+		r.Get(options.BaseURL+"/api/v1/t/{workspaceId}/accounts/{accountId}", wrapper.GetApiV1TWorkspaceIdAccountsAccountId)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/transactions/{transactionId}", wrapper.GetApiV1TransactionsTransactionId)
+		r.Patch(options.BaseURL+"/api/v1/t/{workspaceId}/accounts/{accountId}", wrapper.PatchApiV1TWorkspaceIdAccountsAccountId)
 	})
 	r.Group(func(r chi.Router) {
-		r.Patch(options.BaseURL+"/api/v1/transactions/{transactionId}", wrapper.PatchApiV1TransactionsTransactionId)
+		r.Get(options.BaseURL+"/api/v1/t/{workspaceId}/categories", wrapper.GetApiV1TWorkspaceIdCategories)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/transactions/{transactionId}/apply-categorization-rules", wrapper.PostApiV1TransactionsTransactionIdApplyCategorizationRules)
+		r.Post(options.BaseURL+"/api/v1/t/{workspaceId}/categories", wrapper.PostApiV1TWorkspaceIdCategories)
 	})
 	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/api/v1/transactions/{transactionId}/tags/{tagId}", wrapper.DeleteApiV1TransactionsTransactionIdTagsTagId)
+		r.Delete(options.BaseURL+"/api/v1/t/{workspaceId}/categories/{categoryId}", wrapper.DeleteApiV1TWorkspaceIdCategoriesCategoryId)
 	})
 	r.Group(func(r chi.Router) {
-		r.Put(options.BaseURL+"/api/v1/transactions/{transactionId}/tags/{tagId}", wrapper.PutApiV1TransactionsTransactionIdTagsTagId)
+		r.Get(options.BaseURL+"/api/v1/t/{workspaceId}/categories/{categoryId}", wrapper.GetApiV1TWorkspaceIdCategoriesCategoryId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/t/{workspaceId}/categories/{categoryId}", wrapper.PatchApiV1TWorkspaceIdCategoriesCategoryId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/t/{workspaceId}/categorization-rules", wrapper.GetApiV1TWorkspaceIdCategorizationRules)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/t/{workspaceId}/categorization-rules", wrapper.PostApiV1TWorkspaceIdCategorizationRules)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/t/{workspaceId}/categorization-rules/{ruleId}", wrapper.DeleteApiV1TWorkspaceIdCategorizationRulesRuleId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/t/{workspaceId}/categorization-rules/{ruleId}", wrapper.GetApiV1TWorkspaceIdCategorizationRulesRuleId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/t/{workspaceId}/categorization-rules/{ruleId}", wrapper.PatchApiV1TWorkspaceIdCategorizationRulesRuleId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/t/{workspaceId}/merchants", wrapper.GetApiV1TWorkspaceIdMerchants)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/t/{workspaceId}/merchants", wrapper.PostApiV1TWorkspaceIdMerchants)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/t/{workspaceId}/merchants/{merchantId}", wrapper.DeleteApiV1TWorkspaceIdMerchantsMerchantId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/t/{workspaceId}/merchants/{merchantId}", wrapper.GetApiV1TWorkspaceIdMerchantsMerchantId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/t/{workspaceId}/merchants/{merchantId}", wrapper.PatchApiV1TWorkspaceIdMerchantsMerchantId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/t/{workspaceId}/tags", wrapper.GetApiV1TWorkspaceIdTags)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/t/{workspaceId}/tags", wrapper.PostApiV1TWorkspaceIdTags)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/t/{workspaceId}/tags/{tagId}", wrapper.DeleteApiV1TWorkspaceIdTagsTagId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/t/{workspaceId}/tags/{tagId}", wrapper.GetApiV1TWorkspaceIdTagsTagId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/t/{workspaceId}/tags/{tagId}", wrapper.PatchApiV1TWorkspaceIdTagsTagId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/t/{workspaceId}/transactions", wrapper.GetApiV1TWorkspaceIdTransactions)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/t/{workspaceId}/transactions", wrapper.PostApiV1TWorkspaceIdTransactions)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/t/{workspaceId}/transactions/{transactionId}", wrapper.DeleteApiV1TWorkspaceIdTransactionsTransactionId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/t/{workspaceId}/transactions/{transactionId}", wrapper.GetApiV1TWorkspaceIdTransactionsTransactionId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/t/{workspaceId}/transactions/{transactionId}", wrapper.PatchApiV1TWorkspaceIdTransactionsTransactionId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/t/{workspaceId}/transactions/{transactionId}/apply-categorization-rules", wrapper.PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRules)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/t/{workspaceId}/transactions/{transactionId}/tags/{tagId}", wrapper.DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/t/{workspaceId}/transactions/{transactionId}/tags/{tagId}", wrapper.PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/version", wrapper.GetApiV1Version)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/workspaces", wrapper.PostApiV1Workspaces)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/healthz", wrapper.GetHealthz)
 	})
 
 	return r
-}
-
-type GetApiV1AccountsRequestObject struct {
-	Params GetApiV1AccountsParams
-}
-
-type GetApiV1AccountsResponseObject interface {
-	VisitGetApiV1AccountsResponse(w http.ResponseWriter) error
-}
-
-type GetApiV1Accounts200JSONResponse []Account
-
-func (response GetApiV1Accounts200JSONResponse) VisitGetApiV1AccountsResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostApiV1AccountsRequestObject struct {
-	Body *PostApiV1AccountsJSONRequestBody
-}
-
-type PostApiV1AccountsResponseObject interface {
-	VisitPostApiV1AccountsResponse(w http.ResponseWriter) error
-}
-
-type PostApiV1Accounts201JSONResponse Account
-
-func (response PostApiV1Accounts201JSONResponse) VisitPostApiV1AccountsResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type GetApiV1AccountsGroupsRequestObject struct {
-	Params GetApiV1AccountsGroupsParams
-}
-
-type GetApiV1AccountsGroupsResponseObject interface {
-	VisitGetApiV1AccountsGroupsResponse(w http.ResponseWriter) error
-}
-
-type GetApiV1AccountsGroups200JSONResponse []AccountGroup
-
-func (response GetApiV1AccountsGroups200JSONResponse) VisitGetApiV1AccountsGroupsResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostApiV1AccountsGroupsRequestObject struct {
-	Body *PostApiV1AccountsGroupsJSONRequestBody
-}
-
-type PostApiV1AccountsGroupsResponseObject interface {
-	VisitPostApiV1AccountsGroupsResponse(w http.ResponseWriter) error
-}
-
-type PostApiV1AccountsGroups201JSONResponse AccountGroup
-
-func (response PostApiV1AccountsGroups201JSONResponse) VisitPostApiV1AccountsGroupsResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type DeleteApiV1AccountsGroupsGroupIdRequestObject struct {
-	GroupId openapi_types.UUID `json:"groupId"`
-}
-
-type DeleteApiV1AccountsGroupsGroupIdResponseObject interface {
-	VisitDeleteApiV1AccountsGroupsGroupIdResponse(w http.ResponseWriter) error
-}
-
-type DeleteApiV1AccountsGroupsGroupId204Response struct {
-}
-
-func (response DeleteApiV1AccountsGroupsGroupId204Response) VisitDeleteApiV1AccountsGroupsGroupIdResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type PatchApiV1AccountsGroupsGroupIdRequestObject struct {
-	GroupId openapi_types.UUID `json:"groupId"`
-	Body    *PatchApiV1AccountsGroupsGroupIdJSONRequestBody
-}
-
-type PatchApiV1AccountsGroupsGroupIdResponseObject interface {
-	VisitPatchApiV1AccountsGroupsGroupIdResponse(w http.ResponseWriter) error
-}
-
-type PatchApiV1AccountsGroupsGroupId200JSONResponse AccountGroup
-
-func (response PatchApiV1AccountsGroupsGroupId200JSONResponse) VisitPatchApiV1AccountsGroupsGroupIdResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PutApiV1AccountsOrderRequestObject struct {
-	Body *PutApiV1AccountsOrderJSONRequestBody
-}
-
-type PutApiV1AccountsOrderResponseObject interface {
-	VisitPutApiV1AccountsOrderResponse(w http.ResponseWriter) error
-}
-
-type PutApiV1AccountsOrder204Response struct {
-}
-
-func (response PutApiV1AccountsOrder204Response) VisitPutApiV1AccountsOrderResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type GetApiV1AccountsAccountIdRequestObject struct {
-	AccountId openapi_types.UUID `json:"accountId"`
-}
-
-type GetApiV1AccountsAccountIdResponseObject interface {
-	VisitGetApiV1AccountsAccountIdResponse(w http.ResponseWriter) error
-}
-
-type GetApiV1AccountsAccountId200JSONResponse Account
-
-func (response GetApiV1AccountsAccountId200JSONResponse) VisitGetApiV1AccountsAccountIdResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PatchApiV1AccountsAccountIdRequestObject struct {
-	AccountId openapi_types.UUID `json:"accountId"`
-	Body      *PatchApiV1AccountsAccountIdJSONRequestBody
-}
-
-type PatchApiV1AccountsAccountIdResponseObject interface {
-	VisitPatchApiV1AccountsAccountIdResponse(w http.ResponseWriter) error
-}
-
-type PatchApiV1AccountsAccountId200JSONResponse Account
-
-func (response PatchApiV1AccountsAccountId200JSONResponse) VisitPatchApiV1AccountsAccountIdResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
 }
 
 type PostApiV1AuthLoginRequestObject struct {
@@ -2884,176 +3163,6 @@ func (response PostApiV1AuthRegister201JSONResponse) VisitPostApiV1AuthRegisterR
 	return json.NewEncoder(w).Encode(response)
 }
 
-type GetApiV1CategoriesRequestObject struct {
-	Params GetApiV1CategoriesParams
-}
-
-type GetApiV1CategoriesResponseObject interface {
-	VisitGetApiV1CategoriesResponse(w http.ResponseWriter) error
-}
-
-type GetApiV1Categories200JSONResponse []Category
-
-func (response GetApiV1Categories200JSONResponse) VisitGetApiV1CategoriesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostApiV1CategoriesRequestObject struct {
-	Body *PostApiV1CategoriesJSONRequestBody
-}
-
-type PostApiV1CategoriesResponseObject interface {
-	VisitPostApiV1CategoriesResponse(w http.ResponseWriter) error
-}
-
-type PostApiV1Categories201JSONResponse Category
-
-func (response PostApiV1Categories201JSONResponse) VisitPostApiV1CategoriesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type DeleteApiV1CategoriesCategoryIdRequestObject struct {
-	CategoryId openapi_types.UUID `json:"categoryId"`
-}
-
-type DeleteApiV1CategoriesCategoryIdResponseObject interface {
-	VisitDeleteApiV1CategoriesCategoryIdResponse(w http.ResponseWriter) error
-}
-
-type DeleteApiV1CategoriesCategoryId204Response struct {
-}
-
-func (response DeleteApiV1CategoriesCategoryId204Response) VisitDeleteApiV1CategoriesCategoryIdResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type GetApiV1CategoriesCategoryIdRequestObject struct {
-	CategoryId openapi_types.UUID `json:"categoryId"`
-}
-
-type GetApiV1CategoriesCategoryIdResponseObject interface {
-	VisitGetApiV1CategoriesCategoryIdResponse(w http.ResponseWriter) error
-}
-
-type GetApiV1CategoriesCategoryId200JSONResponse Category
-
-func (response GetApiV1CategoriesCategoryId200JSONResponse) VisitGetApiV1CategoriesCategoryIdResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PatchApiV1CategoriesCategoryIdRequestObject struct {
-	CategoryId openapi_types.UUID `json:"categoryId"`
-	Body       *PatchApiV1CategoriesCategoryIdJSONRequestBody
-}
-
-type PatchApiV1CategoriesCategoryIdResponseObject interface {
-	VisitPatchApiV1CategoriesCategoryIdResponse(w http.ResponseWriter) error
-}
-
-type PatchApiV1CategoriesCategoryId200JSONResponse Category
-
-func (response PatchApiV1CategoriesCategoryId200JSONResponse) VisitPatchApiV1CategoriesCategoryIdResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type GetApiV1CategorizationRulesRequestObject struct {
-	Params GetApiV1CategorizationRulesParams
-}
-
-type GetApiV1CategorizationRulesResponseObject interface {
-	VisitGetApiV1CategorizationRulesResponse(w http.ResponseWriter) error
-}
-
-type GetApiV1CategorizationRules200JSONResponse []CategorizationRule
-
-func (response GetApiV1CategorizationRules200JSONResponse) VisitGetApiV1CategorizationRulesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostApiV1CategorizationRulesRequestObject struct {
-	Body *PostApiV1CategorizationRulesJSONRequestBody
-}
-
-type PostApiV1CategorizationRulesResponseObject interface {
-	VisitPostApiV1CategorizationRulesResponse(w http.ResponseWriter) error
-}
-
-type PostApiV1CategorizationRules201JSONResponse CategorizationRule
-
-func (response PostApiV1CategorizationRules201JSONResponse) VisitPostApiV1CategorizationRulesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type DeleteApiV1CategorizationRulesRuleIdRequestObject struct {
-	RuleId openapi_types.UUID `json:"ruleId"`
-}
-
-type DeleteApiV1CategorizationRulesRuleIdResponseObject interface {
-	VisitDeleteApiV1CategorizationRulesRuleIdResponse(w http.ResponseWriter) error
-}
-
-type DeleteApiV1CategorizationRulesRuleId204Response struct {
-}
-
-func (response DeleteApiV1CategorizationRulesRuleId204Response) VisitDeleteApiV1CategorizationRulesRuleIdResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type GetApiV1CategorizationRulesRuleIdRequestObject struct {
-	RuleId openapi_types.UUID `json:"ruleId"`
-}
-
-type GetApiV1CategorizationRulesRuleIdResponseObject interface {
-	VisitGetApiV1CategorizationRulesRuleIdResponse(w http.ResponseWriter) error
-}
-
-type GetApiV1CategorizationRulesRuleId200JSONResponse CategorizationRule
-
-func (response GetApiV1CategorizationRulesRuleId200JSONResponse) VisitGetApiV1CategorizationRulesRuleIdResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PatchApiV1CategorizationRulesRuleIdRequestObject struct {
-	RuleId openapi_types.UUID `json:"ruleId"`
-	Body   *PatchApiV1CategorizationRulesRuleIdJSONRequestBody
-}
-
-type PatchApiV1CategorizationRulesRuleIdResponseObject interface {
-	VisitPatchApiV1CategorizationRulesRuleIdResponse(w http.ResponseWriter) error
-}
-
-type PatchApiV1CategorizationRulesRuleId200JSONResponse CategorizationRule
-
-func (response PatchApiV1CategorizationRulesRuleId200JSONResponse) VisitPatchApiV1CategorizationRulesRuleIdResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
 type GetApiV1MeRequestObject struct {
 }
 
@@ -3064,91 +3173,6 @@ type GetApiV1MeResponseObject interface {
 type GetApiV1Me200JSONResponse MeResult
 
 func (response GetApiV1Me200JSONResponse) VisitGetApiV1MeResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type GetApiV1MerchantsRequestObject struct {
-	Params GetApiV1MerchantsParams
-}
-
-type GetApiV1MerchantsResponseObject interface {
-	VisitGetApiV1MerchantsResponse(w http.ResponseWriter) error
-}
-
-type GetApiV1Merchants200JSONResponse []Merchant
-
-func (response GetApiV1Merchants200JSONResponse) VisitGetApiV1MerchantsResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostApiV1MerchantsRequestObject struct {
-	Body *PostApiV1MerchantsJSONRequestBody
-}
-
-type PostApiV1MerchantsResponseObject interface {
-	VisitPostApiV1MerchantsResponse(w http.ResponseWriter) error
-}
-
-type PostApiV1Merchants201JSONResponse Merchant
-
-func (response PostApiV1Merchants201JSONResponse) VisitPostApiV1MerchantsResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type DeleteApiV1MerchantsMerchantIdRequestObject struct {
-	MerchantId openapi_types.UUID `json:"merchantId"`
-}
-
-type DeleteApiV1MerchantsMerchantIdResponseObject interface {
-	VisitDeleteApiV1MerchantsMerchantIdResponse(w http.ResponseWriter) error
-}
-
-type DeleteApiV1MerchantsMerchantId204Response struct {
-}
-
-func (response DeleteApiV1MerchantsMerchantId204Response) VisitDeleteApiV1MerchantsMerchantIdResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type GetApiV1MerchantsMerchantIdRequestObject struct {
-	MerchantId openapi_types.UUID `json:"merchantId"`
-}
-
-type GetApiV1MerchantsMerchantIdResponseObject interface {
-	VisitGetApiV1MerchantsMerchantIdResponse(w http.ResponseWriter) error
-}
-
-type GetApiV1MerchantsMerchantId200JSONResponse Merchant
-
-func (response GetApiV1MerchantsMerchantId200JSONResponse) VisitGetApiV1MerchantsMerchantIdResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PatchApiV1MerchantsMerchantIdRequestObject struct {
-	MerchantId openapi_types.UUID `json:"merchantId"`
-	Body       *PatchApiV1MerchantsMerchantIdJSONRequestBody
-}
-
-type PatchApiV1MerchantsMerchantIdResponseObject interface {
-	VisitPatchApiV1MerchantsMerchantIdResponse(w http.ResponseWriter) error
-}
-
-type PatchApiV1MerchantsMerchantId200JSONResponse Merchant
-
-func (response PatchApiV1MerchantsMerchantId200JSONResponse) VisitPatchApiV1MerchantsMerchantIdResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 
@@ -3192,223 +3216,668 @@ func (response PostApiV1ProvidersGocardlessRequisitions200JSONResponse) VisitPos
 	return json.NewEncoder(w).Encode(response)
 }
 
-type GetApiV1TagsRequestObject struct {
-	Params GetApiV1TagsParams
+type GetApiV1TWorkspaceIdAccountsRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Params      GetApiV1TWorkspaceIdAccountsParams
 }
 
-type GetApiV1TagsResponseObject interface {
-	VisitGetApiV1TagsResponse(w http.ResponseWriter) error
+type GetApiV1TWorkspaceIdAccountsResponseObject interface {
+	VisitGetApiV1TWorkspaceIdAccountsResponse(w http.ResponseWriter) error
 }
 
-type GetApiV1Tags200JSONResponse []Tag
+type GetApiV1TWorkspaceIdAccounts200JSONResponse []Account
 
-func (response GetApiV1Tags200JSONResponse) VisitGetApiV1TagsResponse(w http.ResponseWriter) error {
+func (response GetApiV1TWorkspaceIdAccounts200JSONResponse) VisitGetApiV1TWorkspaceIdAccountsResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
-type PostApiV1TagsRequestObject struct {
-	Body *PostApiV1TagsJSONRequestBody
+type PostApiV1TWorkspaceIdAccountsRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Body        *PostApiV1TWorkspaceIdAccountsJSONRequestBody
 }
 
-type PostApiV1TagsResponseObject interface {
-	VisitPostApiV1TagsResponse(w http.ResponseWriter) error
+type PostApiV1TWorkspaceIdAccountsResponseObject interface {
+	VisitPostApiV1TWorkspaceIdAccountsResponse(w http.ResponseWriter) error
 }
 
-type PostApiV1Tags201JSONResponse Tag
+type PostApiV1TWorkspaceIdAccounts201JSONResponse Account
 
-func (response PostApiV1Tags201JSONResponse) VisitPostApiV1TagsResponse(w http.ResponseWriter) error {
+func (response PostApiV1TWorkspaceIdAccounts201JSONResponse) VisitPostApiV1TWorkspaceIdAccountsResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
-type DeleteApiV1TagsTagIdRequestObject struct {
-	TagId openapi_types.UUID `json:"tagId"`
+type GetApiV1TWorkspaceIdAccountsGroupsRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Params      GetApiV1TWorkspaceIdAccountsGroupsParams
 }
 
-type DeleteApiV1TagsTagIdResponseObject interface {
-	VisitDeleteApiV1TagsTagIdResponse(w http.ResponseWriter) error
+type GetApiV1TWorkspaceIdAccountsGroupsResponseObject interface {
+	VisitGetApiV1TWorkspaceIdAccountsGroupsResponse(w http.ResponseWriter) error
 }
 
-type DeleteApiV1TagsTagId204Response struct {
-}
+type GetApiV1TWorkspaceIdAccountsGroups200JSONResponse []AccountGroup
 
-func (response DeleteApiV1TagsTagId204Response) VisitDeleteApiV1TagsTagIdResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type GetApiV1TagsTagIdRequestObject struct {
-	TagId openapi_types.UUID `json:"tagId"`
-}
-
-type GetApiV1TagsTagIdResponseObject interface {
-	VisitGetApiV1TagsTagIdResponse(w http.ResponseWriter) error
-}
-
-type GetApiV1TagsTagId200JSONResponse Tag
-
-func (response GetApiV1TagsTagId200JSONResponse) VisitGetApiV1TagsTagIdResponse(w http.ResponseWriter) error {
+func (response GetApiV1TWorkspaceIdAccountsGroups200JSONResponse) VisitGetApiV1TWorkspaceIdAccountsGroupsResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
-type PatchApiV1TagsTagIdRequestObject struct {
-	TagId openapi_types.UUID `json:"tagId"`
-	Body  *PatchApiV1TagsTagIdJSONRequestBody
+type PostApiV1TWorkspaceIdAccountsGroupsRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Body        *PostApiV1TWorkspaceIdAccountsGroupsJSONRequestBody
 }
 
-type PatchApiV1TagsTagIdResponseObject interface {
-	VisitPatchApiV1TagsTagIdResponse(w http.ResponseWriter) error
+type PostApiV1TWorkspaceIdAccountsGroupsResponseObject interface {
+	VisitPostApiV1TWorkspaceIdAccountsGroupsResponse(w http.ResponseWriter) error
 }
 
-type PatchApiV1TagsTagId200JSONResponse Tag
+type PostApiV1TWorkspaceIdAccountsGroups201JSONResponse AccountGroup
 
-func (response PatchApiV1TagsTagId200JSONResponse) VisitPatchApiV1TagsTagIdResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type GetApiV1TransactionsRequestObject struct {
-	Params GetApiV1TransactionsParams
-}
-
-type GetApiV1TransactionsResponseObject interface {
-	VisitGetApiV1TransactionsResponse(w http.ResponseWriter) error
-}
-
-type GetApiV1Transactions200JSONResponse []Transaction
-
-func (response GetApiV1Transactions200JSONResponse) VisitGetApiV1TransactionsResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type PostApiV1TransactionsRequestObject struct {
-	Body *PostApiV1TransactionsJSONRequestBody
-}
-
-type PostApiV1TransactionsResponseObject interface {
-	VisitPostApiV1TransactionsResponse(w http.ResponseWriter) error
-}
-
-type PostApiV1Transactions201JSONResponse Transaction
-
-func (response PostApiV1Transactions201JSONResponse) VisitPostApiV1TransactionsResponse(w http.ResponseWriter) error {
+func (response PostApiV1TWorkspaceIdAccountsGroups201JSONResponse) VisitPostApiV1TWorkspaceIdAccountsGroupsResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
-type DeleteApiV1TransactionsTransactionIdRequestObject struct {
-	TransactionId openapi_types.UUID `json:"transactionId"`
+type DeleteApiV1TWorkspaceIdAccountsGroupsGroupIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	GroupId     openapi_types.UUID `json:"groupId"`
 }
 
-type DeleteApiV1TransactionsTransactionIdResponseObject interface {
-	VisitDeleteApiV1TransactionsTransactionIdResponse(w http.ResponseWriter) error
+type DeleteApiV1TWorkspaceIdAccountsGroupsGroupIdResponseObject interface {
+	VisitDeleteApiV1TWorkspaceIdAccountsGroupsGroupIdResponse(w http.ResponseWriter) error
 }
 
-type DeleteApiV1TransactionsTransactionId204Response struct {
+type DeleteApiV1TWorkspaceIdAccountsGroupsGroupId204Response struct {
 }
 
-func (response DeleteApiV1TransactionsTransactionId204Response) VisitDeleteApiV1TransactionsTransactionIdResponse(w http.ResponseWriter) error {
+func (response DeleteApiV1TWorkspaceIdAccountsGroupsGroupId204Response) VisitDeleteApiV1TWorkspaceIdAccountsGroupsGroupIdResponse(w http.ResponseWriter) error {
 	w.WriteHeader(204)
 	return nil
 }
 
-type GetApiV1TransactionsTransactionIdRequestObject struct {
-	TransactionId openapi_types.UUID `json:"transactionId"`
+type PatchApiV1TWorkspaceIdAccountsGroupsGroupIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	GroupId     openapi_types.UUID `json:"groupId"`
+	Body        *PatchApiV1TWorkspaceIdAccountsGroupsGroupIdJSONRequestBody
 }
 
-type GetApiV1TransactionsTransactionIdResponseObject interface {
-	VisitGetApiV1TransactionsTransactionIdResponse(w http.ResponseWriter) error
+type PatchApiV1TWorkspaceIdAccountsGroupsGroupIdResponseObject interface {
+	VisitPatchApiV1TWorkspaceIdAccountsGroupsGroupIdResponse(w http.ResponseWriter) error
 }
 
-type GetApiV1TransactionsTransactionId200JSONResponse Transaction
+type PatchApiV1TWorkspaceIdAccountsGroupsGroupId200JSONResponse AccountGroup
 
-func (response GetApiV1TransactionsTransactionId200JSONResponse) VisitGetApiV1TransactionsTransactionIdResponse(w http.ResponseWriter) error {
+func (response PatchApiV1TWorkspaceIdAccountsGroupsGroupId200JSONResponse) VisitPatchApiV1TWorkspaceIdAccountsGroupsGroupIdResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
-type PatchApiV1TransactionsTransactionIdRequestObject struct {
-	TransactionId openapi_types.UUID `json:"transactionId"`
-	Body          *PatchApiV1TransactionsTransactionIdJSONRequestBody
+type PutApiV1TWorkspaceIdAccountsOrderRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Body        *PutApiV1TWorkspaceIdAccountsOrderJSONRequestBody
 }
 
-type PatchApiV1TransactionsTransactionIdResponseObject interface {
-	VisitPatchApiV1TransactionsTransactionIdResponse(w http.ResponseWriter) error
+type PutApiV1TWorkspaceIdAccountsOrderResponseObject interface {
+	VisitPutApiV1TWorkspaceIdAccountsOrderResponse(w http.ResponseWriter) error
 }
 
-type PatchApiV1TransactionsTransactionId200JSONResponse Transaction
-
-func (response PatchApiV1TransactionsTransactionId200JSONResponse) VisitPatchApiV1TransactionsTransactionIdResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
+type PutApiV1TWorkspaceIdAccountsOrder204Response struct {
 }
 
-type PostApiV1TransactionsTransactionIdApplyCategorizationRulesRequestObject struct {
-	TransactionId openapi_types.UUID `json:"transactionId"`
-}
-
-type PostApiV1TransactionsTransactionIdApplyCategorizationRulesResponseObject interface {
-	VisitPostApiV1TransactionsTransactionIdApplyCategorizationRulesResponse(w http.ResponseWriter) error
-}
-
-type PostApiV1TransactionsTransactionIdApplyCategorizationRules200JSONResponse RuleApplyResult
-
-func (response PostApiV1TransactionsTransactionIdApplyCategorizationRules200JSONResponse) VisitPostApiV1TransactionsTransactionIdApplyCategorizationRulesResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type DeleteApiV1TransactionsTransactionIdTagsTagIdRequestObject struct {
-	TransactionId openapi_types.UUID `json:"transactionId"`
-	TagId         openapi_types.UUID `json:"tagId"`
-}
-
-type DeleteApiV1TransactionsTransactionIdTagsTagIdResponseObject interface {
-	VisitDeleteApiV1TransactionsTransactionIdTagsTagIdResponse(w http.ResponseWriter) error
-}
-
-type DeleteApiV1TransactionsTransactionIdTagsTagId204Response struct {
-}
-
-func (response DeleteApiV1TransactionsTransactionIdTagsTagId204Response) VisitDeleteApiV1TransactionsTransactionIdTagsTagIdResponse(w http.ResponseWriter) error {
+func (response PutApiV1TWorkspaceIdAccountsOrder204Response) VisitPutApiV1TWorkspaceIdAccountsOrderResponse(w http.ResponseWriter) error {
 	w.WriteHeader(204)
 	return nil
 }
 
-type PutApiV1TransactionsTransactionIdTagsTagIdRequestObject struct {
+type GetApiV1TWorkspaceIdAccountsAccountIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	AccountId   openapi_types.UUID `json:"accountId"`
+}
+
+type GetApiV1TWorkspaceIdAccountsAccountIdResponseObject interface {
+	VisitGetApiV1TWorkspaceIdAccountsAccountIdResponse(w http.ResponseWriter) error
+}
+
+type GetApiV1TWorkspaceIdAccountsAccountId200JSONResponse Account
+
+func (response GetApiV1TWorkspaceIdAccountsAccountId200JSONResponse) VisitGetApiV1TWorkspaceIdAccountsAccountIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PatchApiV1TWorkspaceIdAccountsAccountIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	AccountId   openapi_types.UUID `json:"accountId"`
+	Body        *PatchApiV1TWorkspaceIdAccountsAccountIdJSONRequestBody
+}
+
+type PatchApiV1TWorkspaceIdAccountsAccountIdResponseObject interface {
+	VisitPatchApiV1TWorkspaceIdAccountsAccountIdResponse(w http.ResponseWriter) error
+}
+
+type PatchApiV1TWorkspaceIdAccountsAccountId200JSONResponse Account
+
+func (response PatchApiV1TWorkspaceIdAccountsAccountId200JSONResponse) VisitPatchApiV1TWorkspaceIdAccountsAccountIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetApiV1TWorkspaceIdCategoriesRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Params      GetApiV1TWorkspaceIdCategoriesParams
+}
+
+type GetApiV1TWorkspaceIdCategoriesResponseObject interface {
+	VisitGetApiV1TWorkspaceIdCategoriesResponse(w http.ResponseWriter) error
+}
+
+type GetApiV1TWorkspaceIdCategories200JSONResponse []Category
+
+func (response GetApiV1TWorkspaceIdCategories200JSONResponse) VisitGetApiV1TWorkspaceIdCategoriesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostApiV1TWorkspaceIdCategoriesRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Body        *PostApiV1TWorkspaceIdCategoriesJSONRequestBody
+}
+
+type PostApiV1TWorkspaceIdCategoriesResponseObject interface {
+	VisitPostApiV1TWorkspaceIdCategoriesResponse(w http.ResponseWriter) error
+}
+
+type PostApiV1TWorkspaceIdCategories201JSONResponse Category
+
+func (response PostApiV1TWorkspaceIdCategories201JSONResponse) VisitPostApiV1TWorkspaceIdCategoriesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteApiV1TWorkspaceIdCategoriesCategoryIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	CategoryId  openapi_types.UUID `json:"categoryId"`
+}
+
+type DeleteApiV1TWorkspaceIdCategoriesCategoryIdResponseObject interface {
+	VisitDeleteApiV1TWorkspaceIdCategoriesCategoryIdResponse(w http.ResponseWriter) error
+}
+
+type DeleteApiV1TWorkspaceIdCategoriesCategoryId204Response struct {
+}
+
+func (response DeleteApiV1TWorkspaceIdCategoriesCategoryId204Response) VisitDeleteApiV1TWorkspaceIdCategoriesCategoryIdResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type GetApiV1TWorkspaceIdCategoriesCategoryIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	CategoryId  openapi_types.UUID `json:"categoryId"`
+}
+
+type GetApiV1TWorkspaceIdCategoriesCategoryIdResponseObject interface {
+	VisitGetApiV1TWorkspaceIdCategoriesCategoryIdResponse(w http.ResponseWriter) error
+}
+
+type GetApiV1TWorkspaceIdCategoriesCategoryId200JSONResponse Category
+
+func (response GetApiV1TWorkspaceIdCategoriesCategoryId200JSONResponse) VisitGetApiV1TWorkspaceIdCategoriesCategoryIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PatchApiV1TWorkspaceIdCategoriesCategoryIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	CategoryId  openapi_types.UUID `json:"categoryId"`
+	Body        *PatchApiV1TWorkspaceIdCategoriesCategoryIdJSONRequestBody
+}
+
+type PatchApiV1TWorkspaceIdCategoriesCategoryIdResponseObject interface {
+	VisitPatchApiV1TWorkspaceIdCategoriesCategoryIdResponse(w http.ResponseWriter) error
+}
+
+type PatchApiV1TWorkspaceIdCategoriesCategoryId200JSONResponse Category
+
+func (response PatchApiV1TWorkspaceIdCategoriesCategoryId200JSONResponse) VisitPatchApiV1TWorkspaceIdCategoriesCategoryIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetApiV1TWorkspaceIdCategorizationRulesRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Params      GetApiV1TWorkspaceIdCategorizationRulesParams
+}
+
+type GetApiV1TWorkspaceIdCategorizationRulesResponseObject interface {
+	VisitGetApiV1TWorkspaceIdCategorizationRulesResponse(w http.ResponseWriter) error
+}
+
+type GetApiV1TWorkspaceIdCategorizationRules200JSONResponse []CategorizationRule
+
+func (response GetApiV1TWorkspaceIdCategorizationRules200JSONResponse) VisitGetApiV1TWorkspaceIdCategorizationRulesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostApiV1TWorkspaceIdCategorizationRulesRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Body        *PostApiV1TWorkspaceIdCategorizationRulesJSONRequestBody
+}
+
+type PostApiV1TWorkspaceIdCategorizationRulesResponseObject interface {
+	VisitPostApiV1TWorkspaceIdCategorizationRulesResponse(w http.ResponseWriter) error
+}
+
+type PostApiV1TWorkspaceIdCategorizationRules201JSONResponse CategorizationRule
+
+func (response PostApiV1TWorkspaceIdCategorizationRules201JSONResponse) VisitPostApiV1TWorkspaceIdCategorizationRulesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteApiV1TWorkspaceIdCategorizationRulesRuleIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	RuleId      openapi_types.UUID `json:"ruleId"`
+}
+
+type DeleteApiV1TWorkspaceIdCategorizationRulesRuleIdResponseObject interface {
+	VisitDeleteApiV1TWorkspaceIdCategorizationRulesRuleIdResponse(w http.ResponseWriter) error
+}
+
+type DeleteApiV1TWorkspaceIdCategorizationRulesRuleId204Response struct {
+}
+
+func (response DeleteApiV1TWorkspaceIdCategorizationRulesRuleId204Response) VisitDeleteApiV1TWorkspaceIdCategorizationRulesRuleIdResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type GetApiV1TWorkspaceIdCategorizationRulesRuleIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	RuleId      openapi_types.UUID `json:"ruleId"`
+}
+
+type GetApiV1TWorkspaceIdCategorizationRulesRuleIdResponseObject interface {
+	VisitGetApiV1TWorkspaceIdCategorizationRulesRuleIdResponse(w http.ResponseWriter) error
+}
+
+type GetApiV1TWorkspaceIdCategorizationRulesRuleId200JSONResponse CategorizationRule
+
+func (response GetApiV1TWorkspaceIdCategorizationRulesRuleId200JSONResponse) VisitGetApiV1TWorkspaceIdCategorizationRulesRuleIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PatchApiV1TWorkspaceIdCategorizationRulesRuleIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	RuleId      openapi_types.UUID `json:"ruleId"`
+	Body        *PatchApiV1TWorkspaceIdCategorizationRulesRuleIdJSONRequestBody
+}
+
+type PatchApiV1TWorkspaceIdCategorizationRulesRuleIdResponseObject interface {
+	VisitPatchApiV1TWorkspaceIdCategorizationRulesRuleIdResponse(w http.ResponseWriter) error
+}
+
+type PatchApiV1TWorkspaceIdCategorizationRulesRuleId200JSONResponse CategorizationRule
+
+func (response PatchApiV1TWorkspaceIdCategorizationRulesRuleId200JSONResponse) VisitPatchApiV1TWorkspaceIdCategorizationRulesRuleIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetApiV1TWorkspaceIdMerchantsRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Params      GetApiV1TWorkspaceIdMerchantsParams
+}
+
+type GetApiV1TWorkspaceIdMerchantsResponseObject interface {
+	VisitGetApiV1TWorkspaceIdMerchantsResponse(w http.ResponseWriter) error
+}
+
+type GetApiV1TWorkspaceIdMerchants200JSONResponse []Merchant
+
+func (response GetApiV1TWorkspaceIdMerchants200JSONResponse) VisitGetApiV1TWorkspaceIdMerchantsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostApiV1TWorkspaceIdMerchantsRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Body        *PostApiV1TWorkspaceIdMerchantsJSONRequestBody
+}
+
+type PostApiV1TWorkspaceIdMerchantsResponseObject interface {
+	VisitPostApiV1TWorkspaceIdMerchantsResponse(w http.ResponseWriter) error
+}
+
+type PostApiV1TWorkspaceIdMerchants201JSONResponse Merchant
+
+func (response PostApiV1TWorkspaceIdMerchants201JSONResponse) VisitPostApiV1TWorkspaceIdMerchantsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteApiV1TWorkspaceIdMerchantsMerchantIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	MerchantId  openapi_types.UUID `json:"merchantId"`
+}
+
+type DeleteApiV1TWorkspaceIdMerchantsMerchantIdResponseObject interface {
+	VisitDeleteApiV1TWorkspaceIdMerchantsMerchantIdResponse(w http.ResponseWriter) error
+}
+
+type DeleteApiV1TWorkspaceIdMerchantsMerchantId204Response struct {
+}
+
+func (response DeleteApiV1TWorkspaceIdMerchantsMerchantId204Response) VisitDeleteApiV1TWorkspaceIdMerchantsMerchantIdResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type GetApiV1TWorkspaceIdMerchantsMerchantIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	MerchantId  openapi_types.UUID `json:"merchantId"`
+}
+
+type GetApiV1TWorkspaceIdMerchantsMerchantIdResponseObject interface {
+	VisitGetApiV1TWorkspaceIdMerchantsMerchantIdResponse(w http.ResponseWriter) error
+}
+
+type GetApiV1TWorkspaceIdMerchantsMerchantId200JSONResponse Merchant
+
+func (response GetApiV1TWorkspaceIdMerchantsMerchantId200JSONResponse) VisitGetApiV1TWorkspaceIdMerchantsMerchantIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PatchApiV1TWorkspaceIdMerchantsMerchantIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	MerchantId  openapi_types.UUID `json:"merchantId"`
+	Body        *PatchApiV1TWorkspaceIdMerchantsMerchantIdJSONRequestBody
+}
+
+type PatchApiV1TWorkspaceIdMerchantsMerchantIdResponseObject interface {
+	VisitPatchApiV1TWorkspaceIdMerchantsMerchantIdResponse(w http.ResponseWriter) error
+}
+
+type PatchApiV1TWorkspaceIdMerchantsMerchantId200JSONResponse Merchant
+
+func (response PatchApiV1TWorkspaceIdMerchantsMerchantId200JSONResponse) VisitPatchApiV1TWorkspaceIdMerchantsMerchantIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetApiV1TWorkspaceIdTagsRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Params      GetApiV1TWorkspaceIdTagsParams
+}
+
+type GetApiV1TWorkspaceIdTagsResponseObject interface {
+	VisitGetApiV1TWorkspaceIdTagsResponse(w http.ResponseWriter) error
+}
+
+type GetApiV1TWorkspaceIdTags200JSONResponse []Tag
+
+func (response GetApiV1TWorkspaceIdTags200JSONResponse) VisitGetApiV1TWorkspaceIdTagsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostApiV1TWorkspaceIdTagsRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Body        *PostApiV1TWorkspaceIdTagsJSONRequestBody
+}
+
+type PostApiV1TWorkspaceIdTagsResponseObject interface {
+	VisitPostApiV1TWorkspaceIdTagsResponse(w http.ResponseWriter) error
+}
+
+type PostApiV1TWorkspaceIdTags201JSONResponse Tag
+
+func (response PostApiV1TWorkspaceIdTags201JSONResponse) VisitPostApiV1TWorkspaceIdTagsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteApiV1TWorkspaceIdTagsTagIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	TagId       openapi_types.UUID `json:"tagId"`
+}
+
+type DeleteApiV1TWorkspaceIdTagsTagIdResponseObject interface {
+	VisitDeleteApiV1TWorkspaceIdTagsTagIdResponse(w http.ResponseWriter) error
+}
+
+type DeleteApiV1TWorkspaceIdTagsTagId204Response struct {
+}
+
+func (response DeleteApiV1TWorkspaceIdTagsTagId204Response) VisitDeleteApiV1TWorkspaceIdTagsTagIdResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type GetApiV1TWorkspaceIdTagsTagIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	TagId       openapi_types.UUID `json:"tagId"`
+}
+
+type GetApiV1TWorkspaceIdTagsTagIdResponseObject interface {
+	VisitGetApiV1TWorkspaceIdTagsTagIdResponse(w http.ResponseWriter) error
+}
+
+type GetApiV1TWorkspaceIdTagsTagId200JSONResponse Tag
+
+func (response GetApiV1TWorkspaceIdTagsTagId200JSONResponse) VisitGetApiV1TWorkspaceIdTagsTagIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PatchApiV1TWorkspaceIdTagsTagIdRequestObject struct {
+	WorkspaceId WorkspaceId        `json:"workspaceId"`
+	TagId       openapi_types.UUID `json:"tagId"`
+	Body        *PatchApiV1TWorkspaceIdTagsTagIdJSONRequestBody
+}
+
+type PatchApiV1TWorkspaceIdTagsTagIdResponseObject interface {
+	VisitPatchApiV1TWorkspaceIdTagsTagIdResponse(w http.ResponseWriter) error
+}
+
+type PatchApiV1TWorkspaceIdTagsTagId200JSONResponse Tag
+
+func (response PatchApiV1TWorkspaceIdTagsTagId200JSONResponse) VisitPatchApiV1TWorkspaceIdTagsTagIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetApiV1TWorkspaceIdTransactionsRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Params      GetApiV1TWorkspaceIdTransactionsParams
+}
+
+type GetApiV1TWorkspaceIdTransactionsResponseObject interface {
+	VisitGetApiV1TWorkspaceIdTransactionsResponse(w http.ResponseWriter) error
+}
+
+type GetApiV1TWorkspaceIdTransactions200JSONResponse []Transaction
+
+func (response GetApiV1TWorkspaceIdTransactions200JSONResponse) VisitGetApiV1TWorkspaceIdTransactionsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostApiV1TWorkspaceIdTransactionsRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspaceId"`
+	Body        *PostApiV1TWorkspaceIdTransactionsJSONRequestBody
+}
+
+type PostApiV1TWorkspaceIdTransactionsResponseObject interface {
+	VisitPostApiV1TWorkspaceIdTransactionsResponse(w http.ResponseWriter) error
+}
+
+type PostApiV1TWorkspaceIdTransactions201JSONResponse Transaction
+
+func (response PostApiV1TWorkspaceIdTransactions201JSONResponse) VisitPostApiV1TWorkspaceIdTransactionsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteApiV1TWorkspaceIdTransactionsTransactionIdRequestObject struct {
+	WorkspaceId   WorkspaceId        `json:"workspaceId"`
+	TransactionId openapi_types.UUID `json:"transactionId"`
+}
+
+type DeleteApiV1TWorkspaceIdTransactionsTransactionIdResponseObject interface {
+	VisitDeleteApiV1TWorkspaceIdTransactionsTransactionIdResponse(w http.ResponseWriter) error
+}
+
+type DeleteApiV1TWorkspaceIdTransactionsTransactionId204Response struct {
+}
+
+func (response DeleteApiV1TWorkspaceIdTransactionsTransactionId204Response) VisitDeleteApiV1TWorkspaceIdTransactionsTransactionIdResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type GetApiV1TWorkspaceIdTransactionsTransactionIdRequestObject struct {
+	WorkspaceId   WorkspaceId        `json:"workspaceId"`
+	TransactionId openapi_types.UUID `json:"transactionId"`
+}
+
+type GetApiV1TWorkspaceIdTransactionsTransactionIdResponseObject interface {
+	VisitGetApiV1TWorkspaceIdTransactionsTransactionIdResponse(w http.ResponseWriter) error
+}
+
+type GetApiV1TWorkspaceIdTransactionsTransactionId200JSONResponse Transaction
+
+func (response GetApiV1TWorkspaceIdTransactionsTransactionId200JSONResponse) VisitGetApiV1TWorkspaceIdTransactionsTransactionIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PatchApiV1TWorkspaceIdTransactionsTransactionIdRequestObject struct {
+	WorkspaceId   WorkspaceId        `json:"workspaceId"`
+	TransactionId openapi_types.UUID `json:"transactionId"`
+	Body          *PatchApiV1TWorkspaceIdTransactionsTransactionIdJSONRequestBody
+}
+
+type PatchApiV1TWorkspaceIdTransactionsTransactionIdResponseObject interface {
+	VisitPatchApiV1TWorkspaceIdTransactionsTransactionIdResponse(w http.ResponseWriter) error
+}
+
+type PatchApiV1TWorkspaceIdTransactionsTransactionId200JSONResponse Transaction
+
+func (response PatchApiV1TWorkspaceIdTransactionsTransactionId200JSONResponse) VisitPatchApiV1TWorkspaceIdTransactionsTransactionIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRulesRequestObject struct {
+	WorkspaceId   WorkspaceId        `json:"workspaceId"`
+	TransactionId openapi_types.UUID `json:"transactionId"`
+}
+
+type PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRulesResponseObject interface {
+	VisitPostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRulesResponse(w http.ResponseWriter) error
+}
+
+type PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRules200JSONResponse RuleApplyResult
+
+func (response PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRules200JSONResponse) VisitPostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRulesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdRequestObject struct {
+	WorkspaceId   WorkspaceId        `json:"workspaceId"`
 	TransactionId openapi_types.UUID `json:"transactionId"`
 	TagId         openapi_types.UUID `json:"tagId"`
 }
 
-type PutApiV1TransactionsTransactionIdTagsTagIdResponseObject interface {
-	VisitPutApiV1TransactionsTransactionIdTagsTagIdResponse(w http.ResponseWriter) error
+type DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdResponseObject interface {
+	VisitDeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdResponse(w http.ResponseWriter) error
 }
 
-type PutApiV1TransactionsTransactionIdTagsTagId204Response struct {
+type DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId204Response struct {
 }
 
-func (response PutApiV1TransactionsTransactionIdTagsTagId204Response) VisitPutApiV1TransactionsTransactionIdTagsTagIdResponse(w http.ResponseWriter) error {
+func (response DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId204Response) VisitDeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdRequestObject struct {
+	WorkspaceId   WorkspaceId        `json:"workspaceId"`
+	TransactionId openapi_types.UUID `json:"transactionId"`
+	TagId         openapi_types.UUID `json:"tagId"`
+}
+
+type PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdResponseObject interface {
+	VisitPutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdResponse(w http.ResponseWriter) error
+}
+
+type PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId204Response struct {
+}
+
+func (response PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId204Response) VisitPutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdResponse(w http.ResponseWriter) error {
 	w.WriteHeader(204)
 	return nil
 }
@@ -3425,6 +3894,23 @@ type GetApiV1Version200JSONResponse Version
 func (response GetApiV1Version200JSONResponse) VisitGetApiV1VersionResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PostApiV1WorkspacesRequestObject struct {
+	Body *PostApiV1WorkspacesJSONRequestBody
+}
+
+type PostApiV1WorkspacesResponseObject interface {
+	VisitPostApiV1WorkspacesResponse(w http.ResponseWriter) error
+}
+
+type PostApiV1Workspaces201JSONResponse WorkspaceCreateResult
+
+func (response PostApiV1Workspaces201JSONResponse) VisitPostApiV1WorkspacesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -3449,33 +3935,6 @@ func (response GetHealthz200JSONResponse) VisitGetHealthzResponse(w http.Respons
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
-	// List accounts for current workspace
-	// (GET /api/v1/accounts)
-	GetApiV1Accounts(ctx context.Context, request GetApiV1AccountsRequestObject) (GetApiV1AccountsResponseObject, error)
-	// Create an account and opening balance snapshot
-	// (POST /api/v1/accounts)
-	PostApiV1Accounts(ctx context.Context, request PostApiV1AccountsRequestObject) (PostApiV1AccountsResponseObject, error)
-	// List account groups for current workspace
-	// (GET /api/v1/accounts/groups)
-	GetApiV1AccountsGroups(ctx context.Context, request GetApiV1AccountsGroupsRequestObject) (GetApiV1AccountsGroupsResponseObject, error)
-	// Create an account group
-	// (POST /api/v1/accounts/groups)
-	PostApiV1AccountsGroups(ctx context.Context, request PostApiV1AccountsGroupsRequestObject) (PostApiV1AccountsGroupsResponseObject, error)
-	// Delete an account group
-	// (DELETE /api/v1/accounts/groups/{groupId})
-	DeleteApiV1AccountsGroupsGroupId(ctx context.Context, request DeleteApiV1AccountsGroupsGroupIdRequestObject) (DeleteApiV1AccountsGroupsGroupIdResponseObject, error)
-	// Update an account group
-	// (PATCH /api/v1/accounts/groups/{groupId})
-	PatchApiV1AccountsGroupsGroupId(ctx context.Context, request PatchApiV1AccountsGroupsGroupIdRequestObject) (PatchApiV1AccountsGroupsGroupIdResponseObject, error)
-	// Reorder account groups and accounts
-	// (PUT /api/v1/accounts/order)
-	PutApiV1AccountsOrder(ctx context.Context, request PutApiV1AccountsOrderRequestObject) (PutApiV1AccountsOrderResponseObject, error)
-	// Get an account
-	// (GET /api/v1/accounts/{accountId})
-	GetApiV1AccountsAccountId(ctx context.Context, request GetApiV1AccountsAccountIdRequestObject) (GetApiV1AccountsAccountIdResponseObject, error)
-	// Update mutable account fields
-	// (PATCH /api/v1/accounts/{accountId})
-	PatchApiV1AccountsAccountId(ctx context.Context, request PatchApiV1AccountsAccountIdRequestObject) (PatchApiV1AccountsAccountIdResponseObject, error)
 	// Password login → sets session cookie
 	// (POST /api/v1/auth/login)
 	PostApiV1AuthLogin(ctx context.Context, request PostApiV1AuthLoginRequestObject) (PostApiV1AuthLoginResponseObject, error)
@@ -3485,102 +3944,132 @@ type StrictServerInterface interface {
 	// Create a new user account
 	// (POST /api/v1/auth/register)
 	PostApiV1AuthRegister(ctx context.Context, request PostApiV1AuthRegisterRequestObject) (PostApiV1AuthRegisterResponseObject, error)
-	// List categories for current workspace
-	// (GET /api/v1/categories)
-	GetApiV1Categories(ctx context.Context, request GetApiV1CategoriesRequestObject) (GetApiV1CategoriesResponseObject, error)
-	// Create a category
-	// (POST /api/v1/categories)
-	PostApiV1Categories(ctx context.Context, request PostApiV1CategoriesRequestObject) (PostApiV1CategoriesResponseObject, error)
-	// Archive a category (soft delete)
-	// (DELETE /api/v1/categories/{categoryId})
-	DeleteApiV1CategoriesCategoryId(ctx context.Context, request DeleteApiV1CategoriesCategoryIdRequestObject) (DeleteApiV1CategoriesCategoryIdResponseObject, error)
-	// Get a category
-	// (GET /api/v1/categories/{categoryId})
-	GetApiV1CategoriesCategoryId(ctx context.Context, request GetApiV1CategoriesCategoryIdRequestObject) (GetApiV1CategoriesCategoryIdResponseObject, error)
-	// Update a category
-	// (PATCH /api/v1/categories/{categoryId})
-	PatchApiV1CategoriesCategoryId(ctx context.Context, request PatchApiV1CategoriesCategoryIdRequestObject) (PatchApiV1CategoriesCategoryIdResponseObject, error)
-	// List categorization rules for current workspace
-	// (GET /api/v1/categorization-rules)
-	GetApiV1CategorizationRules(ctx context.Context, request GetApiV1CategorizationRulesRequestObject) (GetApiV1CategorizationRulesResponseObject, error)
-	// Create a categorization rule
-	// (POST /api/v1/categorization-rules)
-	PostApiV1CategorizationRules(ctx context.Context, request PostApiV1CategorizationRulesRequestObject) (PostApiV1CategorizationRulesResponseObject, error)
-	// Delete a categorization rule
-	// (DELETE /api/v1/categorization-rules/{ruleId})
-	DeleteApiV1CategorizationRulesRuleId(ctx context.Context, request DeleteApiV1CategorizationRulesRuleIdRequestObject) (DeleteApiV1CategorizationRulesRuleIdResponseObject, error)
-	// Get a categorization rule
-	// (GET /api/v1/categorization-rules/{ruleId})
-	GetApiV1CategorizationRulesRuleId(ctx context.Context, request GetApiV1CategorizationRulesRuleIdRequestObject) (GetApiV1CategorizationRulesRuleIdResponseObject, error)
-	// Update a categorization rule
-	// (PATCH /api/v1/categorization-rules/{ruleId})
-	PatchApiV1CategorizationRulesRuleId(ctx context.Context, request PatchApiV1CategorizationRulesRuleIdRequestObject) (PatchApiV1CategorizationRulesRuleIdResponseObject, error)
 	// Current workspace user
 	// (GET /api/v1/me)
 	GetApiV1Me(ctx context.Context, request GetApiV1MeRequestObject) (GetApiV1MeResponseObject, error)
-	// List merchants for current workspace
-	// (GET /api/v1/merchants)
-	GetApiV1Merchants(ctx context.Context, request GetApiV1MerchantsRequestObject) (GetApiV1MerchantsResponseObject, error)
-	// Create a merchant
-	// (POST /api/v1/merchants)
-	PostApiV1Merchants(ctx context.Context, request PostApiV1MerchantsRequestObject) (PostApiV1MerchantsResponseObject, error)
-	// Archive a merchant (soft delete)
-	// (DELETE /api/v1/merchants/{merchantId})
-	DeleteApiV1MerchantsMerchantId(ctx context.Context, request DeleteApiV1MerchantsMerchantIdRequestObject) (DeleteApiV1MerchantsMerchantIdResponseObject, error)
-	// Get a merchant
-	// (GET /api/v1/merchants/{merchantId})
-	GetApiV1MerchantsMerchantId(ctx context.Context, request GetApiV1MerchantsMerchantIdRequestObject) (GetApiV1MerchantsMerchantIdResponseObject, error)
-	// Update a merchant
-	// (PATCH /api/v1/merchants/{merchantId})
-	PatchApiV1MerchantsMerchantId(ctx context.Context, request PatchApiV1MerchantsMerchantIdRequestObject) (PatchApiV1MerchantsMerchantIdResponseObject, error)
 	// Bootstrap a workspace and its first user
 	// (POST /api/v1/onboarding/bootstrap)
 	PostApiV1OnboardingBootstrap(ctx context.Context, request PostApiV1OnboardingBootstrapRequestObject) (PostApiV1OnboardingBootstrapResponseObject, error)
 	// Start a GoCardless bank connection (returns a consent URL)
 	// (POST /api/v1/providers/gocardless/requisitions)
 	PostApiV1ProvidersGocardlessRequisitions(ctx context.Context, request PostApiV1ProvidersGocardlessRequisitionsRequestObject) (PostApiV1ProvidersGocardlessRequisitionsResponseObject, error)
+	// List accounts for current workspace
+	// (GET /api/v1/t/{workspaceId}/accounts)
+	GetApiV1TWorkspaceIdAccounts(ctx context.Context, request GetApiV1TWorkspaceIdAccountsRequestObject) (GetApiV1TWorkspaceIdAccountsResponseObject, error)
+	// Create an account and opening balance snapshot
+	// (POST /api/v1/t/{workspaceId}/accounts)
+	PostApiV1TWorkspaceIdAccounts(ctx context.Context, request PostApiV1TWorkspaceIdAccountsRequestObject) (PostApiV1TWorkspaceIdAccountsResponseObject, error)
+	// List account groups for current workspace
+	// (GET /api/v1/t/{workspaceId}/accounts/groups)
+	GetApiV1TWorkspaceIdAccountsGroups(ctx context.Context, request GetApiV1TWorkspaceIdAccountsGroupsRequestObject) (GetApiV1TWorkspaceIdAccountsGroupsResponseObject, error)
+	// Create an account group
+	// (POST /api/v1/t/{workspaceId}/accounts/groups)
+	PostApiV1TWorkspaceIdAccountsGroups(ctx context.Context, request PostApiV1TWorkspaceIdAccountsGroupsRequestObject) (PostApiV1TWorkspaceIdAccountsGroupsResponseObject, error)
+	// Delete an account group
+	// (DELETE /api/v1/t/{workspaceId}/accounts/groups/{groupId})
+	DeleteApiV1TWorkspaceIdAccountsGroupsGroupId(ctx context.Context, request DeleteApiV1TWorkspaceIdAccountsGroupsGroupIdRequestObject) (DeleteApiV1TWorkspaceIdAccountsGroupsGroupIdResponseObject, error)
+	// Update an account group
+	// (PATCH /api/v1/t/{workspaceId}/accounts/groups/{groupId})
+	PatchApiV1TWorkspaceIdAccountsGroupsGroupId(ctx context.Context, request PatchApiV1TWorkspaceIdAccountsGroupsGroupIdRequestObject) (PatchApiV1TWorkspaceIdAccountsGroupsGroupIdResponseObject, error)
+	// Reorder account groups and accounts
+	// (PUT /api/v1/t/{workspaceId}/accounts/order)
+	PutApiV1TWorkspaceIdAccountsOrder(ctx context.Context, request PutApiV1TWorkspaceIdAccountsOrderRequestObject) (PutApiV1TWorkspaceIdAccountsOrderResponseObject, error)
+	// Get an account
+	// (GET /api/v1/t/{workspaceId}/accounts/{accountId})
+	GetApiV1TWorkspaceIdAccountsAccountId(ctx context.Context, request GetApiV1TWorkspaceIdAccountsAccountIdRequestObject) (GetApiV1TWorkspaceIdAccountsAccountIdResponseObject, error)
+	// Update mutable account fields
+	// (PATCH /api/v1/t/{workspaceId}/accounts/{accountId})
+	PatchApiV1TWorkspaceIdAccountsAccountId(ctx context.Context, request PatchApiV1TWorkspaceIdAccountsAccountIdRequestObject) (PatchApiV1TWorkspaceIdAccountsAccountIdResponseObject, error)
+	// List categories for current workspace
+	// (GET /api/v1/t/{workspaceId}/categories)
+	GetApiV1TWorkspaceIdCategories(ctx context.Context, request GetApiV1TWorkspaceIdCategoriesRequestObject) (GetApiV1TWorkspaceIdCategoriesResponseObject, error)
+	// Create a category
+	// (POST /api/v1/t/{workspaceId}/categories)
+	PostApiV1TWorkspaceIdCategories(ctx context.Context, request PostApiV1TWorkspaceIdCategoriesRequestObject) (PostApiV1TWorkspaceIdCategoriesResponseObject, error)
+	// Archive a category (soft delete)
+	// (DELETE /api/v1/t/{workspaceId}/categories/{categoryId})
+	DeleteApiV1TWorkspaceIdCategoriesCategoryId(ctx context.Context, request DeleteApiV1TWorkspaceIdCategoriesCategoryIdRequestObject) (DeleteApiV1TWorkspaceIdCategoriesCategoryIdResponseObject, error)
+	// Get a category
+	// (GET /api/v1/t/{workspaceId}/categories/{categoryId})
+	GetApiV1TWorkspaceIdCategoriesCategoryId(ctx context.Context, request GetApiV1TWorkspaceIdCategoriesCategoryIdRequestObject) (GetApiV1TWorkspaceIdCategoriesCategoryIdResponseObject, error)
+	// Update a category
+	// (PATCH /api/v1/t/{workspaceId}/categories/{categoryId})
+	PatchApiV1TWorkspaceIdCategoriesCategoryId(ctx context.Context, request PatchApiV1TWorkspaceIdCategoriesCategoryIdRequestObject) (PatchApiV1TWorkspaceIdCategoriesCategoryIdResponseObject, error)
+	// List categorization rules for current workspace
+	// (GET /api/v1/t/{workspaceId}/categorization-rules)
+	GetApiV1TWorkspaceIdCategorizationRules(ctx context.Context, request GetApiV1TWorkspaceIdCategorizationRulesRequestObject) (GetApiV1TWorkspaceIdCategorizationRulesResponseObject, error)
+	// Create a categorization rule
+	// (POST /api/v1/t/{workspaceId}/categorization-rules)
+	PostApiV1TWorkspaceIdCategorizationRules(ctx context.Context, request PostApiV1TWorkspaceIdCategorizationRulesRequestObject) (PostApiV1TWorkspaceIdCategorizationRulesResponseObject, error)
+	// Delete a categorization rule
+	// (DELETE /api/v1/t/{workspaceId}/categorization-rules/{ruleId})
+	DeleteApiV1TWorkspaceIdCategorizationRulesRuleId(ctx context.Context, request DeleteApiV1TWorkspaceIdCategorizationRulesRuleIdRequestObject) (DeleteApiV1TWorkspaceIdCategorizationRulesRuleIdResponseObject, error)
+	// Get a categorization rule
+	// (GET /api/v1/t/{workspaceId}/categorization-rules/{ruleId})
+	GetApiV1TWorkspaceIdCategorizationRulesRuleId(ctx context.Context, request GetApiV1TWorkspaceIdCategorizationRulesRuleIdRequestObject) (GetApiV1TWorkspaceIdCategorizationRulesRuleIdResponseObject, error)
+	// Update a categorization rule
+	// (PATCH /api/v1/t/{workspaceId}/categorization-rules/{ruleId})
+	PatchApiV1TWorkspaceIdCategorizationRulesRuleId(ctx context.Context, request PatchApiV1TWorkspaceIdCategorizationRulesRuleIdRequestObject) (PatchApiV1TWorkspaceIdCategorizationRulesRuleIdResponseObject, error)
+	// List merchants for current workspace
+	// (GET /api/v1/t/{workspaceId}/merchants)
+	GetApiV1TWorkspaceIdMerchants(ctx context.Context, request GetApiV1TWorkspaceIdMerchantsRequestObject) (GetApiV1TWorkspaceIdMerchantsResponseObject, error)
+	// Create a merchant
+	// (POST /api/v1/t/{workspaceId}/merchants)
+	PostApiV1TWorkspaceIdMerchants(ctx context.Context, request PostApiV1TWorkspaceIdMerchantsRequestObject) (PostApiV1TWorkspaceIdMerchantsResponseObject, error)
+	// Archive a merchant (soft delete)
+	// (DELETE /api/v1/t/{workspaceId}/merchants/{merchantId})
+	DeleteApiV1TWorkspaceIdMerchantsMerchantId(ctx context.Context, request DeleteApiV1TWorkspaceIdMerchantsMerchantIdRequestObject) (DeleteApiV1TWorkspaceIdMerchantsMerchantIdResponseObject, error)
+	// Get a merchant
+	// (GET /api/v1/t/{workspaceId}/merchants/{merchantId})
+	GetApiV1TWorkspaceIdMerchantsMerchantId(ctx context.Context, request GetApiV1TWorkspaceIdMerchantsMerchantIdRequestObject) (GetApiV1TWorkspaceIdMerchantsMerchantIdResponseObject, error)
+	// Update a merchant
+	// (PATCH /api/v1/t/{workspaceId}/merchants/{merchantId})
+	PatchApiV1TWorkspaceIdMerchantsMerchantId(ctx context.Context, request PatchApiV1TWorkspaceIdMerchantsMerchantIdRequestObject) (PatchApiV1TWorkspaceIdMerchantsMerchantIdResponseObject, error)
 	// List tags for current workspace
-	// (GET /api/v1/tags)
-	GetApiV1Tags(ctx context.Context, request GetApiV1TagsRequestObject) (GetApiV1TagsResponseObject, error)
+	// (GET /api/v1/t/{workspaceId}/tags)
+	GetApiV1TWorkspaceIdTags(ctx context.Context, request GetApiV1TWorkspaceIdTagsRequestObject) (GetApiV1TWorkspaceIdTagsResponseObject, error)
 	// Create a tag
-	// (POST /api/v1/tags)
-	PostApiV1Tags(ctx context.Context, request PostApiV1TagsRequestObject) (PostApiV1TagsResponseObject, error)
+	// (POST /api/v1/t/{workspaceId}/tags)
+	PostApiV1TWorkspaceIdTags(ctx context.Context, request PostApiV1TWorkspaceIdTagsRequestObject) (PostApiV1TWorkspaceIdTagsResponseObject, error)
 	// Archive a tag (soft delete)
-	// (DELETE /api/v1/tags/{tagId})
-	DeleteApiV1TagsTagId(ctx context.Context, request DeleteApiV1TagsTagIdRequestObject) (DeleteApiV1TagsTagIdResponseObject, error)
+	// (DELETE /api/v1/t/{workspaceId}/tags/{tagId})
+	DeleteApiV1TWorkspaceIdTagsTagId(ctx context.Context, request DeleteApiV1TWorkspaceIdTagsTagIdRequestObject) (DeleteApiV1TWorkspaceIdTagsTagIdResponseObject, error)
 	// Get a tag
-	// (GET /api/v1/tags/{tagId})
-	GetApiV1TagsTagId(ctx context.Context, request GetApiV1TagsTagIdRequestObject) (GetApiV1TagsTagIdResponseObject, error)
+	// (GET /api/v1/t/{workspaceId}/tags/{tagId})
+	GetApiV1TWorkspaceIdTagsTagId(ctx context.Context, request GetApiV1TWorkspaceIdTagsTagIdRequestObject) (GetApiV1TWorkspaceIdTagsTagIdResponseObject, error)
 	// Update a tag
-	// (PATCH /api/v1/tags/{tagId})
-	PatchApiV1TagsTagId(ctx context.Context, request PatchApiV1TagsTagIdRequestObject) (PatchApiV1TagsTagIdResponseObject, error)
+	// (PATCH /api/v1/t/{workspaceId}/tags/{tagId})
+	PatchApiV1TWorkspaceIdTagsTagId(ctx context.Context, request PatchApiV1TWorkspaceIdTagsTagIdRequestObject) (PatchApiV1TWorkspaceIdTagsTagIdResponseObject, error)
 	// List transactions for current workspace
-	// (GET /api/v1/transactions)
-	GetApiV1Transactions(ctx context.Context, request GetApiV1TransactionsRequestObject) (GetApiV1TransactionsResponseObject, error)
+	// (GET /api/v1/t/{workspaceId}/transactions)
+	GetApiV1TWorkspaceIdTransactions(ctx context.Context, request GetApiV1TWorkspaceIdTransactionsRequestObject) (GetApiV1TWorkspaceIdTransactionsResponseObject, error)
 	// Create a manual transaction
-	// (POST /api/v1/transactions)
-	PostApiV1Transactions(ctx context.Context, request PostApiV1TransactionsRequestObject) (PostApiV1TransactionsResponseObject, error)
+	// (POST /api/v1/t/{workspaceId}/transactions)
+	PostApiV1TWorkspaceIdTransactions(ctx context.Context, request PostApiV1TWorkspaceIdTransactionsRequestObject) (PostApiV1TWorkspaceIdTransactionsResponseObject, error)
 	// Hard-delete a transaction (v1 — replace with soft-delete later)
-	// (DELETE /api/v1/transactions/{transactionId})
-	DeleteApiV1TransactionsTransactionId(ctx context.Context, request DeleteApiV1TransactionsTransactionIdRequestObject) (DeleteApiV1TransactionsTransactionIdResponseObject, error)
+	// (DELETE /api/v1/t/{workspaceId}/transactions/{transactionId})
+	DeleteApiV1TWorkspaceIdTransactionsTransactionId(ctx context.Context, request DeleteApiV1TWorkspaceIdTransactionsTransactionIdRequestObject) (DeleteApiV1TWorkspaceIdTransactionsTransactionIdResponseObject, error)
 	// Get a transaction
-	// (GET /api/v1/transactions/{transactionId})
-	GetApiV1TransactionsTransactionId(ctx context.Context, request GetApiV1TransactionsTransactionIdRequestObject) (GetApiV1TransactionsTransactionIdResponseObject, error)
+	// (GET /api/v1/t/{workspaceId}/transactions/{transactionId})
+	GetApiV1TWorkspaceIdTransactionsTransactionId(ctx context.Context, request GetApiV1TWorkspaceIdTransactionsTransactionIdRequestObject) (GetApiV1TWorkspaceIdTransactionsTransactionIdResponseObject, error)
 	// Update mutable transaction fields
-	// (PATCH /api/v1/transactions/{transactionId})
-	PatchApiV1TransactionsTransactionId(ctx context.Context, request PatchApiV1TransactionsTransactionIdRequestObject) (PatchApiV1TransactionsTransactionIdResponseObject, error)
+	// (PATCH /api/v1/t/{workspaceId}/transactions/{transactionId})
+	PatchApiV1TWorkspaceIdTransactionsTransactionId(ctx context.Context, request PatchApiV1TWorkspaceIdTransactionsTransactionIdRequestObject) (PatchApiV1TWorkspaceIdTransactionsTransactionIdResponseObject, error)
 	// Apply the first matching categorization rule to a transaction
-	// (POST /api/v1/transactions/{transactionId}/apply-categorization-rules)
-	PostApiV1TransactionsTransactionIdApplyCategorizationRules(ctx context.Context, request PostApiV1TransactionsTransactionIdApplyCategorizationRulesRequestObject) (PostApiV1TransactionsTransactionIdApplyCategorizationRulesResponseObject, error)
+	// (POST /api/v1/t/{workspaceId}/transactions/{transactionId}/apply-categorization-rules)
+	PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRules(ctx context.Context, request PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRulesRequestObject) (PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRulesResponseObject, error)
 	// Remove a tag from a transaction
-	// (DELETE /api/v1/transactions/{transactionId}/tags/{tagId})
-	DeleteApiV1TransactionsTransactionIdTagsTagId(ctx context.Context, request DeleteApiV1TransactionsTransactionIdTagsTagIdRequestObject) (DeleteApiV1TransactionsTransactionIdTagsTagIdResponseObject, error)
+	// (DELETE /api/v1/t/{workspaceId}/transactions/{transactionId}/tags/{tagId})
+	DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(ctx context.Context, request DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdRequestObject) (DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdResponseObject, error)
 	// Apply a tag to a transaction
-	// (PUT /api/v1/transactions/{transactionId}/tags/{tagId})
-	PutApiV1TransactionsTransactionIdTagsTagId(ctx context.Context, request PutApiV1TransactionsTransactionIdTagsTagIdRequestObject) (PutApiV1TransactionsTransactionIdTagsTagIdResponseObject, error)
+	// (PUT /api/v1/t/{workspaceId}/transactions/{transactionId}/tags/{tagId})
+	PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(ctx context.Context, request PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdRequestObject) (PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdResponseObject, error)
 	// Build info
 	// (GET /api/v1/version)
 	GetApiV1Version(ctx context.Context, request GetApiV1VersionRequestObject) (GetApiV1VersionResponseObject, error)
+	// Create a workspace for the current user
+	// (POST /api/v1/workspaces)
+	PostApiV1Workspaces(ctx context.Context, request PostApiV1WorkspacesRequestObject) (PostApiV1WorkspacesResponseObject, error)
 	// Liveness probe
 	// (GET /healthz)
 	GetHealthz(ctx context.Context, request GetHealthzRequestObject) (GetHealthzResponseObject, error)
@@ -3613,269 +4102,6 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
-}
-
-// GetApiV1Accounts operation middleware
-func (sh *strictHandler) GetApiV1Accounts(w http.ResponseWriter, r *http.Request, params GetApiV1AccountsParams) {
-	var request GetApiV1AccountsRequestObject
-
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetApiV1Accounts(ctx, request.(GetApiV1AccountsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetApiV1Accounts")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetApiV1AccountsResponseObject); ok {
-		if err := validResponse.VisitGetApiV1AccountsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PostApiV1Accounts operation middleware
-func (sh *strictHandler) PostApiV1Accounts(w http.ResponseWriter, r *http.Request) {
-	var request PostApiV1AccountsRequestObject
-
-	var body PostApiV1AccountsJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PostApiV1Accounts(ctx, request.(PostApiV1AccountsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostApiV1Accounts")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PostApiV1AccountsResponseObject); ok {
-		if err := validResponse.VisitPostApiV1AccountsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetApiV1AccountsGroups operation middleware
-func (sh *strictHandler) GetApiV1AccountsGroups(w http.ResponseWriter, r *http.Request, params GetApiV1AccountsGroupsParams) {
-	var request GetApiV1AccountsGroupsRequestObject
-
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetApiV1AccountsGroups(ctx, request.(GetApiV1AccountsGroupsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetApiV1AccountsGroups")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetApiV1AccountsGroupsResponseObject); ok {
-		if err := validResponse.VisitGetApiV1AccountsGroupsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PostApiV1AccountsGroups operation middleware
-func (sh *strictHandler) PostApiV1AccountsGroups(w http.ResponseWriter, r *http.Request) {
-	var request PostApiV1AccountsGroupsRequestObject
-
-	var body PostApiV1AccountsGroupsJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PostApiV1AccountsGroups(ctx, request.(PostApiV1AccountsGroupsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostApiV1AccountsGroups")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PostApiV1AccountsGroupsResponseObject); ok {
-		if err := validResponse.VisitPostApiV1AccountsGroupsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// DeleteApiV1AccountsGroupsGroupId operation middleware
-func (sh *strictHandler) DeleteApiV1AccountsGroupsGroupId(w http.ResponseWriter, r *http.Request, groupId openapi_types.UUID) {
-	var request DeleteApiV1AccountsGroupsGroupIdRequestObject
-
-	request.GroupId = groupId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DeleteApiV1AccountsGroupsGroupId(ctx, request.(DeleteApiV1AccountsGroupsGroupIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DeleteApiV1AccountsGroupsGroupId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DeleteApiV1AccountsGroupsGroupIdResponseObject); ok {
-		if err := validResponse.VisitDeleteApiV1AccountsGroupsGroupIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PatchApiV1AccountsGroupsGroupId operation middleware
-func (sh *strictHandler) PatchApiV1AccountsGroupsGroupId(w http.ResponseWriter, r *http.Request, groupId openapi_types.UUID) {
-	var request PatchApiV1AccountsGroupsGroupIdRequestObject
-
-	request.GroupId = groupId
-
-	var body PatchApiV1AccountsGroupsGroupIdJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PatchApiV1AccountsGroupsGroupId(ctx, request.(PatchApiV1AccountsGroupsGroupIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PatchApiV1AccountsGroupsGroupId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PatchApiV1AccountsGroupsGroupIdResponseObject); ok {
-		if err := validResponse.VisitPatchApiV1AccountsGroupsGroupIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PutApiV1AccountsOrder operation middleware
-func (sh *strictHandler) PutApiV1AccountsOrder(w http.ResponseWriter, r *http.Request) {
-	var request PutApiV1AccountsOrderRequestObject
-
-	var body PutApiV1AccountsOrderJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PutApiV1AccountsOrder(ctx, request.(PutApiV1AccountsOrderRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PutApiV1AccountsOrder")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PutApiV1AccountsOrderResponseObject); ok {
-		if err := validResponse.VisitPutApiV1AccountsOrderResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetApiV1AccountsAccountId operation middleware
-func (sh *strictHandler) GetApiV1AccountsAccountId(w http.ResponseWriter, r *http.Request, accountId openapi_types.UUID) {
-	var request GetApiV1AccountsAccountIdRequestObject
-
-	request.AccountId = accountId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetApiV1AccountsAccountId(ctx, request.(GetApiV1AccountsAccountIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetApiV1AccountsAccountId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetApiV1AccountsAccountIdResponseObject); ok {
-		if err := validResponse.VisitGetApiV1AccountsAccountIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PatchApiV1AccountsAccountId operation middleware
-func (sh *strictHandler) PatchApiV1AccountsAccountId(w http.ResponseWriter, r *http.Request, accountId openapi_types.UUID) {
-	var request PatchApiV1AccountsAccountIdRequestObject
-
-	request.AccountId = accountId
-
-	var body PatchApiV1AccountsAccountIdJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PatchApiV1AccountsAccountId(ctx, request.(PatchApiV1AccountsAccountIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PatchApiV1AccountsAccountId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PatchApiV1AccountsAccountIdResponseObject); ok {
-		if err := validResponse.VisitPatchApiV1AccountsAccountIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
 }
 
 // PostApiV1AuthLogin operation middleware
@@ -3964,290 +4190,6 @@ func (sh *strictHandler) PostApiV1AuthRegister(w http.ResponseWriter, r *http.Re
 	}
 }
 
-// GetApiV1Categories operation middleware
-func (sh *strictHandler) GetApiV1Categories(w http.ResponseWriter, r *http.Request, params GetApiV1CategoriesParams) {
-	var request GetApiV1CategoriesRequestObject
-
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetApiV1Categories(ctx, request.(GetApiV1CategoriesRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetApiV1Categories")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetApiV1CategoriesResponseObject); ok {
-		if err := validResponse.VisitGetApiV1CategoriesResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PostApiV1Categories operation middleware
-func (sh *strictHandler) PostApiV1Categories(w http.ResponseWriter, r *http.Request) {
-	var request PostApiV1CategoriesRequestObject
-
-	var body PostApiV1CategoriesJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PostApiV1Categories(ctx, request.(PostApiV1CategoriesRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostApiV1Categories")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PostApiV1CategoriesResponseObject); ok {
-		if err := validResponse.VisitPostApiV1CategoriesResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// DeleteApiV1CategoriesCategoryId operation middleware
-func (sh *strictHandler) DeleteApiV1CategoriesCategoryId(w http.ResponseWriter, r *http.Request, categoryId openapi_types.UUID) {
-	var request DeleteApiV1CategoriesCategoryIdRequestObject
-
-	request.CategoryId = categoryId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DeleteApiV1CategoriesCategoryId(ctx, request.(DeleteApiV1CategoriesCategoryIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DeleteApiV1CategoriesCategoryId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DeleteApiV1CategoriesCategoryIdResponseObject); ok {
-		if err := validResponse.VisitDeleteApiV1CategoriesCategoryIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetApiV1CategoriesCategoryId operation middleware
-func (sh *strictHandler) GetApiV1CategoriesCategoryId(w http.ResponseWriter, r *http.Request, categoryId openapi_types.UUID) {
-	var request GetApiV1CategoriesCategoryIdRequestObject
-
-	request.CategoryId = categoryId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetApiV1CategoriesCategoryId(ctx, request.(GetApiV1CategoriesCategoryIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetApiV1CategoriesCategoryId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetApiV1CategoriesCategoryIdResponseObject); ok {
-		if err := validResponse.VisitGetApiV1CategoriesCategoryIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PatchApiV1CategoriesCategoryId operation middleware
-func (sh *strictHandler) PatchApiV1CategoriesCategoryId(w http.ResponseWriter, r *http.Request, categoryId openapi_types.UUID) {
-	var request PatchApiV1CategoriesCategoryIdRequestObject
-
-	request.CategoryId = categoryId
-
-	var body PatchApiV1CategoriesCategoryIdJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PatchApiV1CategoriesCategoryId(ctx, request.(PatchApiV1CategoriesCategoryIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PatchApiV1CategoriesCategoryId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PatchApiV1CategoriesCategoryIdResponseObject); ok {
-		if err := validResponse.VisitPatchApiV1CategoriesCategoryIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetApiV1CategorizationRules operation middleware
-func (sh *strictHandler) GetApiV1CategorizationRules(w http.ResponseWriter, r *http.Request, params GetApiV1CategorizationRulesParams) {
-	var request GetApiV1CategorizationRulesRequestObject
-
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetApiV1CategorizationRules(ctx, request.(GetApiV1CategorizationRulesRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetApiV1CategorizationRules")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetApiV1CategorizationRulesResponseObject); ok {
-		if err := validResponse.VisitGetApiV1CategorizationRulesResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PostApiV1CategorizationRules operation middleware
-func (sh *strictHandler) PostApiV1CategorizationRules(w http.ResponseWriter, r *http.Request) {
-	var request PostApiV1CategorizationRulesRequestObject
-
-	var body PostApiV1CategorizationRulesJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PostApiV1CategorizationRules(ctx, request.(PostApiV1CategorizationRulesRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostApiV1CategorizationRules")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PostApiV1CategorizationRulesResponseObject); ok {
-		if err := validResponse.VisitPostApiV1CategorizationRulesResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// DeleteApiV1CategorizationRulesRuleId operation middleware
-func (sh *strictHandler) DeleteApiV1CategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, ruleId openapi_types.UUID) {
-	var request DeleteApiV1CategorizationRulesRuleIdRequestObject
-
-	request.RuleId = ruleId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DeleteApiV1CategorizationRulesRuleId(ctx, request.(DeleteApiV1CategorizationRulesRuleIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DeleteApiV1CategorizationRulesRuleId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DeleteApiV1CategorizationRulesRuleIdResponseObject); ok {
-		if err := validResponse.VisitDeleteApiV1CategorizationRulesRuleIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetApiV1CategorizationRulesRuleId operation middleware
-func (sh *strictHandler) GetApiV1CategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, ruleId openapi_types.UUID) {
-	var request GetApiV1CategorizationRulesRuleIdRequestObject
-
-	request.RuleId = ruleId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetApiV1CategorizationRulesRuleId(ctx, request.(GetApiV1CategorizationRulesRuleIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetApiV1CategorizationRulesRuleId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetApiV1CategorizationRulesRuleIdResponseObject); ok {
-		if err := validResponse.VisitGetApiV1CategorizationRulesRuleIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PatchApiV1CategorizationRulesRuleId operation middleware
-func (sh *strictHandler) PatchApiV1CategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, ruleId openapi_types.UUID) {
-	var request PatchApiV1CategorizationRulesRuleIdRequestObject
-
-	request.RuleId = ruleId
-
-	var body PatchApiV1CategorizationRulesRuleIdJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PatchApiV1CategorizationRulesRuleId(ctx, request.(PatchApiV1CategorizationRulesRuleIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PatchApiV1CategorizationRulesRuleId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PatchApiV1CategorizationRulesRuleIdResponseObject); ok {
-		if err := validResponse.VisitPatchApiV1CategorizationRulesRuleIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
 // GetApiV1Me operation middleware
 func (sh *strictHandler) GetApiV1Me(w http.ResponseWriter, r *http.Request) {
 	var request GetApiV1MeRequestObject
@@ -4265,148 +4207,6 @@ func (sh *strictHandler) GetApiV1Me(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetApiV1MeResponseObject); ok {
 		if err := validResponse.VisitGetApiV1MeResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetApiV1Merchants operation middleware
-func (sh *strictHandler) GetApiV1Merchants(w http.ResponseWriter, r *http.Request, params GetApiV1MerchantsParams) {
-	var request GetApiV1MerchantsRequestObject
-
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetApiV1Merchants(ctx, request.(GetApiV1MerchantsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetApiV1Merchants")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetApiV1MerchantsResponseObject); ok {
-		if err := validResponse.VisitGetApiV1MerchantsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PostApiV1Merchants operation middleware
-func (sh *strictHandler) PostApiV1Merchants(w http.ResponseWriter, r *http.Request) {
-	var request PostApiV1MerchantsRequestObject
-
-	var body PostApiV1MerchantsJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PostApiV1Merchants(ctx, request.(PostApiV1MerchantsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostApiV1Merchants")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PostApiV1MerchantsResponseObject); ok {
-		if err := validResponse.VisitPostApiV1MerchantsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// DeleteApiV1MerchantsMerchantId operation middleware
-func (sh *strictHandler) DeleteApiV1MerchantsMerchantId(w http.ResponseWriter, r *http.Request, merchantId openapi_types.UUID) {
-	var request DeleteApiV1MerchantsMerchantIdRequestObject
-
-	request.MerchantId = merchantId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DeleteApiV1MerchantsMerchantId(ctx, request.(DeleteApiV1MerchantsMerchantIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DeleteApiV1MerchantsMerchantId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DeleteApiV1MerchantsMerchantIdResponseObject); ok {
-		if err := validResponse.VisitDeleteApiV1MerchantsMerchantIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetApiV1MerchantsMerchantId operation middleware
-func (sh *strictHandler) GetApiV1MerchantsMerchantId(w http.ResponseWriter, r *http.Request, merchantId openapi_types.UUID) {
-	var request GetApiV1MerchantsMerchantIdRequestObject
-
-	request.MerchantId = merchantId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetApiV1MerchantsMerchantId(ctx, request.(GetApiV1MerchantsMerchantIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetApiV1MerchantsMerchantId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetApiV1MerchantsMerchantIdResponseObject); ok {
-		if err := validResponse.VisitGetApiV1MerchantsMerchantIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PatchApiV1MerchantsMerchantId operation middleware
-func (sh *strictHandler) PatchApiV1MerchantsMerchantId(w http.ResponseWriter, r *http.Request, merchantId openapi_types.UUID) {
-	var request PatchApiV1MerchantsMerchantIdRequestObject
-
-	request.MerchantId = merchantId
-
-	var body PatchApiV1MerchantsMerchantIdJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PatchApiV1MerchantsMerchantId(ctx, request.(PatchApiV1MerchantsMerchantIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PatchApiV1MerchantsMerchantId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PatchApiV1MerchantsMerchantIdResponseObject); ok {
-		if err := validResponse.VisitPatchApiV1MerchantsMerchantIdResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4476,25 +4276,26 @@ func (sh *strictHandler) PostApiV1ProvidersGocardlessRequisitions(w http.Respons
 	}
 }
 
-// GetApiV1Tags operation middleware
-func (sh *strictHandler) GetApiV1Tags(w http.ResponseWriter, r *http.Request, params GetApiV1TagsParams) {
-	var request GetApiV1TagsRequestObject
+// GetApiV1TWorkspaceIdAccounts operation middleware
+func (sh *strictHandler) GetApiV1TWorkspaceIdAccounts(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdAccountsParams) {
+	var request GetApiV1TWorkspaceIdAccountsRequestObject
 
+	request.WorkspaceId = workspaceId
 	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetApiV1Tags(ctx, request.(GetApiV1TagsRequestObject))
+		return sh.ssi.GetApiV1TWorkspaceIdAccounts(ctx, request.(GetApiV1TWorkspaceIdAccountsRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetApiV1Tags")
+		handler = middleware(handler, "GetApiV1TWorkspaceIdAccounts")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetApiV1TagsResponseObject); ok {
-		if err := validResponse.VisitGetApiV1TagsResponse(w); err != nil {
+	} else if validResponse, ok := response.(GetApiV1TWorkspaceIdAccountsResponseObject); ok {
+		if err := validResponse.VisitGetApiV1TWorkspaceIdAccountsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4502,11 +4303,13 @@ func (sh *strictHandler) GetApiV1Tags(w http.ResponseWriter, r *http.Request, pa
 	}
 }
 
-// PostApiV1Tags operation middleware
-func (sh *strictHandler) PostApiV1Tags(w http.ResponseWriter, r *http.Request) {
-	var request PostApiV1TagsRequestObject
+// PostApiV1TWorkspaceIdAccounts operation middleware
+func (sh *strictHandler) PostApiV1TWorkspaceIdAccounts(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	var request PostApiV1TWorkspaceIdAccountsRequestObject
 
-	var body PostApiV1TagsJSONRequestBody
+	request.WorkspaceId = workspaceId
+
+	var body PostApiV1TWorkspaceIdAccountsJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
@@ -4514,18 +4317,18 @@ func (sh *strictHandler) PostApiV1Tags(w http.ResponseWriter, r *http.Request) {
 	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PostApiV1Tags(ctx, request.(PostApiV1TagsRequestObject))
+		return sh.ssi.PostApiV1TWorkspaceIdAccounts(ctx, request.(PostApiV1TWorkspaceIdAccountsRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostApiV1Tags")
+		handler = middleware(handler, "PostApiV1TWorkspaceIdAccounts")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PostApiV1TagsResponseObject); ok {
-		if err := validResponse.VisitPostApiV1TagsResponse(w); err != nil {
+	} else if validResponse, ok := response.(PostApiV1TWorkspaceIdAccountsResponseObject); ok {
+		if err := validResponse.VisitPostApiV1TWorkspaceIdAccountsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4533,110 +4336,26 @@ func (sh *strictHandler) PostApiV1Tags(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// DeleteApiV1TagsTagId operation middleware
-func (sh *strictHandler) DeleteApiV1TagsTagId(w http.ResponseWriter, r *http.Request, tagId openapi_types.UUID) {
-	var request DeleteApiV1TagsTagIdRequestObject
+// GetApiV1TWorkspaceIdAccountsGroups operation middleware
+func (sh *strictHandler) GetApiV1TWorkspaceIdAccountsGroups(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdAccountsGroupsParams) {
+	var request GetApiV1TWorkspaceIdAccountsGroupsRequestObject
 
-	request.TagId = tagId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DeleteApiV1TagsTagId(ctx, request.(DeleteApiV1TagsTagIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DeleteApiV1TagsTagId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DeleteApiV1TagsTagIdResponseObject); ok {
-		if err := validResponse.VisitDeleteApiV1TagsTagIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetApiV1TagsTagId operation middleware
-func (sh *strictHandler) GetApiV1TagsTagId(w http.ResponseWriter, r *http.Request, tagId openapi_types.UUID) {
-	var request GetApiV1TagsTagIdRequestObject
-
-	request.TagId = tagId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetApiV1TagsTagId(ctx, request.(GetApiV1TagsTagIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetApiV1TagsTagId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetApiV1TagsTagIdResponseObject); ok {
-		if err := validResponse.VisitGetApiV1TagsTagIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PatchApiV1TagsTagId operation middleware
-func (sh *strictHandler) PatchApiV1TagsTagId(w http.ResponseWriter, r *http.Request, tagId openapi_types.UUID) {
-	var request PatchApiV1TagsTagIdRequestObject
-
-	request.TagId = tagId
-
-	var body PatchApiV1TagsTagIdJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PatchApiV1TagsTagId(ctx, request.(PatchApiV1TagsTagIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PatchApiV1TagsTagId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PatchApiV1TagsTagIdResponseObject); ok {
-		if err := validResponse.VisitPatchApiV1TagsTagIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetApiV1Transactions operation middleware
-func (sh *strictHandler) GetApiV1Transactions(w http.ResponseWriter, r *http.Request, params GetApiV1TransactionsParams) {
-	var request GetApiV1TransactionsRequestObject
-
+	request.WorkspaceId = workspaceId
 	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetApiV1Transactions(ctx, request.(GetApiV1TransactionsRequestObject))
+		return sh.ssi.GetApiV1TWorkspaceIdAccountsGroups(ctx, request.(GetApiV1TWorkspaceIdAccountsGroupsRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetApiV1Transactions")
+		handler = middleware(handler, "GetApiV1TWorkspaceIdAccountsGroups")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetApiV1TransactionsResponseObject); ok {
-		if err := validResponse.VisitGetApiV1TransactionsResponse(w); err != nil {
+	} else if validResponse, ok := response.(GetApiV1TWorkspaceIdAccountsGroupsResponseObject); ok {
+		if err := validResponse.VisitGetApiV1TWorkspaceIdAccountsGroupsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4644,11 +4363,13 @@ func (sh *strictHandler) GetApiV1Transactions(w http.ResponseWriter, r *http.Req
 	}
 }
 
-// PostApiV1Transactions operation middleware
-func (sh *strictHandler) PostApiV1Transactions(w http.ResponseWriter, r *http.Request) {
-	var request PostApiV1TransactionsRequestObject
+// PostApiV1TWorkspaceIdAccountsGroups operation middleware
+func (sh *strictHandler) PostApiV1TWorkspaceIdAccountsGroups(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	var request PostApiV1TWorkspaceIdAccountsGroupsRequestObject
 
-	var body PostApiV1TransactionsJSONRequestBody
+	request.WorkspaceId = workspaceId
+
+	var body PostApiV1TWorkspaceIdAccountsGroupsJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
@@ -4656,18 +4377,18 @@ func (sh *strictHandler) PostApiV1Transactions(w http.ResponseWriter, r *http.Re
 	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PostApiV1Transactions(ctx, request.(PostApiV1TransactionsRequestObject))
+		return sh.ssi.PostApiV1TWorkspaceIdAccountsGroups(ctx, request.(PostApiV1TWorkspaceIdAccountsGroupsRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostApiV1Transactions")
+		handler = middleware(handler, "PostApiV1TWorkspaceIdAccountsGroups")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PostApiV1TransactionsResponseObject); ok {
-		if err := validResponse.VisitPostApiV1TransactionsResponse(w); err != nil {
+	} else if validResponse, ok := response.(PostApiV1TWorkspaceIdAccountsGroupsResponseObject); ok {
+		if err := validResponse.VisitPostApiV1TWorkspaceIdAccountsGroupsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4675,25 +4396,26 @@ func (sh *strictHandler) PostApiV1Transactions(w http.ResponseWriter, r *http.Re
 	}
 }
 
-// DeleteApiV1TransactionsTransactionId operation middleware
-func (sh *strictHandler) DeleteApiV1TransactionsTransactionId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID) {
-	var request DeleteApiV1TransactionsTransactionIdRequestObject
+// DeleteApiV1TWorkspaceIdAccountsGroupsGroupId operation middleware
+func (sh *strictHandler) DeleteApiV1TWorkspaceIdAccountsGroupsGroupId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, groupId openapi_types.UUID) {
+	var request DeleteApiV1TWorkspaceIdAccountsGroupsGroupIdRequestObject
 
-	request.TransactionId = transactionId
+	request.WorkspaceId = workspaceId
+	request.GroupId = groupId
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DeleteApiV1TransactionsTransactionId(ctx, request.(DeleteApiV1TransactionsTransactionIdRequestObject))
+		return sh.ssi.DeleteApiV1TWorkspaceIdAccountsGroupsGroupId(ctx, request.(DeleteApiV1TWorkspaceIdAccountsGroupsGroupIdRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DeleteApiV1TransactionsTransactionId")
+		handler = middleware(handler, "DeleteApiV1TWorkspaceIdAccountsGroupsGroupId")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DeleteApiV1TransactionsTransactionIdResponseObject); ok {
-		if err := validResponse.VisitDeleteApiV1TransactionsTransactionIdResponse(w); err != nil {
+	} else if validResponse, ok := response.(DeleteApiV1TWorkspaceIdAccountsGroupsGroupIdResponseObject); ok {
+		if err := validResponse.VisitDeleteApiV1TWorkspaceIdAccountsGroupsGroupIdResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4701,39 +4423,14 @@ func (sh *strictHandler) DeleteApiV1TransactionsTransactionId(w http.ResponseWri
 	}
 }
 
-// GetApiV1TransactionsTransactionId operation middleware
-func (sh *strictHandler) GetApiV1TransactionsTransactionId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID) {
-	var request GetApiV1TransactionsTransactionIdRequestObject
+// PatchApiV1TWorkspaceIdAccountsGroupsGroupId operation middleware
+func (sh *strictHandler) PatchApiV1TWorkspaceIdAccountsGroupsGroupId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, groupId openapi_types.UUID) {
+	var request PatchApiV1TWorkspaceIdAccountsGroupsGroupIdRequestObject
 
-	request.TransactionId = transactionId
+	request.WorkspaceId = workspaceId
+	request.GroupId = groupId
 
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetApiV1TransactionsTransactionId(ctx, request.(GetApiV1TransactionsTransactionIdRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetApiV1TransactionsTransactionId")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetApiV1TransactionsTransactionIdResponseObject); ok {
-		if err := validResponse.VisitGetApiV1TransactionsTransactionIdResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// PatchApiV1TransactionsTransactionId operation middleware
-func (sh *strictHandler) PatchApiV1TransactionsTransactionId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID) {
-	var request PatchApiV1TransactionsTransactionIdRequestObject
-
-	request.TransactionId = transactionId
-
-	var body PatchApiV1TransactionsTransactionIdJSONRequestBody
+	var body PatchApiV1TWorkspaceIdAccountsGroupsGroupIdJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
@@ -4741,18 +4438,18 @@ func (sh *strictHandler) PatchApiV1TransactionsTransactionId(w http.ResponseWrit
 	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PatchApiV1TransactionsTransactionId(ctx, request.(PatchApiV1TransactionsTransactionIdRequestObject))
+		return sh.ssi.PatchApiV1TWorkspaceIdAccountsGroupsGroupId(ctx, request.(PatchApiV1TWorkspaceIdAccountsGroupsGroupIdRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PatchApiV1TransactionsTransactionId")
+		handler = middleware(handler, "PatchApiV1TWorkspaceIdAccountsGroupsGroupId")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PatchApiV1TransactionsTransactionIdResponseObject); ok {
-		if err := validResponse.VisitPatchApiV1TransactionsTransactionIdResponse(w); err != nil {
+	} else if validResponse, ok := response.(PatchApiV1TWorkspaceIdAccountsGroupsGroupIdResponseObject); ok {
+		if err := validResponse.VisitPatchApiV1TWorkspaceIdAccountsGroupsGroupIdResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4760,25 +4457,772 @@ func (sh *strictHandler) PatchApiV1TransactionsTransactionId(w http.ResponseWrit
 	}
 }
 
-// PostApiV1TransactionsTransactionIdApplyCategorizationRules operation middleware
-func (sh *strictHandler) PostApiV1TransactionsTransactionIdApplyCategorizationRules(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID) {
-	var request PostApiV1TransactionsTransactionIdApplyCategorizationRulesRequestObject
+// PutApiV1TWorkspaceIdAccountsOrder operation middleware
+func (sh *strictHandler) PutApiV1TWorkspaceIdAccountsOrder(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	var request PutApiV1TWorkspaceIdAccountsOrderRequestObject
 
+	request.WorkspaceId = workspaceId
+
+	var body PutApiV1TWorkspaceIdAccountsOrderJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutApiV1TWorkspaceIdAccountsOrder(ctx, request.(PutApiV1TWorkspaceIdAccountsOrderRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutApiV1TWorkspaceIdAccountsOrder")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutApiV1TWorkspaceIdAccountsOrderResponseObject); ok {
+		if err := validResponse.VisitPutApiV1TWorkspaceIdAccountsOrderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetApiV1TWorkspaceIdAccountsAccountId operation middleware
+func (sh *strictHandler) GetApiV1TWorkspaceIdAccountsAccountId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, accountId openapi_types.UUID) {
+	var request GetApiV1TWorkspaceIdAccountsAccountIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.AccountId = accountId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetApiV1TWorkspaceIdAccountsAccountId(ctx, request.(GetApiV1TWorkspaceIdAccountsAccountIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetApiV1TWorkspaceIdAccountsAccountId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetApiV1TWorkspaceIdAccountsAccountIdResponseObject); ok {
+		if err := validResponse.VisitGetApiV1TWorkspaceIdAccountsAccountIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PatchApiV1TWorkspaceIdAccountsAccountId operation middleware
+func (sh *strictHandler) PatchApiV1TWorkspaceIdAccountsAccountId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, accountId openapi_types.UUID) {
+	var request PatchApiV1TWorkspaceIdAccountsAccountIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.AccountId = accountId
+
+	var body PatchApiV1TWorkspaceIdAccountsAccountIdJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PatchApiV1TWorkspaceIdAccountsAccountId(ctx, request.(PatchApiV1TWorkspaceIdAccountsAccountIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PatchApiV1TWorkspaceIdAccountsAccountId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PatchApiV1TWorkspaceIdAccountsAccountIdResponseObject); ok {
+		if err := validResponse.VisitPatchApiV1TWorkspaceIdAccountsAccountIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetApiV1TWorkspaceIdCategories operation middleware
+func (sh *strictHandler) GetApiV1TWorkspaceIdCategories(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdCategoriesParams) {
+	var request GetApiV1TWorkspaceIdCategoriesRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetApiV1TWorkspaceIdCategories(ctx, request.(GetApiV1TWorkspaceIdCategoriesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetApiV1TWorkspaceIdCategories")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetApiV1TWorkspaceIdCategoriesResponseObject); ok {
+		if err := validResponse.VisitGetApiV1TWorkspaceIdCategoriesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostApiV1TWorkspaceIdCategories operation middleware
+func (sh *strictHandler) PostApiV1TWorkspaceIdCategories(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	var request PostApiV1TWorkspaceIdCategoriesRequestObject
+
+	request.WorkspaceId = workspaceId
+
+	var body PostApiV1TWorkspaceIdCategoriesJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostApiV1TWorkspaceIdCategories(ctx, request.(PostApiV1TWorkspaceIdCategoriesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostApiV1TWorkspaceIdCategories")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostApiV1TWorkspaceIdCategoriesResponseObject); ok {
+		if err := validResponse.VisitPostApiV1TWorkspaceIdCategoriesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteApiV1TWorkspaceIdCategoriesCategoryId operation middleware
+func (sh *strictHandler) DeleteApiV1TWorkspaceIdCategoriesCategoryId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, categoryId openapi_types.UUID) {
+	var request DeleteApiV1TWorkspaceIdCategoriesCategoryIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.CategoryId = categoryId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteApiV1TWorkspaceIdCategoriesCategoryId(ctx, request.(DeleteApiV1TWorkspaceIdCategoriesCategoryIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteApiV1TWorkspaceIdCategoriesCategoryId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteApiV1TWorkspaceIdCategoriesCategoryIdResponseObject); ok {
+		if err := validResponse.VisitDeleteApiV1TWorkspaceIdCategoriesCategoryIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetApiV1TWorkspaceIdCategoriesCategoryId operation middleware
+func (sh *strictHandler) GetApiV1TWorkspaceIdCategoriesCategoryId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, categoryId openapi_types.UUID) {
+	var request GetApiV1TWorkspaceIdCategoriesCategoryIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.CategoryId = categoryId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetApiV1TWorkspaceIdCategoriesCategoryId(ctx, request.(GetApiV1TWorkspaceIdCategoriesCategoryIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetApiV1TWorkspaceIdCategoriesCategoryId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetApiV1TWorkspaceIdCategoriesCategoryIdResponseObject); ok {
+		if err := validResponse.VisitGetApiV1TWorkspaceIdCategoriesCategoryIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PatchApiV1TWorkspaceIdCategoriesCategoryId operation middleware
+func (sh *strictHandler) PatchApiV1TWorkspaceIdCategoriesCategoryId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, categoryId openapi_types.UUID) {
+	var request PatchApiV1TWorkspaceIdCategoriesCategoryIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.CategoryId = categoryId
+
+	var body PatchApiV1TWorkspaceIdCategoriesCategoryIdJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PatchApiV1TWorkspaceIdCategoriesCategoryId(ctx, request.(PatchApiV1TWorkspaceIdCategoriesCategoryIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PatchApiV1TWorkspaceIdCategoriesCategoryId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PatchApiV1TWorkspaceIdCategoriesCategoryIdResponseObject); ok {
+		if err := validResponse.VisitPatchApiV1TWorkspaceIdCategoriesCategoryIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetApiV1TWorkspaceIdCategorizationRules operation middleware
+func (sh *strictHandler) GetApiV1TWorkspaceIdCategorizationRules(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdCategorizationRulesParams) {
+	var request GetApiV1TWorkspaceIdCategorizationRulesRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetApiV1TWorkspaceIdCategorizationRules(ctx, request.(GetApiV1TWorkspaceIdCategorizationRulesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetApiV1TWorkspaceIdCategorizationRules")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetApiV1TWorkspaceIdCategorizationRulesResponseObject); ok {
+		if err := validResponse.VisitGetApiV1TWorkspaceIdCategorizationRulesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostApiV1TWorkspaceIdCategorizationRules operation middleware
+func (sh *strictHandler) PostApiV1TWorkspaceIdCategorizationRules(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	var request PostApiV1TWorkspaceIdCategorizationRulesRequestObject
+
+	request.WorkspaceId = workspaceId
+
+	var body PostApiV1TWorkspaceIdCategorizationRulesJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostApiV1TWorkspaceIdCategorizationRules(ctx, request.(PostApiV1TWorkspaceIdCategorizationRulesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostApiV1TWorkspaceIdCategorizationRules")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostApiV1TWorkspaceIdCategorizationRulesResponseObject); ok {
+		if err := validResponse.VisitPostApiV1TWorkspaceIdCategorizationRulesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteApiV1TWorkspaceIdCategorizationRulesRuleId operation middleware
+func (sh *strictHandler) DeleteApiV1TWorkspaceIdCategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, ruleId openapi_types.UUID) {
+	var request DeleteApiV1TWorkspaceIdCategorizationRulesRuleIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.RuleId = ruleId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteApiV1TWorkspaceIdCategorizationRulesRuleId(ctx, request.(DeleteApiV1TWorkspaceIdCategorizationRulesRuleIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteApiV1TWorkspaceIdCategorizationRulesRuleId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteApiV1TWorkspaceIdCategorizationRulesRuleIdResponseObject); ok {
+		if err := validResponse.VisitDeleteApiV1TWorkspaceIdCategorizationRulesRuleIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetApiV1TWorkspaceIdCategorizationRulesRuleId operation middleware
+func (sh *strictHandler) GetApiV1TWorkspaceIdCategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, ruleId openapi_types.UUID) {
+	var request GetApiV1TWorkspaceIdCategorizationRulesRuleIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.RuleId = ruleId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetApiV1TWorkspaceIdCategorizationRulesRuleId(ctx, request.(GetApiV1TWorkspaceIdCategorizationRulesRuleIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetApiV1TWorkspaceIdCategorizationRulesRuleId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetApiV1TWorkspaceIdCategorizationRulesRuleIdResponseObject); ok {
+		if err := validResponse.VisitGetApiV1TWorkspaceIdCategorizationRulesRuleIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PatchApiV1TWorkspaceIdCategorizationRulesRuleId operation middleware
+func (sh *strictHandler) PatchApiV1TWorkspaceIdCategorizationRulesRuleId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, ruleId openapi_types.UUID) {
+	var request PatchApiV1TWorkspaceIdCategorizationRulesRuleIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.RuleId = ruleId
+
+	var body PatchApiV1TWorkspaceIdCategorizationRulesRuleIdJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PatchApiV1TWorkspaceIdCategorizationRulesRuleId(ctx, request.(PatchApiV1TWorkspaceIdCategorizationRulesRuleIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PatchApiV1TWorkspaceIdCategorizationRulesRuleId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PatchApiV1TWorkspaceIdCategorizationRulesRuleIdResponseObject); ok {
+		if err := validResponse.VisitPatchApiV1TWorkspaceIdCategorizationRulesRuleIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetApiV1TWorkspaceIdMerchants operation middleware
+func (sh *strictHandler) GetApiV1TWorkspaceIdMerchants(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdMerchantsParams) {
+	var request GetApiV1TWorkspaceIdMerchantsRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetApiV1TWorkspaceIdMerchants(ctx, request.(GetApiV1TWorkspaceIdMerchantsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetApiV1TWorkspaceIdMerchants")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetApiV1TWorkspaceIdMerchantsResponseObject); ok {
+		if err := validResponse.VisitGetApiV1TWorkspaceIdMerchantsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostApiV1TWorkspaceIdMerchants operation middleware
+func (sh *strictHandler) PostApiV1TWorkspaceIdMerchants(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	var request PostApiV1TWorkspaceIdMerchantsRequestObject
+
+	request.WorkspaceId = workspaceId
+
+	var body PostApiV1TWorkspaceIdMerchantsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostApiV1TWorkspaceIdMerchants(ctx, request.(PostApiV1TWorkspaceIdMerchantsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostApiV1TWorkspaceIdMerchants")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostApiV1TWorkspaceIdMerchantsResponseObject); ok {
+		if err := validResponse.VisitPostApiV1TWorkspaceIdMerchantsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteApiV1TWorkspaceIdMerchantsMerchantId operation middleware
+func (sh *strictHandler) DeleteApiV1TWorkspaceIdMerchantsMerchantId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, merchantId openapi_types.UUID) {
+	var request DeleteApiV1TWorkspaceIdMerchantsMerchantIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.MerchantId = merchantId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteApiV1TWorkspaceIdMerchantsMerchantId(ctx, request.(DeleteApiV1TWorkspaceIdMerchantsMerchantIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteApiV1TWorkspaceIdMerchantsMerchantId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteApiV1TWorkspaceIdMerchantsMerchantIdResponseObject); ok {
+		if err := validResponse.VisitDeleteApiV1TWorkspaceIdMerchantsMerchantIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetApiV1TWorkspaceIdMerchantsMerchantId operation middleware
+func (sh *strictHandler) GetApiV1TWorkspaceIdMerchantsMerchantId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, merchantId openapi_types.UUID) {
+	var request GetApiV1TWorkspaceIdMerchantsMerchantIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.MerchantId = merchantId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetApiV1TWorkspaceIdMerchantsMerchantId(ctx, request.(GetApiV1TWorkspaceIdMerchantsMerchantIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetApiV1TWorkspaceIdMerchantsMerchantId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetApiV1TWorkspaceIdMerchantsMerchantIdResponseObject); ok {
+		if err := validResponse.VisitGetApiV1TWorkspaceIdMerchantsMerchantIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PatchApiV1TWorkspaceIdMerchantsMerchantId operation middleware
+func (sh *strictHandler) PatchApiV1TWorkspaceIdMerchantsMerchantId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, merchantId openapi_types.UUID) {
+	var request PatchApiV1TWorkspaceIdMerchantsMerchantIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.MerchantId = merchantId
+
+	var body PatchApiV1TWorkspaceIdMerchantsMerchantIdJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PatchApiV1TWorkspaceIdMerchantsMerchantId(ctx, request.(PatchApiV1TWorkspaceIdMerchantsMerchantIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PatchApiV1TWorkspaceIdMerchantsMerchantId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PatchApiV1TWorkspaceIdMerchantsMerchantIdResponseObject); ok {
+		if err := validResponse.VisitPatchApiV1TWorkspaceIdMerchantsMerchantIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetApiV1TWorkspaceIdTags operation middleware
+func (sh *strictHandler) GetApiV1TWorkspaceIdTags(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdTagsParams) {
+	var request GetApiV1TWorkspaceIdTagsRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetApiV1TWorkspaceIdTags(ctx, request.(GetApiV1TWorkspaceIdTagsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetApiV1TWorkspaceIdTags")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetApiV1TWorkspaceIdTagsResponseObject); ok {
+		if err := validResponse.VisitGetApiV1TWorkspaceIdTagsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostApiV1TWorkspaceIdTags operation middleware
+func (sh *strictHandler) PostApiV1TWorkspaceIdTags(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	var request PostApiV1TWorkspaceIdTagsRequestObject
+
+	request.WorkspaceId = workspaceId
+
+	var body PostApiV1TWorkspaceIdTagsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostApiV1TWorkspaceIdTags(ctx, request.(PostApiV1TWorkspaceIdTagsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostApiV1TWorkspaceIdTags")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostApiV1TWorkspaceIdTagsResponseObject); ok {
+		if err := validResponse.VisitPostApiV1TWorkspaceIdTagsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteApiV1TWorkspaceIdTagsTagId operation middleware
+func (sh *strictHandler) DeleteApiV1TWorkspaceIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, tagId openapi_types.UUID) {
+	var request DeleteApiV1TWorkspaceIdTagsTagIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.TagId = tagId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteApiV1TWorkspaceIdTagsTagId(ctx, request.(DeleteApiV1TWorkspaceIdTagsTagIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteApiV1TWorkspaceIdTagsTagId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteApiV1TWorkspaceIdTagsTagIdResponseObject); ok {
+		if err := validResponse.VisitDeleteApiV1TWorkspaceIdTagsTagIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetApiV1TWorkspaceIdTagsTagId operation middleware
+func (sh *strictHandler) GetApiV1TWorkspaceIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, tagId openapi_types.UUID) {
+	var request GetApiV1TWorkspaceIdTagsTagIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.TagId = tagId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetApiV1TWorkspaceIdTagsTagId(ctx, request.(GetApiV1TWorkspaceIdTagsTagIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetApiV1TWorkspaceIdTagsTagId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetApiV1TWorkspaceIdTagsTagIdResponseObject); ok {
+		if err := validResponse.VisitGetApiV1TWorkspaceIdTagsTagIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PatchApiV1TWorkspaceIdTagsTagId operation middleware
+func (sh *strictHandler) PatchApiV1TWorkspaceIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, tagId openapi_types.UUID) {
+	var request PatchApiV1TWorkspaceIdTagsTagIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.TagId = tagId
+
+	var body PatchApiV1TWorkspaceIdTagsTagIdJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PatchApiV1TWorkspaceIdTagsTagId(ctx, request.(PatchApiV1TWorkspaceIdTagsTagIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PatchApiV1TWorkspaceIdTagsTagId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PatchApiV1TWorkspaceIdTagsTagIdResponseObject); ok {
+		if err := validResponse.VisitPatchApiV1TWorkspaceIdTagsTagIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetApiV1TWorkspaceIdTransactions operation middleware
+func (sh *strictHandler) GetApiV1TWorkspaceIdTransactions(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params GetApiV1TWorkspaceIdTransactionsParams) {
+	var request GetApiV1TWorkspaceIdTransactionsRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetApiV1TWorkspaceIdTransactions(ctx, request.(GetApiV1TWorkspaceIdTransactionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetApiV1TWorkspaceIdTransactions")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetApiV1TWorkspaceIdTransactionsResponseObject); ok {
+		if err := validResponse.VisitGetApiV1TWorkspaceIdTransactionsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostApiV1TWorkspaceIdTransactions operation middleware
+func (sh *strictHandler) PostApiV1TWorkspaceIdTransactions(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId) {
+	var request PostApiV1TWorkspaceIdTransactionsRequestObject
+
+	request.WorkspaceId = workspaceId
+
+	var body PostApiV1TWorkspaceIdTransactionsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostApiV1TWorkspaceIdTransactions(ctx, request.(PostApiV1TWorkspaceIdTransactionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostApiV1TWorkspaceIdTransactions")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostApiV1TWorkspaceIdTransactionsResponseObject); ok {
+		if err := validResponse.VisitPostApiV1TWorkspaceIdTransactionsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteApiV1TWorkspaceIdTransactionsTransactionId operation middleware
+func (sh *strictHandler) DeleteApiV1TWorkspaceIdTransactionsTransactionId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID) {
+	var request DeleteApiV1TWorkspaceIdTransactionsTransactionIdRequestObject
+
+	request.WorkspaceId = workspaceId
 	request.TransactionId = transactionId
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PostApiV1TransactionsTransactionIdApplyCategorizationRules(ctx, request.(PostApiV1TransactionsTransactionIdApplyCategorizationRulesRequestObject))
+		return sh.ssi.DeleteApiV1TWorkspaceIdTransactionsTransactionId(ctx, request.(DeleteApiV1TWorkspaceIdTransactionsTransactionIdRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostApiV1TransactionsTransactionIdApplyCategorizationRules")
+		handler = middleware(handler, "DeleteApiV1TWorkspaceIdTransactionsTransactionId")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PostApiV1TransactionsTransactionIdApplyCategorizationRulesResponseObject); ok {
-		if err := validResponse.VisitPostApiV1TransactionsTransactionIdApplyCategorizationRulesResponse(w); err != nil {
+	} else if validResponse, ok := response.(DeleteApiV1TWorkspaceIdTransactionsTransactionIdResponseObject); ok {
+		if err := validResponse.VisitDeleteApiV1TWorkspaceIdTransactionsTransactionIdResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4786,26 +5230,115 @@ func (sh *strictHandler) PostApiV1TransactionsTransactionIdApplyCategorizationRu
 	}
 }
 
-// DeleteApiV1TransactionsTransactionIdTagsTagId operation middleware
-func (sh *strictHandler) DeleteApiV1TransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID, tagId openapi_types.UUID) {
-	var request DeleteApiV1TransactionsTransactionIdTagsTagIdRequestObject
+// GetApiV1TWorkspaceIdTransactionsTransactionId operation middleware
+func (sh *strictHandler) GetApiV1TWorkspaceIdTransactionsTransactionId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID) {
+	var request GetApiV1TWorkspaceIdTransactionsTransactionIdRequestObject
 
+	request.WorkspaceId = workspaceId
+	request.TransactionId = transactionId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetApiV1TWorkspaceIdTransactionsTransactionId(ctx, request.(GetApiV1TWorkspaceIdTransactionsTransactionIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetApiV1TWorkspaceIdTransactionsTransactionId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetApiV1TWorkspaceIdTransactionsTransactionIdResponseObject); ok {
+		if err := validResponse.VisitGetApiV1TWorkspaceIdTransactionsTransactionIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PatchApiV1TWorkspaceIdTransactionsTransactionId operation middleware
+func (sh *strictHandler) PatchApiV1TWorkspaceIdTransactionsTransactionId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID) {
+	var request PatchApiV1TWorkspaceIdTransactionsTransactionIdRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.TransactionId = transactionId
+
+	var body PatchApiV1TWorkspaceIdTransactionsTransactionIdJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PatchApiV1TWorkspaceIdTransactionsTransactionId(ctx, request.(PatchApiV1TWorkspaceIdTransactionsTransactionIdRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PatchApiV1TWorkspaceIdTransactionsTransactionId")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PatchApiV1TWorkspaceIdTransactionsTransactionIdResponseObject); ok {
+		if err := validResponse.VisitPatchApiV1TWorkspaceIdTransactionsTransactionIdResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRules operation middleware
+func (sh *strictHandler) PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRules(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID) {
+	var request PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRulesRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.TransactionId = transactionId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRules(ctx, request.(PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRulesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRules")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRulesResponseObject); ok {
+		if err := validResponse.VisitPostApiV1TWorkspaceIdTransactionsTransactionIdApplyCategorizationRulesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId operation middleware
+func (sh *strictHandler) DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID, tagId openapi_types.UUID) {
+	var request DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdRequestObject
+
+	request.WorkspaceId = workspaceId
 	request.TransactionId = transactionId
 	request.TagId = tagId
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DeleteApiV1TransactionsTransactionIdTagsTagId(ctx, request.(DeleteApiV1TransactionsTransactionIdTagsTagIdRequestObject))
+		return sh.ssi.DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(ctx, request.(DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DeleteApiV1TransactionsTransactionIdTagsTagId")
+		handler = middleware(handler, "DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DeleteApiV1TransactionsTransactionIdTagsTagIdResponseObject); ok {
-		if err := validResponse.VisitDeleteApiV1TransactionsTransactionIdTagsTagIdResponse(w); err != nil {
+	} else if validResponse, ok := response.(DeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdResponseObject); ok {
+		if err := validResponse.VisitDeleteApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4813,26 +5346,27 @@ func (sh *strictHandler) DeleteApiV1TransactionsTransactionIdTagsTagId(w http.Re
 	}
 }
 
-// PutApiV1TransactionsTransactionIdTagsTagId operation middleware
-func (sh *strictHandler) PutApiV1TransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request, transactionId openapi_types.UUID, tagId openapi_types.UUID) {
-	var request PutApiV1TransactionsTransactionIdTagsTagIdRequestObject
+// PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId operation middleware
+func (sh *strictHandler) PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, transactionId openapi_types.UUID, tagId openapi_types.UUID) {
+	var request PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdRequestObject
 
+	request.WorkspaceId = workspaceId
 	request.TransactionId = transactionId
 	request.TagId = tagId
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PutApiV1TransactionsTransactionIdTagsTagId(ctx, request.(PutApiV1TransactionsTransactionIdTagsTagIdRequestObject))
+		return sh.ssi.PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId(ctx, request.(PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PutApiV1TransactionsTransactionIdTagsTagId")
+		handler = middleware(handler, "PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagId")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PutApiV1TransactionsTransactionIdTagsTagIdResponseObject); ok {
-		if err := validResponse.VisitPutApiV1TransactionsTransactionIdTagsTagIdResponse(w); err != nil {
+	} else if validResponse, ok := response.(PutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdResponseObject); ok {
+		if err := validResponse.VisitPutApiV1TWorkspaceIdTransactionsTransactionIdTagsTagIdResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4857,6 +5391,37 @@ func (sh *strictHandler) GetApiV1Version(w http.ResponseWriter, r *http.Request)
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetApiV1VersionResponseObject); ok {
 		if err := validResponse.VisitGetApiV1VersionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostApiV1Workspaces operation middleware
+func (sh *strictHandler) PostApiV1Workspaces(w http.ResponseWriter, r *http.Request) {
+	var request PostApiV1WorkspacesRequestObject
+
+	var body PostApiV1WorkspacesJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostApiV1Workspaces(ctx, request.(PostApiV1WorkspacesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostApiV1Workspaces")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostApiV1WorkspacesResponseObject); ok {
+		if err := validResponse.VisitPostApiV1WorkspacesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4891,103 +5456,107 @@ func (sh *strictHandler) GetHealthz(w http.ResponseWriter, r *http.Request) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
+	"w+eH/wsAAP//NTJJy9qmAAA=",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

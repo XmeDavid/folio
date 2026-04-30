@@ -2,7 +2,7 @@
 
 Personal finance & planning app — self-hosted, multi-user.
 
-**Stack**: Go 1.25 + Postgres 17 + Next.js 16 (PWA) + Caddy on a single VPS.
+**Stack**: Go 1.26 + Postgres 17 + Next.js 16 (PWA) + Caddy on a single VPS.
 
 ## Integrations
 
@@ -26,7 +26,7 @@ legacy/     Pre-rewrite code — ignored by new codebase
 
 ## Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - Node 22+ and pnpm, if running the web app outside Docker
 - Docker + Docker Compose
 - [Atlas](https://atlasgo.io) (migrations)

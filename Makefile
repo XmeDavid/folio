@@ -1,4 +1,4 @@
-.PHONY: help dev dev-up dev-down dev-logs db-up db-down migrate sqlc openapi build admin-cli test lint fmt clean
+.PHONY: help dev dev-up dev-down dev-logs db-up db-down migrate sqlc openapi build admin-cli test lint guardrails fmt clean
 
 help:
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -63,6 +63,9 @@ test: ## Run all tests
 lint: ## Run linters
 	cd backend && golangci-lint run
 	cd web && pnpm lint
+
+guardrails: ## Run repo-specific architecture/contract guardrails
+	./scripts/check-guardrails.sh
 
 fmt: ## Format code
 	cd backend && gofmt -w . && goimports -w .
