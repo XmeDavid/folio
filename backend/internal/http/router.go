@@ -83,6 +83,7 @@ func NewRouter(d Deps) http.Handler {
 	classificationSvc := classification.NewService(d.DB)
 	classificationH := classification.NewHandler(classificationSvc)
 	transfersSvc := transfers.NewService(d.DB)
+	transfersH := transfers.NewHandler(transfersSvc)
 	importSvc := bankimport.NewService(d.DB, classificationSvc, transfersSvc)
 	importH := bankimport.NewHandler(importSvc)
 	transactionsSvc := transactions.NewService(d.DB, classificationSvc)
@@ -167,6 +168,7 @@ func NewRouter(d Deps) http.Handler {
 			r.Route("/tags", classificationH.MountTags)
 			r.Route("/categorization-rules", classificationH.MountCategorizationRules)
 			r.Route("/investments", investmentsH.Mount)
+			r.Route("/transfers", transfersH.Mount)
 		})
 	})
 	return r
