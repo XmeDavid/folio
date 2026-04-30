@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import { useCurrentWorkspace, useIdentity } from "@/lib/hooks/use-identity";
 import { WorkspaceShell } from "@/components/app/workspace-shell";
+import { DossierProvider } from "@/components/dossier/registry";
+import { DossierTabs } from "@/components/dossier/dossier-tabs";
 
 export default function WorkspaceLayout({
   children,
@@ -32,5 +34,10 @@ export default function WorkspaceLayout({
     return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   }
 
-  return <WorkspaceShell workspace={workspace}>{children}</WorkspaceShell>;
+  return (
+    <DossierProvider>
+      <WorkspaceShell workspace={workspace}>{children}</WorkspaceShell>
+      <DossierTabs />
+    </DossierProvider>
+  );
 }
