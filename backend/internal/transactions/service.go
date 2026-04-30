@@ -70,6 +70,13 @@ type Transaction struct {
 	CountAsExpense   *bool      `json:"countAsExpense,omitempty"`
 	CreatedAt        time.Time  `json:"createdAt"`
 	UpdatedAt        time.Time  `json:"updatedAt"`
+	// TransferMatchID is the transfer_matches.id when this transaction is one
+	// side of a paired transfer, otherwise nil. TransferCounterpartID is the
+	// transactions.id of the OTHER side of the pair (or nil for unpaired
+	// transactions, and for outbound-to-external matches whose destination is
+	// NULL when the source is the queried row).
+	TransferMatchID       *uuid.UUID `json:"transferMatchId,omitempty"`
+	TransferCounterpartID *uuid.UUID `json:"transferCounterpartId,omitempty"`
 }
 
 // CreateInput is the validated input to Create.
@@ -419,19 +426,29 @@ func (s *Service) Create(ctx context.Context, workspaceID uuid.UUID, raw CreateI
 //
 // We use a hand-rolled SELECT instead of dbq.GetTransaction because the
 // generated row models original_amount/original_currency as non-nullable
-// strings, which fails to scan when those columns are NULL.
+// strings, which fails to scan when those columns are NULL. The LEFT JOIN
+// against transfer_matches surfaces TransferMatchID/TransferCounterpartID
+// when the transaction is one side of a paired transfer.
 func (s *Service) Get(ctx context.Context, workspaceID, id uuid.UUID) (*Transaction, error) {
-	t, err := s.scanTransaction(ctx, s.pool,
-		`select `+transactionCols+` from transactions where workspace_id = $1 and id = $2`,
-		workspaceID, id,
-	)
-	if err != nil {
+	q := `select ` + transactionColsT + `,
+			tm.id as transfer_match_id,
+			case when tm.source_transaction_id = t.id
+			     then tm.destination_transaction_id
+			     else tm.source_transaction_id end as transfer_counterpart_id
+		from transactions t
+		left join transfer_matches tm
+		  on tm.workspace_id = t.workspace_id
+		 and (tm.source_transaction_id = t.id or tm.destination_transaction_id = t.id)
+		where t.workspace_id = $1 and t.id = $2`
+	row := s.pool.QueryRow(ctx, q, workspaceID, id)
+	var tx Transaction
+	if err := scanRowWithTransfer(row, &tx); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, httpx.NewNotFoundError("transaction")
 		}
 		return nil, err
 	}
-	return t, nil
+	return &tx, nil
 }
 
 // ListFilter bounds the GET /transactions listing.
@@ -450,8 +467,13 @@ type ListFilter struct {
 	// (brokerage-kind) accounts. Those moves are surfaced in the Investments
 	// tab; opting in keeps the regular ledger uncluttered.
 	ExcludeInvestmentAccounts bool
-	Limit                     int
-	Offset                    int
+	// HideInternalMoves hides transactions that are one side of a paired
+	// transfer (i.e. a transfer_matches row references this transaction as
+	// either source or destination). Default false at the service boundary;
+	// the HTTP layer defaults to true when the query param is absent.
+	HideInternalMoves bool
+	Limit             int
+	Offset            int
 }
 
 // List returns transactions for workspaceID matching f. Ordered by booked_at desc.
@@ -464,47 +486,47 @@ func (s *Service) List(ctx context.Context, workspaceID uuid.UUID, f ListFilter)
 	}
 
 	args := []any{workspaceID}
-	clauses := []string{"workspace_id = $1"}
+	clauses := []string{"t.workspace_id = $1"}
 	next := func(v any) string {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
 	}
 	if f.AccountID != nil {
-		clauses = append(clauses, "account_id = "+next(*f.AccountID))
+		clauses = append(clauses, "t.account_id = "+next(*f.AccountID))
 	}
 	if f.CategoryID != nil {
-		clauses = append(clauses, "category_id = "+next(*f.CategoryID))
+		clauses = append(clauses, "t.category_id = "+next(*f.CategoryID))
 	}
 	if f.MerchantID != nil {
-		clauses = append(clauses, "merchant_id = "+next(*f.MerchantID))
+		clauses = append(clauses, "t.merchant_id = "+next(*f.MerchantID))
 	}
 	if f.From != nil {
-		clauses = append(clauses, "booked_at >= "+next(*f.From))
+		clauses = append(clauses, "t.booked_at >= "+next(*f.From))
 	}
 	if f.To != nil {
-		clauses = append(clauses, "booked_at <= "+next(*f.To))
+		clauses = append(clauses, "t.booked_at <= "+next(*f.To))
 	}
 	if f.Status != nil {
 		status := strings.ToLower(strings.TrimSpace(*f.Status))
 		if !validStatuses[status] {
 			return nil, httpx.NewValidationError(fmt.Sprintf("status %q is not a valid transaction_status", status))
 		}
-		clauses = append(clauses, "status = "+next(status)+"::transaction_status")
+		clauses = append(clauses, "t.status = "+next(status)+"::transaction_status")
 	}
 	if f.Search != nil {
 		search := strings.TrimSpace(*f.Search)
 		if search != "" {
 			needle := "%" + strings.ToLower(search) + "%"
-			clauses = append(clauses, `(lower(coalesce(description, '')) like `+next(needle)+
-				` or lower(coalesce(counterparty_raw, '')) like `+next(needle)+
-				` or lower(coalesce(notes, '')) like `+next(needle)+`)`)
+			clauses = append(clauses, `(lower(coalesce(t.description, '')) like `+next(needle)+
+				` or lower(coalesce(t.counterparty_raw, '')) like `+next(needle)+
+				` or lower(coalesce(t.notes, '')) like `+next(needle)+`)`)
 		}
 	}
 	if f.MinAmount != nil {
-		clauses = append(clauses, "amount >= "+next(f.MinAmount.String())+"::numeric")
+		clauses = append(clauses, "t.amount >= "+next(f.MinAmount.String())+"::numeric")
 	}
 	if f.MaxAmount != nil {
-		clauses = append(clauses, "amount <= "+next(f.MaxAmount.String())+"::numeric")
+		clauses = append(clauses, "t.amount <= "+next(f.MaxAmount.String())+"::numeric")
 	}
 	if f.Uncategorized {
 		// Uncategorized queue: transaction carries no category and has no
@@ -512,18 +534,31 @@ func (s *Service) List(ctx context.Context, workspaceID uuid.UUID, f ListFilter)
 		// are considered categorized even when transactions.category_id is
 		// NULL, per spec §5.3.
 		clauses = append(clauses,
-			"category_id is null and not exists (select 1 from transaction_lines tl where tl.transaction_id = transactions.id)")
+			"t.category_id is null and not exists (select 1 from transaction_lines tl where tl.transaction_id = t.id)")
 	}
 	if f.ExcludeInvestmentAccounts {
 		clauses = append(clauses,
-			"not exists (select 1 from accounts a where a.id = transactions.account_id and a.kind = 'brokerage')")
+			"not exists (select 1 from accounts a where a.id = t.account_id and a.kind = 'brokerage')")
+	}
+	if f.HideInternalMoves {
+		// Exclude any transaction that the LEFT JOIN matched. Implies the
+		// transaction is one side of a transfer_matches row.
+		clauses = append(clauses, "tm.id is null")
 	}
 	limitPH := next(f.Limit)
 	offsetPH := next(f.Offset)
 
-	q := `select ` + transactionCols + ` from transactions where ` +
-		strings.Join(clauses, " and ") +
-		` order by booked_at desc, id desc limit ` + limitPH + ` offset ` + offsetPH
+	q := `select ` + transactionColsT + `,
+			tm.id as transfer_match_id,
+			case when tm.source_transaction_id = t.id
+			     then tm.destination_transaction_id
+			     else tm.source_transaction_id end as transfer_counterpart_id
+		from transactions t
+		left join transfer_matches tm
+		  on tm.workspace_id = t.workspace_id
+		 and (tm.source_transaction_id = t.id or tm.destination_transaction_id = t.id)
+		where ` + strings.Join(clauses, " and ") +
+		` order by t.booked_at desc, t.id desc limit ` + limitPH + ` offset ` + offsetPH
 
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -533,11 +568,11 @@ func (s *Service) List(ctx context.Context, workspaceID uuid.UUID, f ListFilter)
 
 	out := make([]Transaction, 0)
 	for rows.Next() {
-		var t Transaction
-		if err := scanRow(rows, &t); err != nil {
+		var tx Transaction
+		if err := scanRowWithTransfer(rows, &tx); err != nil {
 			return nil, err
 		}
-		out = append(out, t)
+		out = append(out, tx)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -710,12 +745,23 @@ func (s *Service) Delete(ctx context.Context, workspaceID, id uuid.UUID) error {
 }
 
 // transactionCols is the canonical SELECT/RETURNING column list so that
-// scanTransaction/scanRow can stay in lock-step.
+// scanTransaction/scanRow can stay in lock-step. Used by Create/Update where
+// the FROM clause has no table alias (insert ... returning, update ... returning).
 const transactionCols = `
 	id, workspace_id, account_id, status::text, booked_at, value_at, posted_at,
 	amount::text, currency, original_amount::text, original_currency::text,
 	merchant_id, category_id, counterparty_raw, description, notes,
 	count_as_expense, created_at, updated_at
+`
+
+// transactionColsT mirrors transactionCols but qualified with the "t." alias.
+// Used by List/Get which JOIN against transfer_matches and therefore need
+// disambiguated column references.
+const transactionColsT = `
+	t.id, t.workspace_id, t.account_id, t.status::text, t.booked_at, t.value_at, t.posted_at,
+	t.amount::text, t.currency, t.original_amount::text, t.original_currency::text,
+	t.merchant_id, t.category_id, t.counterparty_raw, t.description, t.notes,
+	t.count_as_expense, t.created_at, t.updated_at
 `
 
 type queryer interface {
@@ -741,6 +787,20 @@ func scanRow(r rowScanner, t *Transaction) error {
 		&t.MerchantID, &t.CategoryID,
 		&t.CounterpartyRaw, &t.Description, &t.Notes,
 		&t.CountAsExpense, &t.CreatedAt, &t.UpdatedAt,
+	)
+}
+
+// scanRowWithTransfer scans transactionColsT plus the two transfer-pair
+// columns (transfer_match_id, transfer_counterpart_id) appended by List/Get.
+func scanRowWithTransfer(r rowScanner, t *Transaction) error {
+	return r.Scan(
+		&t.ID, &t.WorkspaceID, &t.AccountID, &t.Status,
+		&t.BookedAt, &t.ValueAt, &t.PostedAt,
+		&t.Amount, &t.Currency, &t.OriginalAmount, &t.OriginalCurrency,
+		&t.MerchantID, &t.CategoryID,
+		&t.CounterpartyRaw, &t.Description, &t.Notes,
+		&t.CountAsExpense, &t.CreatedAt, &t.UpdatedAt,
+		&t.TransferMatchID, &t.TransferCounterpartID,
 	)
 }
 

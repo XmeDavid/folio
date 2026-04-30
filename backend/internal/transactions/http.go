@@ -140,6 +140,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	if strings.EqualFold(q.Get("excludeInvestments"), "true") {
 		f.ExcludeInvestmentAccounts = true
 	}
+	// hideInternalMoves defaults to true (the common case: paired transfers
+	// are noise in the regular ledger view). Frontend opts out with =false.
+	f.HideInternalMoves = true
+	if raw := q.Get("hideInternalMoves"); raw != "" {
+		f.HideInternalMoves = strings.EqualFold(raw, "true") || raw == "1"
+	}
 	if raw := q.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 {
