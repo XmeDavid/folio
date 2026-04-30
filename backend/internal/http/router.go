@@ -100,6 +100,10 @@ func NewRouter(d Deps) http.Handler {
 	mdSvc := marketdata.NewService(d.DB, priceProvider, fxProvider)
 	investmentsSvc := investments.NewService(d.DB, mdSvc)
 	investmentsH := investments.NewHandler(investmentsSvc)
+	// Brokerage/asset accounts hold positions, not cash; fold their market
+	// value into account.Balance so the dashboard and accounts list reflect
+	// real worth and net-worth totals add up.
+	accountsSvc.SetPositionValuator(investmentsSvc)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/version", versionHandler)

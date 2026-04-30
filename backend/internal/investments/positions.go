@@ -374,6 +374,38 @@ func (s *Service) ListPositions(ctx context.Context, workspaceID uuid.UUID, f Po
 	return out, nil
 }
 
+// MarketValueByAccount sums the market value of open positions per account,
+// FX-converted from each instrument's native currency to the account's own
+// currency at the latest rate. Positions without a quote are skipped (the
+// account's cash balance is unaffected). Best-effort: a missing FX rate falls
+// back to identity, matching dashboard.go behaviour.
+func (s *Service) MarketValueByAccount(ctx context.Context, workspaceID uuid.UUID) (map[uuid.UUID]decimal.Decimal, error) {
+	// Refresh stale quotes so a brokerage account doesn't show 0 just because
+	// the daily cron hasn't run. Failures are swallowed (same policy as the
+	// investments dashboard).
+	_, _ = s.PrefetchPrices(ctx, workspaceID, time.Hour)
+
+	positions, err := s.ListPositions(ctx, workspaceID, PositionFilter{OpenOnly: true})
+	if err != nil {
+		return nil, err
+	}
+
+	now := s.now()
+	out := make(map[uuid.UUID]decimal.Decimal, len(positions))
+	for _, p := range positions {
+		if p.MarketValue == nil {
+			continue
+		}
+		mv, err := decimal.NewFromString(*p.MarketValue)
+		if err != nil {
+			continue
+		}
+		fx, _ := s.fxOrIdentity(ctx, p.InstrumentCcy, p.AccountCurrency, now)
+		out[p.AccountID] = out[p.AccountID].Add(mv.Mul(fx))
+	}
+	return out, nil
+}
+
 // GetInstrumentDetail bundles instrument metadata with the workspace's
 // trades/dividends/positions for that instrument and a pricing time series.
 func (s *Service) GetInstrumentDetail(ctx context.Context, workspaceID, instrumentID uuid.UUID, reportCurrency string) (*InstrumentDetail, error) {

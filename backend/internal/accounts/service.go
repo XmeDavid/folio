@@ -153,16 +153,29 @@ func (in PatchInput) normalize() (PatchInput, error) {
 	return in, nil
 }
 
+// PositionValuator returns the market value of open investment positions per
+// account in each account's own currency. Implemented by investments.Service.
+// Used so account balances on the dashboard / accounts list reflect the value
+// of holdings, not just cash.
+type PositionValuator interface {
+	MarketValueByAccount(ctx context.Context, workspaceID uuid.UUID) (map[uuid.UUID]decimal.Decimal, error)
+}
+
 // Service is the accounts service.
 type Service struct {
-	pool *pgxpool.Pool
-	now  func() time.Time
+	pool      *pgxpool.Pool
+	now       func() time.Time
+	positions PositionValuator
 }
 
 // NewService returns a Service backed by pool.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, now: time.Now}
 }
+
+// SetPositionValuator wires an investments-side valuator. When set, List/Get
+// add the workspace's per-account market value to the derived cash balance.
+func (s *Service) SetPositionValuator(p PositionValuator) { s.positions = p }
 
 type AccountGroup struct {
 	ID                uuid.UUID  `json:"id"`
@@ -541,7 +554,8 @@ func balanceRowToAccount(
 }
 
 // List returns accounts for workspaceID. Archived accounts are hidden unless
-// includeArchived is true. Balance is derived (spec §5.2).
+// includeArchived is true. Balance is derived (spec §5.2) and includes the
+// market value of any investment positions held in the account.
 func (s *Service) List(ctx context.Context, workspaceID uuid.UUID, includeArchived bool) ([]Account, error) {
 	q := dbq.New(s.pool)
 	out := make([]Account, 0)
@@ -574,7 +588,32 @@ func (s *Service) List(ctx context.Context, workspaceID uuid.UUID, includeArchiv
 			))
 		}
 	}
+	s.applyPositionValue(ctx, workspaceID, out)
 	return out, nil
+}
+
+// applyPositionValue folds per-account investment market value (in the
+// account's own currency) into Account.Balance for the rows in accs. Errors
+// are swallowed: a missing quote should not blank the entire accounts list.
+func (s *Service) applyPositionValue(ctx context.Context, workspaceID uuid.UUID, accs []Account) {
+	if s.positions == nil || len(accs) == 0 {
+		return
+	}
+	mv, err := s.positions.MarketValueByAccount(ctx, workspaceID)
+	if err != nil || len(mv) == 0 {
+		return
+	}
+	for i := range accs {
+		add, ok := mv[accs[i].ID]
+		if !ok || add.IsZero() {
+			continue
+		}
+		base, err := decimal.NewFromString(accs[i].Balance)
+		if err != nil {
+			continue
+		}
+		accs[i].Balance = base.Add(add).String()
+	}
 }
 
 // Get returns a single account by id, scoped to workspaceID. Balance is derived
@@ -597,7 +636,9 @@ func (s *Service) Get(ctx context.Context, workspaceID, accountID uuid.UUID) (*A
 		r.IncludeInNetworth, r.IncludeInSavingsRate, r.ArchivedAt,
 		r.CreatedAt, r.UpdatedAt, r.BalanceAsOf, r.Balance,
 	)
-	return &a, nil
+	one := []Account{a}
+	s.applyPositionValue(ctx, workspaceID, one)
+	return &one[0], nil
 }
 
 // Update applies a PATCH to an account. Returns the updated Account.
