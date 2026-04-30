@@ -15,7 +15,7 @@ export function DossierTabs() {
 
   return (
     <>
-      <div className="fixed top-1/3 right-0 z-30 flex flex-col gap-2">
+      <div className="fixed bottom-12 right-0 z-30 flex flex-col gap-2">
         {tabs.map((tab) => (
           <DossierTab
             key={tab.id}
