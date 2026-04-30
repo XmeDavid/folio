@@ -426,19 +426,29 @@ func (s *Service) Create(ctx context.Context, workspaceID uuid.UUID, raw CreateI
 //
 // We use a hand-rolled SELECT instead of dbq.GetTransaction because the
 // generated row models original_amount/original_currency as non-nullable
-// strings, which fails to scan when those columns are NULL. The LEFT JOIN
-// against transfer_matches surfaces TransferMatchID/TransferCounterpartID
-// when the transaction is one side of a paired transfer.
+// strings, which fails to scan when those columns are NULL. Two scalar
+// subqueries against transfer_matches surface TransferMatchID and
+// TransferCounterpartID when the transaction is one side of a paired
+// transfer; using subqueries instead of a LEFT JOIN keeps the result-row
+// count strictly equal to the transaction count regardless of whether
+// future schema changes ever allow more than one transfer_matches row to
+// reference the same transaction (today the unique indexes on
+// transfer_matches(workspace_id, source_transaction_id) and (workspace_id,
+// destination_transaction_id) prevent that).
 func (s *Service) Get(ctx context.Context, workspaceID, id uuid.UUID) (*Transaction, error) {
 	q := `select ` + transactionColsT + `,
-			tm.id as transfer_match_id,
-			case when tm.source_transaction_id = t.id
-			     then tm.destination_transaction_id
-			     else tm.source_transaction_id end as transfer_counterpart_id
+			(select tm.id from transfer_matches tm
+			  where tm.workspace_id = t.workspace_id
+			    and (tm.source_transaction_id = t.id or tm.destination_transaction_id = t.id)
+			  limit 1) as transfer_match_id,
+			(select case when tm.source_transaction_id = t.id
+			             then tm.destination_transaction_id
+			             else tm.source_transaction_id end
+			   from transfer_matches tm
+			  where tm.workspace_id = t.workspace_id
+			    and (tm.source_transaction_id = t.id or tm.destination_transaction_id = t.id)
+			  limit 1) as transfer_counterpart_id
 		from transactions t
-		left join transfer_matches tm
-		  on tm.workspace_id = t.workspace_id
-		 and (tm.source_transaction_id = t.id or tm.destination_transaction_id = t.id)
 		where t.workspace_id = $1 and t.id = $2`
 	row := s.pool.QueryRow(ctx, q, workspaceID, id)
 	var tx Transaction
@@ -541,22 +551,37 @@ func (s *Service) List(ctx context.Context, workspaceID uuid.UUID, f ListFilter)
 			"not exists (select 1 from accounts a where a.id = t.account_id and a.kind = 'brokerage')")
 	}
 	if f.HideInternalMoves {
-		// Exclude any transaction that the LEFT JOIN matched. Implies the
-		// transaction is one side of a transfer_matches row.
-		clauses = append(clauses, "tm.id is null")
+		// Exclude any transaction that participates in a transfer_matches
+		// row, either as source or destination. NOT EXISTS is robust to row
+		// multiplicity (vs. the previous LEFT JOIN's `tm.id IS NULL`, which
+		// would have silently broken LIMIT/OFFSET if a transaction ever
+		// appeared in more than one transfer_matches row).
+		clauses = append(clauses, `not exists (
+			select 1 from transfer_matches tm
+			 where tm.workspace_id = t.workspace_id
+			   and (tm.source_transaction_id = t.id or tm.destination_transaction_id = t.id)
+		)`)
 	}
 	limitPH := next(f.Limit)
 	offsetPH := next(f.Offset)
 
+	// Two scalar subqueries surface transferMatchId and transferCounterpartId
+	// without changing the result-row count; the unique indexes on
+	// transfer_matches(workspace_id, source_transaction_id) and (workspace_id,
+	// destination_transaction_id) make each subquery an O(1) index lookup.
 	q := `select ` + transactionColsT + `,
-			tm.id as transfer_match_id,
-			case when tm.source_transaction_id = t.id
-			     then tm.destination_transaction_id
-			     else tm.source_transaction_id end as transfer_counterpart_id
+			(select tm.id from transfer_matches tm
+			  where tm.workspace_id = t.workspace_id
+			    and (tm.source_transaction_id = t.id or tm.destination_transaction_id = t.id)
+			  limit 1) as transfer_match_id,
+			(select case when tm.source_transaction_id = t.id
+			             then tm.destination_transaction_id
+			             else tm.source_transaction_id end
+			   from transfer_matches tm
+			  where tm.workspace_id = t.workspace_id
+			    and (tm.source_transaction_id = t.id or tm.destination_transaction_id = t.id)
+			  limit 1) as transfer_counterpart_id
 		from transactions t
-		left join transfer_matches tm
-		  on tm.workspace_id = t.workspace_id
-		 and (tm.source_transaction_id = t.id or tm.destination_transaction_id = t.id)
 		where ` + strings.Join(clauses, " and ") +
 		` order by t.booked_at desc, t.id desc limit ` + limitPH + ` offset ` + offsetPH
 
