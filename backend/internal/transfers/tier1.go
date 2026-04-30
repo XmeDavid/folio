@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
@@ -83,20 +84,25 @@ func (s *Service) runTier1(ctx context.Context, workspaceID uuid.UUID, scope Det
 
 	count := 0
 	for _, p := range pairs {
-		_, err := s.pool.Exec(ctx, `
-			INSERT INTO transfer_matches (
-				id, workspace_id, source_transaction_id, destination_transaction_id,
-				fx_rate, provenance, matched_at
-			) VALUES (
-				$1, $2, $3, $4,
-				abs($5::numeric / $6::numeric), 'auto_detected', $7
-			)
-			ON CONFLICT DO NOTHING
-		`, uuidx.New(), workspaceID, p.sourceID, p.destID, p.amount, p.original, s.now().UTC())
+		inserted, err := s.insertAutoTransferMatch(ctx, workspaceID, p.sourceID, p.destID, func(tx pgx.Tx) (int64, error) {
+			tag, err := tx.Exec(ctx, `
+				INSERT INTO transfer_matches (
+					id, workspace_id, source_transaction_id, destination_transaction_id,
+					fx_rate, provenance, matched_at
+				) VALUES (
+					$1, $2, $3, $4,
+					abs($5::numeric / $6::numeric), 'auto_detected', $7
+				)
+				ON CONFLICT DO NOTHING
+			`, uuidx.New(), workspaceID, p.sourceID, p.destID, p.amount, p.original, s.now().UTC())
+			return tag.RowsAffected(), err
+		})
 		if err != nil {
 			return count, fmt.Errorf("tier1 insert: %w", err)
 		}
-		count++
+		if inserted {
+			count++
+		}
 	}
 	return count, nil
 }

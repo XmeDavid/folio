@@ -7,11 +7,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/testdb"
 	"github.com/xmedavid/folio/backend/internal/transfers"
+	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
 func TestManualPair_HappyPath(t *testing.T) {
@@ -210,4 +212,32 @@ func TestCountPendingCandidates(t *testing.T) {
 	n, err = svc.CountPendingCandidates(ctx, wsID)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
+}
+
+func TestTransferMatchesParticipantGuardRejectsCrossRoleDuplicate(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.Open(t)
+	wsID, _ := testdb.CreateTestWorkspace(t, pool, "ws-participant-guard")
+
+	a := seedAccount(t, ctx, pool, wsID, "A", "CHF")
+	b := seedAccount(t, ctx, pool, wsID, "B", "CHF")
+	c := seedAccount(t, ctx, pool, wsID, "C", "CHF")
+	src := seedTx(t, ctx, pool, wsID, a, time.Date(2026, 4, 5, 0, 0, 0, 0, time.UTC), "-100.00", "CHF", nil, nil)
+	dst := seedTx(t, ctx, pool, wsID, b, time.Date(2026, 4, 5, 0, 0, 0, 0, time.UTC), "100.00", "CHF", nil, nil)
+	other := seedTx(t, ctx, pool, wsID, c, time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC), "100.00", "CHF", nil, nil)
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO transfer_matches (id, workspace_id, source_transaction_id, destination_transaction_id, provenance)
+		VALUES ($1, $2, $3, $4, 'manual')
+	`, uuidx.New(), wsID, src, dst)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, `
+		INSERT INTO transfer_matches (id, workspace_id, source_transaction_id, destination_transaction_id, provenance)
+		VALUES ($1, $2, $3, $4, 'manual')
+	`, uuidx.New(), wsID, dst, other)
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+	require.Equal(t, "23505", pgErr.Code)
+	require.Equal(t, "transfer_matches_participant_uq", pgErr.ConstraintName)
 }

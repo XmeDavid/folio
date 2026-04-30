@@ -60,14 +60,14 @@ export function useDossierTabs(): DossierTabSpec[] {
  * remove the registration entirely (e.g. on unmount).
  */
 export function useRegisterDossierTab(spec: DossierTabSpec | null) {
-  const ctx = useDossier();
+  const { setTab, removeTab } = useDossier();
   React.useEffect(() => {
     if (!spec || spec.count <= 0) {
-      if (spec) ctx.removeTab(spec.id);
+      if (spec) removeTab(spec.id);
       return;
     }
-    ctx.setTab(spec);
+    setTab(spec);
     const id = spec.id;
-    return () => ctx.removeTab(id);
-  }, [ctx, spec]);
+    return () => removeTab(id);
+  }, [removeTab, setTab, spec]);
 }

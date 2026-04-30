@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/xmedavid/folio/backend/internal/httpx"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
@@ -40,13 +42,12 @@ func (s *Service) ManualPair(ctx context.Context, workspaceID uuid.UUID, in Manu
 	}
 	defer tx.Rollback(ctx)
 
-	if err := assertExists(ctx, tx, workspaceID, in.SourceID); err != nil {
-		return nil, err
-	}
+	lockIDs := []uuid.UUID{in.SourceID}
 	if in.DestinationID != nil {
-		if err := assertExists(ctx, tx, workspaceID, *in.DestinationID); err != nil {
-			return nil, err
-		}
+		lockIDs = append(lockIDs, *in.DestinationID)
+	}
+	if err := lockTransferParticipants(ctx, tx, workspaceID, lockIDs...); err != nil {
+		return nil, err
 	}
 	if err := assertNotPaired(ctx, tx, workspaceID, in.SourceID, "source"); err != nil {
 		return nil, err
@@ -69,7 +70,7 @@ func (s *Service) ManualPair(ctx context.Context, workspaceID uuid.UUID, in Manu
 		id, workspaceID, in.SourceID, in.DestinationID, in.FeeAmount, in.FeeCurrency, in.ToleranceNote)
 	var m TransferMatch
 	if err := scanTransferMatch(row, &m); err != nil {
-		return nil, fmt.Errorf("manual pair insert: %w", err)
+		return nil, fmt.Errorf("manual pair insert: %w", mapTransferMatchInsertError(err))
 	}
 
 	// Close any pending candidate for this source.
@@ -87,16 +88,37 @@ func (s *Service) ManualPair(ctx context.Context, workspaceID uuid.UUID, in Manu
 	return &m, nil
 }
 
-func assertExists(ctx context.Context, tx pgx.Tx, workspaceID, txID uuid.UUID) error {
-	var ok bool
-	err := tx.QueryRow(ctx,
-		`SELECT true FROM transactions WHERE workspace_id = $1 AND id = $2`,
-		workspaceID, txID,
-	).Scan(&ok)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return httpx.NewNotFoundError("transaction")
+func lockTransferParticipants(ctx context.Context, tx pgx.Tx, workspaceID uuid.UUID, txIDs ...uuid.UUID) error {
+	if len(txIDs) == 0 {
+		return nil
 	}
-	return err
+	seen := make(map[uuid.UUID]struct{}, len(txIDs))
+	ids := make([]uuid.UUID, 0, len(txIDs))
+	for _, id := range txIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i].String() < ids[j].String() })
+
+	for _, id := range ids {
+		var locked uuid.UUID
+		err := tx.QueryRow(ctx, `
+			SELECT id
+			FROM transactions
+			WHERE workspace_id = $1 AND id = $2
+			FOR UPDATE
+		`, workspaceID, id).Scan(&locked)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return httpx.NewNotFoundError("transaction")
+		}
+		if err != nil {
+			return fmt.Errorf("lock transfer participant: %w", err)
+		}
+	}
+	return nil
 }
 
 func assertNotPaired(ctx context.Context, tx pgx.Tx, workspaceID, txID uuid.UUID, role string) error {
@@ -116,6 +138,70 @@ func assertNotPaired(ctx context.Context, tx pgx.Tx, workspaceID, txID uuid.UUID
 		return httpx.NewConflictError(code, role+" is already part of another transfer pair", nil)
 	}
 	return nil
+}
+
+func isAlreadyPairedConflict(err error) bool {
+	var cerr *httpx.ConflictError
+	return errors.As(err, &cerr) && strings.HasPrefix(cerr.Code, "transfer_") &&
+		strings.HasSuffix(cerr.Code, "_already_paired")
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func mapTransferMatchInsertError(err error) error {
+	if isUniqueViolation(err) {
+		return httpx.NewConflictError(
+			"transfer_already_paired",
+			"transaction is already part of another transfer pair",
+			nil,
+		)
+	}
+	return err
+}
+
+func (s *Service) insertAutoTransferMatch(
+	ctx context.Context,
+	workspaceID uuid.UUID,
+	sourceID uuid.UUID,
+	destinationID uuid.UUID,
+	insert func(pgx.Tx) (int64, error),
+) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin auto transfer match: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := lockTransferParticipants(ctx, tx, workspaceID, sourceID, destinationID); err != nil {
+		return false, err
+	}
+	if err := assertNotPaired(ctx, tx, workspaceID, sourceID, "source"); err != nil {
+		if isAlreadyPairedConflict(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := assertNotPaired(ctx, tx, workspaceID, destinationID, "destination"); err != nil {
+		if isAlreadyPairedConflict(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	rowsAffected, err := insert(tx)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit auto transfer match: %w", err)
+	}
+	return rowsAffected > 0, nil
 }
 
 // Unpair removes a transfer_matches row by id. Returns NotFoundError if no

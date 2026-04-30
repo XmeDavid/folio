@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
 	"github.com/xmedavid/folio/backend/internal/uuidx"
@@ -103,20 +104,25 @@ func (s *Service) runTier2(ctx context.Context, workspaceID uuid.UUID, scope Det
 			feeAmount = &feeStr
 			feeCurrency = &p.currency
 		}
-		_, err := s.pool.Exec(ctx, `
-			INSERT INTO transfer_matches (
-				id, workspace_id, source_transaction_id, destination_transaction_id,
-				fee_amount, fee_currency, provenance, matched_at
-			) VALUES (
-				$1, $2, $3, $4,
-				$5::numeric, $6::money_currency, 'auto_detected', $7
-			)
-			ON CONFLICT DO NOTHING
-		`, uuidx.New(), workspaceID, p.sourceID, p.destID, feeAmount, feeCurrency, s.now().UTC())
+		inserted, err := s.insertAutoTransferMatch(ctx, workspaceID, p.sourceID, p.destID, func(tx pgx.Tx) (int64, error) {
+			tag, err := tx.Exec(ctx, `
+				INSERT INTO transfer_matches (
+					id, workspace_id, source_transaction_id, destination_transaction_id,
+					fee_amount, fee_currency, provenance, matched_at
+				) VALUES (
+					$1, $2, $3, $4,
+					$5::numeric, $6::money_currency, 'auto_detected', $7
+				)
+				ON CONFLICT DO NOTHING
+			`, uuidx.New(), workspaceID, p.sourceID, p.destID, feeAmount, feeCurrency, s.now().UTC())
+			return tag.RowsAffected(), err
+		})
 		if err != nil {
 			return count, fmt.Errorf("tier2 insert: %w", err)
 		}
-		count++
+		if inserted {
+			count++
+		}
 	}
 	return count, nil
 }

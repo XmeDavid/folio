@@ -157,3 +157,30 @@ func TestTier1_AlreadyPairedSkips(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, res.Tier1Paired)
 }
+
+func TestTier1_TwoSourcesSameDestinationCountsOnlyInserted(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.Open(t)
+	svc := transfers.NewService(pool)
+	wsID, _ := testdb.CreateTestWorkspace(t, pool, "ws-tier1-count-conflict")
+
+	a := seedAccount(t, ctx, pool, wsID, "A", "CHF")
+	b := seedAccount(t, ctx, pool, wsID, "B", "CHF")
+	c := seedAccount(t, ctx, pool, wsID, "C", "CHF")
+	src1 := seedTx(t, ctx, pool, wsID, a, time.Date(2026, 4, 5, 0, 0, 0, 0, time.UTC),
+		"-100.00", "CHF", strPtr("100.00"), strPtr("CHF"))
+	src2 := seedTx(t, ctx, pool, wsID, b, time.Date(2026, 4, 5, 0, 0, 0, 0, time.UTC),
+		"-100.00", "CHF", strPtr("100.00"), strPtr("CHF"))
+	_ = seedTx(t, ctx, pool, wsID, c, time.Date(2026, 4, 5, 0, 0, 0, 0, time.UTC),
+		"100.00", "CHF", nil, nil)
+
+	res, err := svc.DetectAndPair(ctx, wsID, transfers.DetectScope{TransactionIDs: []uuid.UUID{src1, src2}})
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Tier1Paired)
+
+	var count int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM transfer_matches WHERE workspace_id = $1`, wsID,
+	).Scan(&count))
+	require.Equal(t, 1, count)
+}
