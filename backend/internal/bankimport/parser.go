@@ -250,7 +250,7 @@ func parseRevolutBanking(content string) (ParsedFile, error) {
 		if err != nil {
 			return ParsedFile{}, httpx.NewValidationError("Revolut row has invalid Moeda")
 		}
-		bookedAt, postedAt, err := parseRevolutTime(row["Data de início"])
+		inicio, postedAt, err := parseRevolutTime(row["Data de início"])
 		if err != nil {
 			return ParsedFile{}, err
 		}
@@ -261,6 +261,15 @@ func parseRevolutBanking(content string) (ParsedFile, error) {
 				return ParsedFile{}, err
 			}
 			completed = &t
+		}
+		// Prefer the conclusão (settlement) date as booked_at. The
+		// consolidated CSV emits only conclusão; aligning here keeps the
+		// external_id stable across formats so the same transaction in
+		// both files dedups rather than producing a phantom duplicate
+		// when início and conclusão fall on different days.
+		bookedAt := inicio
+		if completed != nil {
+			bookedAt = *completed
 		}
 		desc := cleanString(row["Descrição"])
 		out.Transactions = append(out.Transactions, ParsedTransaction{
