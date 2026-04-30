@@ -27,16 +27,20 @@ import {
   fetchAccounts,
   fetchCategories,
   fetchMerchants,
-  fetchTransactions,
+  fetchTransaction,
+  fetchTransactionsWithTransfers,
+  unpairTransfer,
   updateTransaction,
   type Account,
   type Category,
   type Merchant,
   type Transaction,
   type TransactionStatus,
+  type TransactionWithTransfer,
 } from "@/lib/api/client";
 import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 import { formatAmount, formatDate } from "@/lib/format";
+import { TransferBadge } from "@/components/transfers/transfer-badge";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 
@@ -51,6 +55,7 @@ type TransactionFilters = {
   minAmount: string;
   maxAmount: string;
   uncategorized: boolean;
+  hideInternalMoves: boolean;
 };
 
 const EMPTY_FILTERS: TransactionFilters = {
@@ -64,6 +69,7 @@ const EMPTY_FILTERS: TransactionFilters = {
   minAmount: "",
   maxAmount: "",
   uncategorized: false,
+  hideInternalMoves: true,
 };
 
 export default function TransactionsPage({
@@ -101,12 +107,13 @@ export default function TransactionsPage({
   const txQuery = useQuery({
     queryKey: ["transactions", workspaceId, { filters, page, pageSize }],
     queryFn: () =>
-      fetchTransactions(workspaceId!, {
+      fetchTransactionsWithTransfers(workspaceId!, {
         ...filters,
         status: filters.status || undefined,
         // Investment moves live in the Investments tab; only surface them
         // here when the user explicitly filters by a specific account.
         excludeInvestments: !filters.accountId,
+        hideInternalMoves: filters.hideInternalMoves,
         limit: pageSize + 1,
         offset: page * pageSize,
       }),
@@ -282,7 +289,7 @@ function TransactionTable({
   onPageChange,
   onPageSizeChange,
 }: {
-  transactions: Transaction[];
+  transactions: TransactionWithTransfer[];
   accounts: Account[];
   categories: Category[];
   merchants: Merchant[];
@@ -413,20 +420,27 @@ function TransactionTable({
                             {t.counterpartyRaw}
                           </span>
                         ) : null}
-                        {(() => {
-                          if (!t.merchantId) return null;
-                          const m = merchantById.get(t.merchantId);
-                          if (!m) return null;
-                          return (
-                            <Link
-                              href={`/w/${slug}/merchants/${m.id}` as Route}
-                              className="text-fg-faint hover:text-accent truncate text-[12px]"
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              → {m.canonicalName}
-                            </Link>
-                          );
-                        })()}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {(() => {
+                            if (!t.merchantId) return null;
+                            const m = merchantById.get(t.merchantId);
+                            if (!m) return null;
+                            return (
+                              <Link
+                                href={`/w/${slug}/merchants/${m.id}` as Route}
+                                className="text-fg-faint hover:text-accent truncate text-[12px]"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                → {m.canonicalName}
+                              </Link>
+                            );
+                          })()}
+                          {t.transferMatchId ? (
+                            <TransferBadge
+                              external={t.transferCounterpartId == null}
+                            />
+                          ) : null}
+                        </div>
                       </div>
                       <ChevronRight className="text-fg-faint mt-0.5 h-4 w-4 shrink-0 lg:hidden" />
                     </div>
@@ -490,10 +504,12 @@ function TransactionTable({
             selected.categoryId ? categoryById.get(selected.categoryId) : null
           }
           merchantById={merchantById}
+          accountById={accountById}
           slug={slug}
           categoryOptions={categoryOptions}
           workspaceId={workspaceId}
           locale={locale}
+          knownTransactions={transactions}
         />
       ) : null}
     </section>
@@ -717,6 +733,17 @@ function TransactionFiltersPanel({
             />
             Uncategorized
           </label>
+          <label className="border-border text-fg-muted flex h-9 items-center gap-2 rounded-[8px] border px-3 text-[13px]">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5"
+              checked={!filters.hideInternalMoves}
+              onChange={(event) =>
+                onFilterChange({ hideInternalMoves: !event.target.checked })
+              }
+            />
+            Show internal moves
+          </label>
           <Button type="button" variant="secondary" size="sm" onClick={onClear}>
             <X className="h-4 w-4" />
             Clear
@@ -773,19 +800,23 @@ function TransactionDetail({
   account,
   category,
   merchantById,
+  accountById,
   slug,
   categoryOptions,
   workspaceId,
   locale,
+  knownTransactions,
 }: {
-  transaction: Transaction;
+  transaction: TransactionWithTransfer;
   account?: Account;
   category?: Category | null;
   merchantById: Map<string, Merchant>;
+  accountById: Map<string, Account>;
   slug: string;
   categoryOptions: { id: string; label: string }[];
   workspaceId: string;
   locale?: string;
+  knownTransactions: TransactionWithTransfer[];
 }) {
   const queryClient = useQueryClient();
   const [notes, setNotes] = React.useState(transaction.notes ?? "");
@@ -800,6 +831,32 @@ function TransactionDetail({
         queryKey: ["transactions", workspaceId],
       });
       await queryClient.invalidateQueries({ queryKey: ["accounts", workspaceId] });
+    },
+  });
+
+  const counterpartId = transaction.transferCounterpartId ?? null;
+  const counterpartFromList = counterpartId
+    ? (knownTransactions.find((t) => t.id === counterpartId) ?? null)
+    : null;
+  const counterpartQuery = useQuery({
+    queryKey: ["transaction", workspaceId, counterpartId],
+    queryFn: () => fetchTransaction(workspaceId, counterpartId!),
+    enabled: !!counterpartId && !counterpartFromList,
+  });
+  const counterpart = counterpartFromList ?? counterpartQuery.data ?? null;
+
+  const unpairMutation = useMutation({
+    mutationFn: () =>
+      unpairTransfer(workspaceId, transaction.transferMatchId as string),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["transactions", workspaceId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["transfer-candidate-count", workspaceId],
+        }),
+      ]);
     },
   });
 
@@ -869,6 +926,59 @@ function TransactionDetail({
             />
           ) : null}
         </dl>
+
+        {transaction.transferMatchId ? (
+          <div className="border-border flex flex-col gap-2 rounded-[8px] border px-3 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-fg-muted text-[12px] font-medium">
+                Linked transfer
+              </span>
+              <TransferBadge external={counterpartId == null} />
+            </div>
+            {counterpartId == null ? (
+              <p className="text-fg-muted text-[12px]">
+                Outbound to external — no linked counterpart.
+              </p>
+            ) : counterpart ? (
+              <div className="flex flex-col gap-0.5 text-[12px]">
+                <span className="text-fg">
+                  {formatDate(counterpart.bookedAt, locale)} ·{" "}
+                  {accountById.get(counterpart.accountId)?.name ??
+                    counterpart.accountId.slice(0, 8)}
+                </span>
+                <span
+                  className={`tabular text-[13px] font-medium ${
+                    counterpart.amount.startsWith("-")
+                      ? "text-fg"
+                      : "text-success"
+                  }`}
+                >
+                  {formatAmount(
+                    counterpart.amount,
+                    counterpart.currency,
+                    locale
+                  )}
+                </span>
+              </div>
+            ) : counterpartQuery.isLoading ? (
+              <p className="text-fg-muted text-[12px]">Loading counterpart…</p>
+            ) : counterpartQuery.isError ? (
+              <p className="text-danger text-[12px]">
+                Couldn&apos;t load the linked counterpart.
+              </p>
+            ) : null}
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={unpairMutation.isPending}
+                onClick={() => unpairMutation.mutate()}
+              >
+                {unpairMutation.isPending ? "Unpairing…" : "Unpair"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="flex flex-col gap-1.5">
           <span className="text-fg-muted text-[12px] font-medium">
@@ -1005,5 +1115,8 @@ function activeFilterCount(filters: TransactionFilters): number {
     filters.minAmount,
     filters.maxAmount,
     filters.uncategorized ? "uncategorized" : "",
+    // Showing internal moves is a deviation from the default (hidden), so
+    // count it as an active filter when the user has toggled it on.
+    filters.hideInternalMoves ? "" : "showInternalMoves",
   ].filter(Boolean).length;
 }
