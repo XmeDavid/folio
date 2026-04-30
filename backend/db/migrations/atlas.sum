@@ -1,4 +1,4 @@
-h1:Klt87zwqbzv61zt8ut9DTtEHRHvfsuqlMRueCeQuTL4=
+h1:nfaLVfFSHo0pAkvF7+BkXhqwFxGDyofgSIFGHyR/UJc=
 20260424000001_identity.sql h1:E15kzwENCYU0arOCkkmB6tXFHMOpx/F1OceLzVjvvPo=
 20260424000002_accounts.sql h1:1ZK5n078oekkHi0qSKyVDpzblN9RKxYvpZqwkNE7Cso=
 20260424000003_classification.sql h1:VYffZsTA/skoiEhOX6bJNk28Gd8CYuM7csOrs24rvx4=
@@ -22,3 +22,4 @@ h1:Klt87zwqbzv61zt8ut9DTtEHRHvfsuqlMRueCeQuTL4=
 20260429000002_create_platform_invites.sql h1:HTfaRftn3nN3bdf/zv8wNc3g8L0e6r+AQiGiPteCLr4=
 20260430000001_merchants_partial_unique.sql h1:ZBIv6FU2DCxKp8uyfaBkXlTC8ivDaH2I9Wc6b9cQPrk=
 20260430000002_transfer_match_candidates.sql h1:E5Aa03ADPH8OHpUG9CDCrcoTjPYUw2Xw3bLdX2/+7uY=
+20260430000003_transfer_matches_unique.sql h1:VbisFmvhdDc+Z6Fg0FASBkbdWVq5fAaK3uG+eAEj8Ok=
