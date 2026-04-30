@@ -7,6 +7,7 @@ import { useCurrentWorkspace, useIdentity } from "@/lib/hooks/use-identity";
 import { WorkspaceShell } from "@/components/app/workspace-shell";
 import { DossierProvider } from "@/components/dossier/registry";
 import { DossierTabs } from "@/components/dossier/dossier-tabs";
+import { TransfersReviewTab } from "@/components/transfers/transfers-review-tab";
 
 export default function WorkspaceLayout({
   children,
@@ -36,6 +37,7 @@ export default function WorkspaceLayout({
 
   return (
     <DossierProvider>
+      <TransfersReviewTab workspaceId={workspace.id} />
       <WorkspaceShell workspace={workspace}>{children}</WorkspaceShell>
       <DossierTabs />
     </DossierProvider>
