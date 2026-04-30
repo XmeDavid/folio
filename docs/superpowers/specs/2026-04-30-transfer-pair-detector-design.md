@@ -127,7 +127,7 @@ For each unpaired credit (positive amount) in a tracked account whose `counterpa
 
 - a tracked account name in this workspace (case-insensitive substring),
 - the workspace owner's display name,
-- a known transfer phrase from a small built-in list: `"transfer"`, `"transferência"`, `"carregamento"`, `"levantamento"`, `"pocket"`, `"between accounts"`,
+- a known transfer phrase from a small built-in list (English + Portuguese + German): `"transfer"`, `"pocket"`, `"between accounts"`, `"transferência"`, `"carregamento"`, `"levantamento"`, `"überweisung"`, `"ueberweisung"` (umlaut-stripped variant), `"umbuchung"`, `"einzahlung"`, `"abhebung"`, `"zwischen konten"`,
 
 …find unpaired debits in **other** tracked accounts within ±5 days, ranked by date proximity then amount closeness. Up to 5 candidates.
 
