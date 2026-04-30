@@ -1099,6 +1099,119 @@ export async function mergeMerchants(
 }
 
 // ---------------------------------------------------------------------------
+// Transfers (cross-account pairing)
+// ---------------------------------------------------------------------------
+
+export type TransferMatch = {
+  id: string;
+  workspaceId: string;
+  sourceTransactionId: string;
+  destinationTransactionId?: string | null;
+  fxRate?: string | null;
+  feeAmount?: string | null;
+  feeCurrency?: string | null;
+  toleranceNote?: string | null;
+  provenance: string;
+  matchedByUserId?: string | null;
+  matchedAt: string;
+  createdAt: string;
+};
+
+export type TransferCandidate = {
+  id: string;
+  workspaceId: string;
+  sourceTransactionId: string;
+  candidateDestinationIds: string[];
+  status: "pending" | "paired" | "declined";
+  suggestedAt: string;
+  resolvedAt?: string | null;
+  resolvedByUserId?: string | null;
+};
+
+export type DetectResult = {
+  tier1Paired: number;
+  tier2Paired: number;
+  tier3Suggested: number;
+};
+
+export type TransactionWithTransfer = Transaction & {
+  transferMatchId?: string | null;
+  transferCounterpartId?: string | null;
+};
+
+export async function fetchPendingTransferCandidates(
+  workspaceId: string
+): Promise<TransferCandidate[]> {
+  return request<TransferCandidate[]>(
+    `/api/v1/t/${workspaceId}/transfers/candidates`,
+    { method: "GET" }
+  );
+}
+
+export async function fetchPendingTransferCandidateCount(
+  workspaceId: string
+): Promise<{ count: number }> {
+  return request<{ count: number }>(
+    `/api/v1/t/${workspaceId}/transfers/candidates/count`,
+    { method: "GET" }
+  );
+}
+
+export async function manualPairTransfer(
+  workspaceId: string,
+  body: {
+    sourceId: string;
+    destinationId: string | null;
+    feeAmount?: string | null;
+    feeCurrency?: string | null;
+    toleranceNote?: string | null;
+  }
+): Promise<TransferMatch> {
+  return request<TransferMatch>(
+    `/api/v1/t/${workspaceId}/transfers/manual-pair`,
+    { method: "POST", json: body }
+  );
+}
+
+export async function unpairTransfer(
+  workspaceId: string,
+  matchId: string
+): Promise<void> {
+  return request<void>(`/api/v1/t/${workspaceId}/transfers/${matchId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function declineTransferCandidate(
+  workspaceId: string,
+  candidateId: string
+): Promise<void> {
+  return request<void>(
+    `/api/v1/t/${workspaceId}/transfers/candidates/${candidateId}/decline`,
+    { method: "POST", json: {} }
+  );
+}
+
+export async function runTransferDetector(
+  workspaceId: string
+): Promise<DetectResult> {
+  return request<DetectResult>(
+    `/api/v1/t/${workspaceId}/transfers/detect`,
+    { method: "POST", json: {} }
+  );
+}
+
+export async function fetchTransactionsWithTransfers(
+  workspaceId: string,
+  query: TransactionsQuery & { hideInternalMoves?: boolean } = {}
+): Promise<TransactionWithTransfer[]> {
+  return request<TransactionWithTransfer[]>(
+    `/api/v1/t/${workspaceId}/transactions${buildQuery(query)}`,
+    { method: "GET" }
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Types re-exported from the OpenAPI-generated schema. Schema regeneration is
 // not part of this change; types that reference removed endpoints still live
 // in schema.d.ts until a regeneration pass syncs with the v2 spec.
