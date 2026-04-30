@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/xmedavid/folio/backend/internal/classification"
 	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/httpx"
+	"github.com/xmedavid/folio/backend/internal/transfers"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
@@ -38,13 +40,26 @@ func stringToNumeric(s string) pgtype.Numeric {
 }
 
 type Service struct {
-	pool     *pgxpool.Pool
-	classSvc *classification.Service
-	now      func() time.Time
+	pool         *pgxpool.Pool
+	classSvc     *classification.Service
+	transfersSvc *transfers.Service
+	now          func() time.Time
 }
 
-func NewService(pool *pgxpool.Pool, classSvc *classification.Service) *Service {
-	return &Service{pool: pool, classSvc: classSvc, now: time.Now}
+func NewService(pool *pgxpool.Pool, classSvc *classification.Service, transfersSvc *transfers.Service) *Service {
+	return &Service{pool: pool, classSvc: classSvc, transfersSvc: transfersSvc, now: time.Now}
+}
+
+// runTransferDetect runs the transfer-pair detector over the freshly inserted
+// transaction IDs. Failures are logged and swallowed: the import has already
+// committed, and a detector hiccup must not bubble up as an apply error.
+func (s *Service) runTransferDetect(ctx context.Context, workspaceID uuid.UUID, insertedIDs []uuid.UUID) {
+	if s.transfersSvc == nil || len(insertedIDs) == 0 {
+		return
+	}
+	if _, err := s.transfersSvc.DetectAndPair(ctx, workspaceID, transfers.DetectScope{TransactionIDs: insertedIDs}); err != nil {
+		slog.Default().Warn("transfers.DetectAndPair after import", "err", err, "workspace", workspaceID)
+	}
 }
 
 func (s *Service) Preview(ctx context.Context, workspaceID uuid.UUID, fileName string, r io.Reader, accountID *uuid.UUID) (*Preview, error) {
@@ -143,6 +158,8 @@ func (s *Service) Apply(ctx context.Context, workspaceID, accountID, userID uuid
 		return nil, fmt.Errorf("commit import: %w", err)
 	}
 
+	s.runTransferDetect(ctx, workspaceID, inserted)
+
 	return &ApplyResult{
 		BatchID:        batchID,
 		InsertedCount:  len(inserted),
@@ -154,6 +171,19 @@ func (s *Service) Apply(ctx context.Context, workspaceID, accountID, userID uuid
 }
 
 func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, in ApplyPlanInput) (*ApplyResult, error) {
+	res, err := s.applyPlanInternal(ctx, workspaceID, userID, in)
+	if err != nil {
+		return nil, err
+	}
+	s.runTransferDetect(ctx, workspaceID, res.TransactionIDs)
+	return res, nil
+}
+
+// applyPlanInternal applies a single plan and returns its result. The public
+// ApplyPlan wraps this with a transfer-pair detection pass over the freshly
+// inserted IDs. ApplyMultiPlan calls this directly so it can run a single
+// union-scoped detection pass after all files have applied.
+func (s *Service) applyPlanInternal(ctx context.Context, workspaceID, userID uuid.UUID, in ApplyPlanInput) (*ApplyResult, error) {
 	if strings.TrimSpace(in.FileToken) == "" {
 		return nil, httpx.NewValidationError("fileToken is required")
 	}
@@ -398,13 +428,14 @@ func (s *Service) ApplyPlan(ctx context.Context, workspaceID, userID uuid.UUID, 
 // side.
 func (s *Service) ApplyMultiPlan(ctx context.Context, workspaceID, userID uuid.UUID, in ApplyMultiPlanInput) (*ApplyMultiPlanResult, error) {
 	out := &ApplyMultiPlanResult{Files: make([]ApplyMultiPlanFileResult, 0, len(in.Files))}
+	var allInserted []uuid.UUID
 	for _, file := range in.Files {
 		fileName := ""
 		if payload, err := parseToken(file.FileToken); err == nil {
 			fileName = payload.FileName
 		}
 		entry := ApplyMultiPlanFileResult{FileName: fileName}
-		res, err := s.ApplyPlan(ctx, workspaceID, userID, file)
+		res, err := s.applyPlanInternal(ctx, workspaceID, userID, file)
 		if err != nil {
 			entry.Error = err.Error()
 			out.Files = append(out.Files, entry)
@@ -415,7 +446,13 @@ func (s *Service) ApplyMultiPlan(ctx context.Context, workspaceID, userID uuid.U
 		out.DuplicateCount += res.DuplicateCount
 		out.ConflictCount += res.ConflictCount
 		out.Files = append(out.Files, entry)
+		allInserted = append(allInserted, res.TransactionIDs...)
 	}
+	// One detection pass across the union of every file's inserts so a
+	// transfer that crosses files (file A's outflow paired with file B's
+	// inflow) is caught — a per-file pass would only see each side in
+	// isolation.
+	s.runTransferDetect(ctx, workspaceID, allInserted)
 	return out, nil
 }
 

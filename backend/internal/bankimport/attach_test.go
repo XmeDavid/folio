@@ -14,6 +14,7 @@ import (
 	"github.com/xmedavid/folio/backend/internal/classification"
 	"github.com/xmedavid/folio/backend/internal/db/dbq"
 	"github.com/xmedavid/folio/backend/internal/testdb"
+	"github.com/xmedavid/folio/backend/internal/transfers"
 	"github.com/xmedavid/folio/backend/internal/uuidx"
 )
 
@@ -80,7 +81,7 @@ func TestApply_AttachesMerchantByRaw(t *testing.T) {
 	ctx := context.Background()
 	pool := testdb.Open(t)
 	classSvc := classification.NewService(pool)
-	bsvc := bankimport.NewService(pool, classSvc)
+	bsvc := bankimport.NewService(pool, classSvc, transfers.NewService(pool))
 
 	wsID, _ := testdb.CreateTestWorkspace(t, pool, "ws-import-attach")
 	accountID := seedAccount(t, ctx, pool, wsID, "CHF")

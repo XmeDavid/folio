@@ -28,6 +28,7 @@ import (
 	"github.com/xmedavid/folio/backend/internal/mailer"
 	"github.com/xmedavid/folio/backend/internal/marketdata"
 	"github.com/xmedavid/folio/backend/internal/transactions"
+	"github.com/xmedavid/folio/backend/internal/transfers"
 )
 
 type Deps struct {
@@ -81,7 +82,8 @@ func NewRouter(d Deps) http.Handler {
 	accountsH := accounts.NewHandler(accountsSvc)
 	classificationSvc := classification.NewService(d.DB)
 	classificationH := classification.NewHandler(classificationSvc)
-	importSvc := bankimport.NewService(d.DB, classificationSvc)
+	transfersSvc := transfers.NewService(d.DB)
+	importSvc := bankimport.NewService(d.DB, classificationSvc, transfersSvc)
 	importH := bankimport.NewHandler(importSvc)
 	transactionsSvc := transactions.NewService(d.DB, classificationSvc)
 	transactionsH := transactions.NewHandler(transactionsSvc)
