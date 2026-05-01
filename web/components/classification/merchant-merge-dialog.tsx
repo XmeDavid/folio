@@ -5,6 +5,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { FormError } from "@/components/ui/form-error";
@@ -26,12 +33,20 @@ export type MerchantMergeDialogProps = {
 };
 
 export function MerchantMergeDialog(props: MerchantMergeDialogProps) {
-  if (!props.open) return null;
-  // Remount the inner body each time the dialog opens so internal form state
-  // (search, target selection, cascade checkbox) resets without a setState
-  // inside an effect. The `source.id` part keeps state isolated per merchant
-  // when the parent swaps source while the dialog is open.
-  return <MerchantMergeDialogBody key={props.source.id} {...props} />;
+  return (
+    <Dialog
+      open={props.open}
+      onOpenChange={(next) => {
+        if (!next) props.onClose();
+      }}
+    >
+      {/* Remount on open / source change so internal form state — search,
+          target selection, cascade checkbox — resets cleanly. */}
+      {props.open ? (
+        <MerchantMergeDialogBody key={props.source.id} {...props} />
+      ) : null}
+    </Dialog>
+  );
 }
 
 function MerchantMergeDialogBody({
@@ -42,7 +57,8 @@ function MerchantMergeDialogBody({
 }: MerchantMergeDialogProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const cardRef = React.useRef<HTMLDivElement | null>(null);
+  // Used to refocus the search input after the user clicks "Change" on the
+  // selected target. Initial focus is handled by Radix Dialog itself.
   const searchInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const [search, setSearch] = React.useState("");
@@ -87,27 +103,6 @@ function MerchantMergeDialogBody({
       onClose();
     },
   });
-
-  // Esc-to-close + initial focus + lock background scroll, mirroring the
-  // cascade dialog. Esc is suppressed while a merge mutation is pending.
-  React.useEffect(() => {
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (mergeMutation.isPending) return;
-        event.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", handleKey);
-    // Move focus into the search field so keyboard users can start typing.
-    searchInputRef.current?.focus();
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", handleKey);
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [onClose, mergeMutation.isPending]);
 
   const candidates = React.useMemo(() => {
     const all = merchantsQuery.data ?? [];
@@ -162,37 +157,25 @@ function MerchantMergeDialogBody({
     mergeMutation.isPending;
 
   return (
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-fg/30 px-4 py-8"
-      onClick={(event) => {
-        if (event.target !== event.currentTarget) return;
-        if (mergeMutation.isPending) return;
-        onClose();
+    <DialogContent
+      className="flex max-w-lg flex-col gap-4 p-5"
+      onInteractOutside={(event) => {
+        if (mergeMutation.isPending) event.preventDefault();
+      }}
+      onEscapeKeyDown={(event) => {
+        if (mergeMutation.isPending) event.preventDefault();
       }}
     >
-      <div
-        ref={cardRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="merchant-merge-title"
-        tabIndex={-1}
-        className="flex w-full max-w-lg flex-col gap-4 rounded-[16px] border border-border bg-surface p-5 outline-none focus-visible:ring-2 focus-visible:ring-accent"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex flex-col gap-1">
-          <h2
-            id="merchant-merge-title"
-            className="text-[15px] font-medium tracking-tight text-fg"
-          >
-            Merge{" "}
-            <span className="font-semibold">{source.canonicalName}</span> into…
-          </h2>
-          <p className="text-[12px] text-fg-muted">
-            Pick a target merchant. {source.canonicalName} will be deleted and
-            its transactions, aliases, and metadata will move onto the target.
-          </p>
-        </div>
+      <DialogHeader>
+        <DialogTitle>
+          Merge <span className="font-semibold">{source.canonicalName}</span>{" "}
+          into…
+        </DialogTitle>
+        <DialogDescription>
+          Pick a target merchant. {source.canonicalName} will be deleted and
+          its transactions, aliases, and metadata will move onto the target.
+        </DialogDescription>
+      </DialogHeader>
 
         {selectedTarget === null ? (
           <Field label="Target merchant" htmlFor="merchant-merge-search">
@@ -302,8 +285,7 @@ function MerchantMergeDialogBody({
             {mergeMutation.isPending ? "Merging…" : "Confirm merge"}
           </Button>
         </div>
-      </div>
-    </div>
+    </DialogContent>
   );
 }
 

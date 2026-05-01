@@ -6,6 +6,13 @@ import type { Route } from "next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCurrentWorkspace } from "@/lib/hooks/use-identity";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   ApiError,
   deleteWorkspace,
   patchWorkspace,
@@ -208,25 +215,29 @@ export default function WorkspaceSettingsPage({
         </section>
       ) : null}
 
-      {dangerOpen ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => {
-            if (!del.isPending) setDangerOpen(false);
-          }}
-        >
-          <div
-            className="w-full max-w-md rounded bg-background p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
+      <Dialog
+        open={dangerOpen}
+        onOpenChange={(next) => {
+          if (!next && !del.isPending) setDangerOpen(false);
+        }}
+      >
+        {dangerOpen ? (
+          <DialogContent
+            onInteractOutside={(event) => {
+              if (del.isPending) event.preventDefault();
+            }}
+            onEscapeKeyDown={(event) => {
+              if (del.isPending) event.preventDefault();
+            }}
           >
-            <h3 className="text-lg font-semibold">Delete workspace</h3>
-            <p className="mt-2 text-sm text-muted-foreground">
-              This soft-deletes the workspace. Type{" "}
-              <code className="rounded bg-muted px-1">{workspace.slug}</code> to
-              confirm.
-            </p>
+            <DialogHeader>
+              <DialogTitle>Delete workspace</DialogTitle>
+              <DialogDescription>
+                This soft-deletes the workspace. Type{" "}
+                <code className="rounded bg-muted px-1">{workspace.slug}</code>{" "}
+                to confirm.
+              </DialogDescription>
+            </DialogHeader>
             <input
               type="text"
               value={confirmSlug}
@@ -256,9 +267,9 @@ export default function WorkspaceSettingsPage({
                 {del.isPending ? "Deleting…" : "Delete workspace"}
               </button>
             </div>
-          </div>
-        </div>
-      ) : null}
+          </DialogContent>
+        ) : null}
+      </Dialog>
     </div>
   );
 }

@@ -12,6 +12,13 @@ import {
   type TransactionWithTransfer,
 } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { FormError } from "@/components/ui/form-error";
@@ -24,11 +31,21 @@ export type ManualPairDialogProps = {
 };
 
 export function ManualPairDialog(props: ManualPairDialogProps) {
-  if (!props.open) return null;
-  // Remount the inner body each time the dialog opens (or the source changes)
-  // so internal form state — search term, chosen candidate, external toggle —
-  // resets without a setState inside an effect.
-  return <ManualPairDialogBody key={props.source.id} {...props} />;
+  return (
+    <Dialog
+      open={props.open}
+      onOpenChange={(next) => {
+        if (!next) props.onClose();
+      }}
+    >
+      {/* Remount the body when the dialog opens (or the source changes) so
+          internal form state — search term, chosen candidate, external toggle —
+          resets without a setState inside an effect. */}
+      {props.open ? (
+        <ManualPairDialogBody key={props.source.id} {...props} />
+      ) : null}
+    </Dialog>
+  );
 }
 
 function ManualPairDialogBody({
@@ -37,7 +54,6 @@ function ManualPairDialogBody({
   onClose,
 }: ManualPairDialogProps) {
   const queryClient = useQueryClient();
-  const searchInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const [search, setSearch] = React.useState("");
   const [chosenId, setChosenId] = React.useState<string | null>(null);
@@ -108,26 +124,6 @@ function ManualPairDialogBody({
     },
   });
 
-  // Esc-to-close + initial focus + lock background scroll, mirroring the
-  // merchant-merge dialog. Esc is suppressed while the mutation is pending.
-  React.useEffect(() => {
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (mutation.isPending) return;
-        event.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", handleKey);
-    searchInputRef.current?.focus();
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", handleKey);
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [onClose, mutation.isPending]);
-
   const apiError =
     mutation.error instanceof ApiError
       ? mutation.error.message
@@ -149,40 +145,27 @@ function ManualPairDialogBody({
     accountById.get(source.accountId)?.name ?? source.accountId.slice(0, 8);
 
   return (
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-fg/30 px-4 py-8"
-      onClick={(event) => {
-        if (event.target !== event.currentTarget) return;
-        if (mutation.isPending) return;
-        onClose();
+    <DialogContent
+      className="flex max-w-lg flex-col gap-4 p-5"
+      onInteractOutside={(event) => {
+        if (mutation.isPending) event.preventDefault();
+      }}
+      onEscapeKeyDown={(event) => {
+        if (mutation.isPending) event.preventDefault();
       }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="manual-pair-title"
-        tabIndex={-1}
-        className="flex w-full max-w-lg flex-col gap-4 rounded-[16px] border border-border bg-surface p-5 outline-none focus-visible:ring-2 focus-visible:ring-accent"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex flex-col gap-1">
-          <h2
-            id="manual-pair-title"
-            className="text-[15px] font-medium tracking-tight text-fg"
-          >
-            Pair this transaction with another
-          </h2>
-          <p className="text-[12px] text-fg-muted">
-            <span>{source.bookedAt.slice(0, 10)}</span>
-            <span className="text-fg-faint"> · </span>
-            <span>{sourceAccountLabel}</span>
-            <span className="text-fg-faint"> · </span>
-            <span className="tabular-nums">
-              {source.amount} {source.currency}
-            </span>
-          </p>
-        </div>
+      <DialogHeader>
+        <DialogTitle>Pair this transaction with another</DialogTitle>
+        <DialogDescription>
+          <span>{source.bookedAt.slice(0, 10)}</span>
+          <span className="text-fg-faint"> · </span>
+          <span>{sourceAccountLabel}</span>
+          <span className="text-fg-faint"> · </span>
+          <span className="tabular-nums">
+            {source.amount} {source.currency}
+          </span>
+        </DialogDescription>
+      </DialogHeader>
 
         <label className="flex items-start gap-2 rounded-[8px] border border-border bg-surface-subtle px-3 py-2 text-[12px] text-fg-muted">
           <input
@@ -207,7 +190,6 @@ function ManualPairDialogBody({
           <>
             <Field label="Search candidates" htmlFor="manual-pair-search">
               <Input
-                ref={searchInputRef}
                 id="manual-pair-search"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
@@ -304,7 +286,6 @@ function ManualPairDialogBody({
                 : "Pair selected"}
           </Button>
         </div>
-      </div>
-    </div>
+    </DialogContent>
   );
 }

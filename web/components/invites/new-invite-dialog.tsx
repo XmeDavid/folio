@@ -3,6 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { FormError } from "@/components/ui/form-error";
 import { Input } from "@/components/ui/input";
@@ -28,15 +34,23 @@ export function NewInviteDialog({
   workspaceId: string;
   canInviteOwners: boolean;
 }) {
-  if (!open) return null;
-  // Mounted only while open; unmount-on-close gives us a fresh state machine
-  // for every re-open without needing setState-in-effect resets.
   return (
-    <NewInviteDialogContent
-      onClose={onClose}
-      workspaceId={workspaceId}
-      canInviteOwners={canInviteOwners}
-    />
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      {/* Mount the body only while open so internal state machine resets
+          on each re-open without setState-in-effect resets. */}
+      {open ? (
+        <NewInviteDialogContent
+          onClose={onClose}
+          workspaceId={workspaceId}
+          canInviteOwners={canInviteOwners}
+        />
+      ) : null}
+    </Dialog>
   );
 }
 
@@ -56,7 +70,6 @@ function NewInviteDialogContent({
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<WorkspaceInviteCreated | null>(null);
   const [copied, setCopied] = useState(false);
-  const emailInputRef = useRef<HTMLInputElement>(null);
   const linkInputRef = useRef<HTMLInputElement>(null);
 
   const create = useMutation({
@@ -71,11 +84,6 @@ function NewInviteDialogContent({
       setError(formatError(err));
     },
   });
-
-  // Autofocus the email input once mounted.
-  useEffect(() => {
-    emailInputRef.current?.focus();
-  }, []);
 
   // Reset the "Copied" feedback after 2s.
   useEffect(() => {
@@ -101,118 +109,108 @@ function NewInviteDialogContent({
     }
   };
 
-  const closeAndReset = () => {
-    if (create.isPending) return;
-    onClose();
-  };
-
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="new-invite-dialog-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={closeAndReset}
+    <DialogContent
+      // Block dismissal while the request is in flight so the
+      // single-shown invite token isn't lost mid-creation.
+      onInteractOutside={(event) => {
+        if (create.isPending) event.preventDefault();
+      }}
+      onEscapeKeyDown={(event) => {
+        if (create.isPending) event.preventDefault();
+      }}
     >
-      <div
-        className="w-full max-w-md rounded-[16px] border border-border bg-surface p-6 shadow-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3
-          id="new-invite-dialog-title"
-          className="text-[15px] font-semibold text-fg"
-        >
+      <DialogHeader>
+        <DialogTitle>
           {stage === "form" ? "New invite" : "Invite created"}
-        </h3>
+        </DialogTitle>
+      </DialogHeader>
 
-        {stage === "form" ? (
-          <form onSubmit={submit} className="mt-4 flex flex-col gap-4">
-            <Field label="Email" htmlFor="new-invite-email">
-              <Input
-                id="new-invite-email"
-                ref={emailInputRef}
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@example.com"
-                autoComplete="off"
-              />
-            </Field>
+      {stage === "form" ? (
+        <form onSubmit={submit} className="mt-4 flex flex-col gap-4">
+          <Field label="Email" htmlFor="new-invite-email">
+            <Input
+              id="new-invite-email"
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="name@example.com"
+              autoComplete="off"
+              autoFocus
+            />
+          </Field>
 
-            <Field
-              label="Role"
-              htmlFor="new-invite-role"
-              hint={
-                !canInviteOwners
-                  ? "Only owners can invite other owners."
-                  : undefined
-              }
+          <Field
+            label="Role"
+            htmlFor="new-invite-role"
+            hint={
+              !canInviteOwners
+                ? "Only owners can invite other owners."
+                : undefined
+            }
+          >
+            <Select
+              id="new-invite-role"
+              value={role}
+              onChange={(e) => setRole(e.target.value as MemberRole)}
             >
-              <Select
-                id="new-invite-role"
-                value={role}
-                onChange={(e) => setRole(e.target.value as MemberRole)}
-              >
-                <option value="member">member</option>
-                {canInviteOwners ? (
-                  <option value="owner">owner</option>
-                ) : null}
-              </Select>
-            </Field>
+              <option value="member">member</option>
+              {canInviteOwners ? <option value="owner">owner</option> : null}
+            </Select>
+          </Field>
 
-            {error ? <FormError>{error}</FormError> : null}
+          {error ? <FormError>{error}</FormError> : null}
 
-            <div className="mt-1 flex justify-end gap-2">
+          <div className="mt-1 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={onClose}
+              disabled={create.isPending}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={create.isPending}>
+              {create.isPending ? "Sending…" : "Send invite"}
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <div className="mt-4 flex flex-col gap-4">
+          <Field
+            label="Accept link"
+            htmlFor="new-invite-accept-url"
+            hint="Send this link to the invitee. We've also emailed it to them, but the email may not arrive if the mailer isn't configured."
+          >
+            <div className="flex gap-2">
+              <Input
+                id="new-invite-accept-url"
+                ref={linkInputRef}
+                readOnly
+                value={created?.acceptUrl ?? ""}
+                onFocus={(e) => e.currentTarget.select()}
+                className="font-mono text-[12px]"
+              />
               <Button
                 type="button"
                 variant="secondary"
-                onClick={closeAndReset}
-                disabled={create.isPending}
+                onClick={handleCopy}
+                className="shrink-0"
               >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={create.isPending}>
-                {create.isPending ? "Sending…" : "Send invite"}
+                {copied ? "Copied" : "Copy link"}
               </Button>
             </div>
-          </form>
-        ) : (
-          <div className="mt-4 flex flex-col gap-4">
-            <Field
-              label="Accept link"
-              htmlFor="new-invite-accept-url"
-              hint="Send this link to the invitee. We've also emailed it to them, but the email may not arrive if the mailer isn't configured."
-            >
-              <div className="flex gap-2">
-                <Input
-                  id="new-invite-accept-url"
-                  ref={linkInputRef}
-                  readOnly
-                  value={created?.acceptUrl ?? ""}
-                  onFocus={(e) => e.currentTarget.select()}
-                  className="font-mono text-[12px]"
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={handleCopy}
-                  className="shrink-0"
-                >
-                  {copied ? "Copied" : "Copy link"}
-                </Button>
-              </div>
-            </Field>
+          </Field>
 
-            <div className="mt-1 flex justify-end">
-              <Button type="button" onClick={closeAndReset}>
-                Done
-              </Button>
-            </div>
+          <div className="mt-1 flex justify-end">
+            <Button type="button" onClick={onClose}>
+              Done
+            </Button>
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+    </DialogContent>
   );
 }
 

@@ -1,6 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  fireEvent,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+// Radix Dialog portals its content to document.body. Helpers below replace
+// the previous `container.querySelector(...)` queries with `document.body`
+// lookups so the migrated dialog stays testable.
+const portalRoot = () => document.body;
+const inPortal = <E extends Element>(selector: string) =>
+  portalRoot().querySelector(selector) as E | null;
+const allInPortal = <E extends Element>(selector: string) =>
+  portalRoot().querySelectorAll(selector) as NodeListOf<E>;
 import type * as ApiClient from "@/lib/api/client";
 import type {
   Account,
@@ -121,69 +135,64 @@ beforeEach(() => {
 });
 
 describe("<ManualPairDialog />", () => {
-  it("returns null when open=false", () => {
-    const { container } = renderDialog({ open: false });
-    expect(container.firstChild).toBeNull();
+  it("renders no dialog when open=false", () => {
+    renderDialog({ open: false });
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(mockedFetchAccounts).not.toHaveBeenCalled();
     expect(mockedFetchCandidates).not.toHaveBeenCalled();
   });
 
   it("default mode shows the search input + a radio list of candidates", async () => {
-    const { container } = renderDialog();
+    renderDialog();
 
     // Search input present.
-    const search = container.querySelector(
-      'input#manual-pair-search'
-    ) as HTMLInputElement | null;
-    expect(search).not.toBeNull();
+    expect(inPortal<HTMLInputElement>("input#manual-pair-search")).not.toBeNull();
 
     // Wait for candidates to render as radios.
     await waitFor(() => {
-      const radios = container.querySelectorAll(
+      const radios = allInPortal<HTMLInputElement>(
         'input[type="radio"][name="manual-pair-target"]'
       );
       expect(radios.length).toBe(1);
     });
 
     // The candidate's counterparty appears in the list.
-    expect(container.textContent).toContain("Incoming Wire");
+    expect(screen.getByRole("dialog").textContent).toContain("Incoming Wire");
   });
 
   it("toggling 'outbound to external' hides search/candidates and changes the Confirm label", async () => {
-    const { container, getByText } = renderDialog();
+    renderDialog();
 
     // Wait for initial candidate list.
     await waitFor(() => {
       expect(
-        container.querySelectorAll(
+        allInPortal<HTMLInputElement>(
           'input[type="radio"][name="manual-pair-target"]'
         ).length
       ).toBe(1);
     });
 
     // Default Confirm label is "Pair selected".
-    expect(container.textContent).toContain("Pair selected");
+    expect(screen.getByRole("dialog").textContent).toContain("Pair selected");
 
     // Toggle the external checkbox (the only checkbox in the dialog).
-    const externalCheckbox = container.querySelector(
+    const externalCheckbox = inPortal<HTMLInputElement>(
       'input[type="checkbox"]'
-    ) as HTMLInputElement | null;
+    );
     expect(externalCheckbox).not.toBeNull();
     fireEvent.click(externalCheckbox!);
     expect(externalCheckbox!.checked).toBe(true);
 
     // Search input + candidate radios are gone.
+    expect(inPortal("input#manual-pair-search")).toBeNull();
     expect(
-      container.querySelector('input#manual-pair-search')
-    ).toBeNull();
-    expect(
-      container.querySelectorAll(
+      allInPortal<HTMLInputElement>(
         'input[type="radio"][name="manual-pair-target"]'
       ).length
     ).toBe(0);
 
     // Confirm label flipped to "Mark as external".
-    expect(getByText("Mark as external")).not.toBeNull();
+    expect(screen.getByText("Mark as external")).not.toBeNull();
   });
 
   it("clicking Confirm in default mode with a chosen radio calls manualPairTransfer with the chosen destinationId", async () => {
@@ -194,14 +203,14 @@ describe("<ManualPairDialog />", () => {
       destinationTransactionId: CANDIDATE_TX.id,
     } as unknown as Awaited<ReturnType<typeof manualPairTransfer>>);
 
-    const { container, getByText } = renderDialog();
+    renderDialog();
 
     // Wait for candidate radio.
     let radio: HTMLInputElement | null = null;
     await waitFor(() => {
-      radio = container.querySelector(
+      radio = inPortal<HTMLInputElement>(
         'input[type="radio"][name="manual-pair-target"]'
-      ) as HTMLInputElement | null;
+      );
       expect(radio).not.toBeNull();
     });
 
@@ -210,7 +219,7 @@ describe("<ManualPairDialog />", () => {
     expect(radio!.checked).toBe(true);
 
     // Confirm.
-    fireEvent.click(getByText("Pair selected"));
+    fireEvent.click(screen.getByText("Pair selected"));
 
     await waitFor(() => {
       expect(mockedManualPair).toHaveBeenCalledWith("ws_1", {
@@ -228,21 +237,21 @@ describe("<ManualPairDialog />", () => {
       destinationTransactionId: null,
     } as unknown as Awaited<ReturnType<typeof manualPairTransfer>>);
 
-    const { container, getByText } = renderDialog();
+    renderDialog();
 
     // Wait for accounts query to settle so the dialog body is fully rendered.
     await waitFor(() => expect(mockedFetchAccounts).toHaveBeenCalled());
 
     // Toggle external on.
-    const externalCheckbox = container.querySelector(
+    const externalCheckbox = inPortal<HTMLInputElement>(
       'input[type="checkbox"]'
-    ) as HTMLInputElement | null;
+    );
     expect(externalCheckbox).not.toBeNull();
     fireEvent.click(externalCheckbox!);
     expect(externalCheckbox!.checked).toBe(true);
 
     // Confirm via the new label.
-    fireEvent.click(getByText("Mark as external"));
+    fireEvent.click(screen.getByText("Mark as external"));
 
     await waitFor(() => {
       expect(mockedManualPair).toHaveBeenCalledWith("ws_1", {
@@ -253,10 +262,10 @@ describe("<ManualPairDialog />", () => {
   });
 
   it("Cancel closes without calling manualPairTransfer", async () => {
-    const { getByText, onClose } = renderDialog();
+    const { onClose } = renderDialog();
     await waitFor(() => expect(mockedFetchAccounts).toHaveBeenCalled());
 
-    fireEvent.click(getByText("Cancel"));
+    fireEvent.click(screen.getByText("Cancel"));
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(mockedManualPair).not.toHaveBeenCalled();
   });

@@ -2,6 +2,13 @@
 
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export type MerchantDefaultCategoryDialogProps = {
   open: boolean;
@@ -33,31 +40,6 @@ export function MerchantDefaultCategoryDialog({
   onCancel,
   busy = false,
 }: MerchantDefaultCategoryDialogProps) {
-  const cardRef = React.useRef<HTMLDivElement | null>(null);
-
-  // Esc-to-close + initial focus management.
-  React.useEffect(() => {
-    if (!open) return;
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onCancel();
-      }
-    };
-    document.addEventListener("keydown", handleKey);
-    // Move focus into the dialog so keyboard users land here.
-    cardRef.current?.focus();
-    // Lock background scroll while open.
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", handleKey);
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [open, onCancel]);
-
-  if (!open) return null;
-
   const oldLabel = oldCategoryName ?? NONE_LABEL;
   const newLabel = newCategoryName ?? NONE_LABEL;
 
@@ -103,36 +85,29 @@ export function MerchantDefaultCategoryDialog({
   }
 
   return (
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-fg/30 px-4 py-8"
-      onClick={(event) => {
-        // Backdrop click.
-        if (event.target === event.currentTarget) onCancel();
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onCancel();
       }}
     >
-      <div
-        ref={cardRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="merchant-default-cascade-title"
-        aria-describedby="merchant-default-cascade-body"
-        tabIndex={-1}
-        className="w-full max-w-md rounded-[16px] border border-border bg-surface p-5 outline-none focus-visible:ring-2 focus-visible:ring-accent"
-        onClick={(event) => event.stopPropagation()}
+      <DialogContent
+        showClose={false}
+        onInteractOutside={(event) => {
+          if (busy) event.preventDefault();
+        }}
+        onEscapeKeyDown={(event) => {
+          if (busy) event.preventDefault();
+        }}
       >
-        <h2
-          id="merchant-default-cascade-title"
-          className="text-[15px] font-medium tracking-tight text-fg"
-        >
-          Apply new default category to existing transactions?
-        </h2>
-        <p
-          id="merchant-default-cascade-body"
-          className="mt-3 text-[13px] leading-relaxed text-fg-muted"
-        >
-          {body}
-        </p>
+        <DialogHeader>
+          <DialogTitle>
+            Apply new default category to existing transactions?
+          </DialogTitle>
+          <DialogDescription className="leading-relaxed">
+            {body}
+          </DialogDescription>
+        </DialogHeader>
         <div className="mt-5 flex flex-col-reverse items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end">
           <Button
             type="button"
@@ -153,7 +128,7 @@ export function MerchantDefaultCategoryDialog({
             Apply to existing & future
           </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

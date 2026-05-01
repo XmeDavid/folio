@@ -1,8 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  fireEvent,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type * as ApiClient from "@/lib/api/client";
 import type { Merchant, MergePreview } from "@/lib/api/client";
+
+// Radix Dialog portals its content to document.body, so element lookups go
+// through `screen` / document.body rather than the container returned by
+// render().
+const inPortal = <E extends Element>(selector: string) =>
+  document.body.querySelector(selector) as E | null;
 
 // Mocks must be declared before importing the SUT so vi.mock hoists correctly.
 vi.mock("next/navigation", () => ({
@@ -58,10 +69,9 @@ const TARGET: Merchant = {
   updatedAt: "2026-04-29T00:00:00Z",
 };
 
-function renderDialog(opts: {
-  open?: boolean;
-  preview?: MergePreview;
-} = {}) {
+function renderDialog(
+  opts: { open?: boolean; preview?: MergePreview } = {}
+) {
   const onClose = vi.fn();
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -87,6 +97,8 @@ function renderDialog(opts: {
   return { ...utils, onClose, queryClient };
 }
 
+const dialogText = () => screen.getByRole("dialog").textContent ?? "";
+
 beforeEach(() => {
   mockedFetchMerchants.mockReset();
   mockedPreview.mockReset();
@@ -94,18 +106,17 @@ beforeEach(() => {
 });
 
 describe("<MerchantMergeDialog />", () => {
-  it("renders nothing when open=false", () => {
-    const { container } = renderDialog({ open: false });
-    expect(container.firstChild).toBeNull();
+  it("renders no dialog when open=false", () => {
+    renderDialog({ open: false });
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(mockedFetchMerchants).not.toHaveBeenCalled();
   });
 
   it("renders the search input when open=true", async () => {
-    const { container } = renderDialog();
-    const input = container.querySelector(
-      'input#merchant-merge-search'
-    ) as HTMLInputElement | null;
-    expect(input).not.toBeNull();
+    renderDialog();
+    expect(
+      inPortal<HTMLInputElement>("input#merchant-merge-search")
+    ).not.toBeNull();
     // Wait for fetchMerchants to settle so the query state is consistent.
     await waitFor(() => expect(mockedFetchMerchants).toHaveBeenCalled());
   });
@@ -119,15 +130,15 @@ describe("<MerchantMergeDialog />", () => {
       cascadedCountIfApplied: 0,
       blankFillFields: [],
     };
-    const { container, getByText } = renderDialog({ preview });
+    renderDialog({ preview });
 
     // Wait for the candidate list to render.
     await waitFor(() => {
-      expect(container.textContent).toContain("Spotify");
+      expect(dialogText()).toContain("Spotify");
     });
 
     // Click the candidate row to select target.
-    fireEvent.click(getByText("Spotify"));
+    fireEvent.click(screen.getByText("Spotify"));
 
     await waitFor(() => {
       expect(mockedPreview).toHaveBeenCalledWith("ws_1", SOURCE.id, {
@@ -137,8 +148,8 @@ describe("<MerchantMergeDialog />", () => {
 
     // Preview counts render.
     await waitFor(() => {
-      expect(container.textContent).toContain("42");
-      expect(container.textContent).toContain("3");
+      expect(dialogText()).toContain("42");
+      expect(dialogText()).toContain("3");
     });
   });
 
@@ -151,15 +162,14 @@ describe("<MerchantMergeDialog />", () => {
       cascadedCountIfApplied: 0,
       blankFillFields: [],
     };
-    const { container, getByText } = renderDialog({ preview });
-    await waitFor(() => expect(container.textContent).toContain("Spotify"));
-    fireEvent.click(getByText("Spotify"));
+    renderDialog({ preview });
+    await waitFor(() => expect(dialogText()).toContain("Spotify"));
+    fireEvent.click(screen.getByText("Spotify"));
     await waitFor(() => expect(mockedPreview).toHaveBeenCalled());
 
     // Wait for preview render then assert no checkbox exists.
-    await waitFor(() => expect(container.textContent).toContain("Move"));
-    const checkbox = container.querySelector('input[type="checkbox"]');
-    expect(checkbox).toBeNull();
+    await waitFor(() => expect(dialogText()).toContain("Move"));
+    expect(inPortal('input[type="checkbox"]')).toBeNull();
   });
 
   it("shows the checkbox when cascadedCountIfApplied > 0 and merge POSTs applyTargetDefault=true when checked", async () => {
@@ -178,23 +188,21 @@ describe("<MerchantMergeDialog />", () => {
       capturedAliasCount: 3,
     });
 
-    const { container, getByText } = renderDialog({ preview });
-    await waitFor(() => expect(container.textContent).toContain("Spotify"));
-    fireEvent.click(getByText("Spotify"));
+    renderDialog({ preview });
+    await waitFor(() => expect(dialogText()).toContain("Spotify"));
+    fireEvent.click(screen.getByText("Spotify"));
     await waitFor(() => expect(mockedPreview).toHaveBeenCalled());
 
     // Checkbox visible (defaults checked).
     let checkbox: HTMLInputElement | null = null;
     await waitFor(() => {
-      checkbox = container.querySelector(
-        'input[type="checkbox"]'
-      ) as HTMLInputElement | null;
+      checkbox = inPortal<HTMLInputElement>('input[type="checkbox"]');
       expect(checkbox).not.toBeNull();
     });
     expect(checkbox!.checked).toBe(true);
 
     // Click confirm.
-    fireEvent.click(getByText("Confirm merge"));
+    fireEvent.click(screen.getByText("Confirm merge"));
 
     await waitFor(() => {
       expect(mockedMerge).toHaveBeenCalledWith("ws_1", SOURCE.id, {
@@ -219,23 +227,21 @@ describe("<MerchantMergeDialog />", () => {
       cascadedCount: 0,
       capturedAliasCount: 1,
     });
-    const { container, getByText } = renderDialog({ preview });
-    await waitFor(() => expect(container.textContent).toContain("Spotify"));
-    fireEvent.click(getByText("Spotify"));
+    renderDialog({ preview });
+    await waitFor(() => expect(dialogText()).toContain("Spotify"));
+    fireEvent.click(screen.getByText("Spotify"));
     await waitFor(() => expect(mockedPreview).toHaveBeenCalled());
 
     // Untick the cascade checkbox.
     let checkbox: HTMLInputElement | null = null;
     await waitFor(() => {
-      checkbox = container.querySelector(
-        'input[type="checkbox"]'
-      ) as HTMLInputElement | null;
+      checkbox = inPortal<HTMLInputElement>('input[type="checkbox"]');
       expect(checkbox).not.toBeNull();
     });
     fireEvent.click(checkbox!);
     expect(checkbox!.checked).toBe(false);
 
-    fireEvent.click(getByText("Confirm merge"));
+    fireEvent.click(screen.getByText("Confirm merge"));
 
     await waitFor(() => {
       expect(mockedMerge).toHaveBeenCalledWith("ws_1", SOURCE.id, {
@@ -246,12 +252,10 @@ describe("<MerchantMergeDialog />", () => {
   });
 
   it("clicking Cancel does not call mergeMerchants", async () => {
-    const { container, getByText, onClose } = renderDialog();
+    const { onClose } = renderDialog();
     await waitFor(() => expect(mockedFetchMerchants).toHaveBeenCalled());
-    fireEvent.click(getByText("Cancel"));
+    fireEvent.click(screen.getByText("Cancel"));
     expect(mockedMerge).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledTimes(1);
-    // Stop unused-var warning when querying container is unnecessary.
-    void container;
   });
 });
